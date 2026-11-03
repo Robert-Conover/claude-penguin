@@ -31,7 +31,7 @@ From this repository:
 
 Use these local commands for this Mac. The upstream root `docker-compose.yml` and `.env` are preserved as reference; the local stack uses `local/compose.yml` and ignored `.local/env`.
 
-Homebrew dependencies installed during setup: `colima`, `docker`, `docker-compose` (and Colima's `lima` dependency). The installed Node and Python are used for development checks. Ruffle is downloaded into ignored `.local/ruffle` and pinned by release and SHA256.
+Homebrew dependencies installed during setup: `colima`, `docker`, `docker-compose` (and Colima's `lima` dependency). Python 3 is required by the launcher. Host-side web checks require Node 22 or newer and npm; Node is provided by the web container for ordinary gameplay. Ruffle is downloaded into ignored `.local/ruffle` and pinned by release and SHA256.
 
 ## Inspect and verify
 
@@ -39,14 +39,19 @@ Homebrew dependencies installed during setup: `colima`, `docker`, `docker-compos
 ./local/compose ps
 ./local/compose logs --tail 100 web login world dash snowflake
 ./local/verify
-node local/web/verify-http.mjs
 ```
 
-To run the wrapper's integration checks after a fresh checkout:
+To run host-side web checks after a fresh checkout, install their dependencies first:
 
 ```sh
 npm ci --ignore-scripts --prefix local/web
 npm test --prefix local/web
+npm run verify:http --prefix local/web
+```
+
+`npm test` uses temporary mock services and does not need the game running. `verify:http` targets the running local stack. The Houdini compatibility regressions use the built world image:
+
+```sh
 ./local/compose run --rm --no-deps -v "$PWD/local:/local:ro" --entrypoint python world /local/test_houdini_compat.py
 ```
 
@@ -74,4 +79,4 @@ The legacy AS2 media submodule is intentionally not downloaded. Only the English
 
 The browser, login, world, and Snow ports bind only to `127.0.0.1` (8080, 6112, 9875, 7002). PostgreSQL, Redis, and Dash are private to the container network. The source repository is public on GitHub; the running game is hosted only on this Mac.
 
-On this Mac, `origin` points to `Robert-Conover/claude-penguin`, with `main` as the published branch. The original Wand remote remains named `upstream`; its push URL, and the initialized submodule push URLs, are set to `DISABLED`. The inherited automatic submodule-update workflow has been removed to preserve the verified revisions. Upstream history and licenses are preserved. Credentials, Ruffle binaries, logs, and raw verification reports are ignored under `.local/`; database state lives in named Docker volumes in the dedicated VM.
+On this Mac, `origin` points to `Robert-Conover/claude-penguin`. Development happens on `dev`, with promotion PRs from `dev` to `main`; there is no `qa` branch. See [CONTRIBUTING.md](CONTRIBUTING.md). The original Wand remote remains named `upstream`; its push URL, and the initialized submodule push URLs, are set to `DISABLED`. The inherited automatic submodule-update workflow has been removed to preserve the verified revisions. Upstream history and licenses are preserved. Credentials, Ruffle binaries, logs, and raw verification reports are ignored under `.local/`; database state lives in named Docker volumes in the dedicated VM.
