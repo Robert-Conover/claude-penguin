@@ -5,8 +5,9 @@ cd "$project_dir"
 for tool in git python3 colima docker docker-compose curl unzip; do
   command -v "$tool" >/dev/null || { echo "Missing dependency: $tool" >&2; exit 1; }
 done
-# Preserve the pinned source revisions; no remote updates or push operations.
-git submodule update --init --depth 1 houdini dash snowflake vanilla-media
+# Server sources are vendored; only the archived media is a pinned submodule.
+# Preserve its revision; no remote updates or push operations.
+git submodule update --init --depth 1 vanilla-media
 python3 - <<'BOOTSTRAP'
 from pathlib import Path
 import secrets

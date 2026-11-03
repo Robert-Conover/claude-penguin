@@ -26,7 +26,7 @@ These are repository conventions. Instruction files do not configure GitHub bran
 
 ## Make a focused change
 
-Use [LOCAL_SETUP.md](LOCAL_SETUP.md) to run the game. Most owned runtime code lives in `local/`; the game/server directories are pinned upstream submodules. Preserve their revisions unless the dependency update is part of the change.
+Use [LOCAL_SETUP.md](LOCAL_SETUP.md) to run the game. Most owned runtime code lives in `local/`; `houdini/`, `dash/`, and `snowflake/` are vendored upstream server sources, and `vanilla-media/` is a pinned media submodule. Preserve their recorded revisions unless the dependency update is part of the change.
 
 Use the [runtime check matrix](local/AGENTS.md#validation-by-change) to choose validation. Documentation changes need link and rendering checks; they do not require restarting the game. For runtime work, report the command you ran and its result. Call out unavailable environments or untested UI paths plainly.
 

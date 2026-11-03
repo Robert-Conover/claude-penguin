@@ -1,0 +1,1175 @@
+
+from __future__ import annotations
+from typing import TYPE_CHECKING, Callable, List
+from twisted.internet.defer import Deferred
+from twisted.python.failure import Failure
+from twisted.internet import defer
+
+if TYPE_CHECKING:
+    from .penguin import Penguin
+
+from app.data import (
+    ExpRequirements,
+    SnowRewards,
+    MirrorMode,
+    TipPhase
+)
+
+from app.objects.ninjas import WaterNinja, SnowNinja, FireNinja, Ninja
+from app.objects.enemies import Sly, Scrap, Tank, Enemy
+from app.objects.collections import ObjectCollection
+from app.objects.gameobject import GameObject
+from app.objects.sound import Sound
+
+from .callbacks import CallbackHandler
+from .cards import MemberCard
+from .ai import PenguinAI
+from .timer import Timer
+from .grid import Grid
+from .utils import delay
+
+import logging
+import random
+import config
+import time
+
+class GameClosed(Exception):
+    """Raised to stop a game coroutine"""
+
+class Game:
+    def __init__(self, fire: "Penguin", snow: "Penguin", water: "Penguin") -> None:
+        self.water = water
+        self.fire = fire
+        self.snow = snow
+        self.id = -1
+
+        self.bonus_criteria = random.choice(['no_ko', 'under_time', 'full_health'])
+        self.game_start = time.time()
+
+        self.map = random.randint(1, 3)
+        self.total_combos = 0
+        self.round = 0
+        self.coins = 0
+        self.exp = 0
+
+        self.callbacks = CallbackHandler(self)
+        self.objects = ObjectCollection(offset=1000)
+        self.grid = Grid(9, 5, self)
+        self.timer = Timer(self)
+
+        self.server = self.clients[0].server
+        self.logger = logging.getLogger('Game')
+        self.backgrounds = []
+        self.rocks = []
+
+        self.closed = False
+        self.deferred: Deferred | None = None
+
+    @property
+    def clients(self) -> List["Penguin"]:
+        return [
+            client for client in [self.fire, self.snow, self.water]
+            if client is not None
+        ]
+
+    @property
+    def disconnected_clients(self) -> List["Penguin"]:
+        return [client for client in self.clients if client.disconnected]
+
+    @property
+    def connected_clients(self) -> List["Penguin"]:
+        return [client for client in self.clients if not client.disconnected]
+
+    @property
+    def ninjas(self) -> List[Ninja]:
+        return [
+            *self.objects.with_name('Fire'),
+            *self.objects.with_name('Water'),
+            *self.objects.with_name('Snow')
+        ] # type: ignore
+
+    @property
+    def enemies(self) -> List[Enemy]:
+        return [
+            *self.objects.with_name('Sly'),
+            *self.objects.with_name('Scrap'),
+            *self.objects.with_name('Tank')
+        ] # type: ignore
+
+    @property
+    def bonus_criteria_met(self) -> bool:
+        return {
+            'no_ko': all(not player.was_ko for player in self.clients if not player.disconnected),
+            'full_health': all(ninja.hp == ninja.max_hp for ninja in self.ninjas if not ninja.client.disconnected),
+            'under_time': (time.time() < self.game_start + 300)
+        }[self.bonus_criteria]
+
+    def launch(self) -> None:
+        game_deferred = defer.Deferred.fromCoroutine(self.start())
+        self.deferred = game_deferred
+        game_deferred.addErrback(self.on_game_failed)
+
+    def close(self) -> None:
+        if not self.closed:
+            self.logger.info('Game closed')
+            self.closed = True
+
+            if self in self.server.games:
+                self.server.games.remove(self)
+
+        raise GameClosed()
+
+    def on_game_failed(self, failure: Failure) -> None:
+        if failure.check(GameClosed):
+            return None
+
+        self.logger.error(failure.getTraceback())
+
+        if not self.closed:
+            self.closed = True
+
+            if self in self.server.games:
+                self.server.games.remove(self)
+
+        return None
+
+    async def start(self) -> None:
+        for client in self.clients:
+            client.game = self
+
+            # Initialize member card
+            client.member_card = MemberCard(client)
+
+            # Initialize power cards
+            client.initialize_power_cards()
+
+        # Wait for "prepare to battle" screen to end
+        await delay(3)
+
+        # Close player select window
+        for client in self.clients:
+            player_select = client.get_window(config.PLAYERSELECT_SWF)
+            player_select.close()
+
+        # Place clients in battle place
+        battle_place = self.server.places['snow_battle']
+
+        min_time_waiter = self.callbacks.register_event(
+            self, 'roomToRoomMinTime'
+        )
+        ready_waiters = {
+            client: self.callbacks.register_event(client, 'roomToRoomComplete')
+            for client in self.clients
+            if not client.disconnected and not client.is_bot
+        }
+
+        for client in self.clients:
+            client.place_loaded = client.is_bot
+            client.switch_place(battle_place)
+
+        # Wait for fake loading screen to finish
+        await self.callbacks.wait_for_event(
+            'roomToRoomMinTime',
+            waiter=min_time_waiter
+        )
+        await delay(1)
+
+        # Wait for players to finish loading assets
+        load_operations = []
+
+        for client, waiter in ready_waiters.items():
+            load_coroutine = self.callbacks.wait_for_client(
+                'roomToRoomComplete',
+                client,
+                timeout=20,
+                waiter=waiter
+            )
+            load_operations.append(
+                defer.Deferred.fromCoroutine(load_coroutine)
+            )
+
+        clients_ready = await defer.gatherResults(
+            load_operations,
+            consumeErrors=True
+        )
+
+        if not all(clients_ready):
+            pending = [
+                str(client) for client in ready_waiters
+                if not client.place_loaded
+            ]
+            self.logger.warning(
+                f'Continuing after load timeout for: {", ".join(pending)}'
+            )
+
+        # Play background music
+        background_music = Sound.from_name('mus_mg_201303_cjsnow_gamewindamb', looping=True)
+        background_music.play(self)
+
+        self.initialize_objects()
+        self.show_environment()
+        self.spawn_ninjas()
+
+        for client in self.clients:
+            # Close loading screen
+            player_select = client.get_window(config.PLAYERSELECT_SWF)
+            player_select.send_action('closeCjsnowRoomToRoom')
+
+            # Load exit button
+            close_button = client.get_window('cardjitsu_snowclose.swf')
+            close_button.layer = 'bottomLayer'
+            close_button.load(
+                loadDescription="",
+                assetPath="",
+                xPercent=1,
+                yPercent=0
+            )
+
+        # Wait for windows
+        await delay(1)
+
+        # Reset game time
+        self.game_start = time.time() + 1
+
+        await self.display_round_title()
+        await delay(1.6)
+
+        self.spawn_enemies()
+        await self.wait_for_window('cardjitsu_snowrounds.swf', loaded=False)
+
+        await self.show_ui()
+        self.send_tip(TipPhase.MOVE)
+
+        for client in self.disconnected_clients:
+            client.ninja.set_health(0)
+
+        for client in self.clients:
+            if client.has_power_cards:
+                continue
+
+            snow_ui = client.get_window('cardjitsu_snowui.swf')
+            snow_ui.send_payload('noCards')
+
+        # Run game loop until game ends
+        await self.run_game_loop()
+
+        self.remove_ui()
+        self.remove_targets()
+        await self.display_win_sequence()
+
+        if not self.enemies:
+            for client in self.clients:
+                if not client.was_ko:
+                    continue
+
+                # Unlock "Up and at 'em" stamp
+                client.unlock_stamp(475)
+
+            if all(client.was_ko for client in self.clients):
+                # Unlock "Team Revival" stamp
+                self.unlock_stamp(476)
+
+            if self.round >= 3:
+                # Unlock "Bonus Win" stamp
+                self.unlock_stamp(473)
+
+        background_music.stop(self)
+        self.hide_game_ui()
+        self.display_payout()
+        self.remove_objects()
+        self.close()
+
+    async def run_game_loop(self) -> None:
+        while True:
+            self.logger.info(
+                f'Starting round {self.round + 1} '
+                f'({len(self.enemies)} {"enemies" if len(self.enemies) > 1 else "enemy"})'
+            )
+
+            await self.run_until_next_round()
+
+            for client in self.disconnected_clients:
+                # Hide disconnected ninjas
+                client.ninja.remove_object()
+
+            if all(ninja.hp <= 0 for ninja in self.ninjas):
+                # All ninjas have been defeated
+                break
+
+            # See: https://github.com/Lekuruu/snowflake/issues/23
+            coins = {
+                0: 60,
+                1: 120,
+                2: 120,
+                3: 120
+            }
+            exp = {
+                0: 100,
+                1: 200,
+                2: 300,
+                3: 180
+            }
+
+            self.coins += coins.get(self.round, 0)
+            self.exp += exp.get(self.round, 0)
+
+            if (self.round >= 2) and (not self.bonus_criteria_met):
+                # Bonus criteria not met on round 3
+                break
+
+            if (self.round >= 3):
+                # Bonus round completed
+                break
+
+            self.round += 1
+
+            if self.round >= 3 and self.bonus_criteria == 'full_health':
+                # Unlock "Full Health" stamp
+                self.unlock_stamp(472)
+
+            # Remove any existing enemies
+            self.remove_enemies()
+
+            await self.display_round_title()
+            await delay(1.6)
+
+            # Create new enemies
+            self.create_enemies()
+            self.spawn_enemies()
+            await self.wait_for_window('cardjitsu_snowrounds.swf', loaded=False)
+
+    async def run_until_next_round(self) -> None:
+        while True:
+            if all(client.disconnected or client.is_bot for client in self.clients):
+                # All players have disconnected
+                self.logger.debug("All ninjas have disconnected, ending session.")
+                self.close()
+                return
+
+            for client in self.clients:
+                client.selected_card = None
+                client.is_ready = False
+
+                # Reset ninja's rotation, if necessary
+                client.ninja.reset_sprite_settings()
+
+                if client.power_card_slots:
+                    self.send_tip(TipPhase.CARD, client)
+
+                if client.is_bot:
+                    assert isinstance(client, PenguinAI)
+                    client.select_move()
+
+            self.show_targets()
+            await self.wait_for_timer()
+
+            self.hide_ghosts()
+            self.remove_ui()
+            self.hide_targets()
+            await delay(1.25)
+
+            # Sometimes the targets are still visible?
+            self.hide_targets()
+            self.remove_ui()
+
+            await self.move_ninjas()
+            await self.do_ninja_actions()
+            await self.do_enemy_actions()
+
+            # Check if any ninja is getting revived
+            for ninja in self.ninjas:
+                if not isinstance(ninja.selected_object, Ninja):
+                    continue
+
+                if ninja.selected_object.hp > 0:
+                    # Ninja was already revived
+                    ninja.idle_animation()
+                    continue
+
+                if ninja.client.disconnected:
+                    # Ninja disconnected
+                    ninja.idle_animation()
+                    continue
+
+                # Unlock "revive" stamp for every ninja that was reviving this round
+                for client in self.clients:
+                    if client.disconnected:
+                        continue
+
+                    if client.ninja.selected_object != ninja.selected_object:
+                        continue
+
+                    client.unlock_stamp(474)
+
+                await self.wait_for_animations()
+                ninja.selected_object.set_health(1)
+                ninja.targets = []
+                ninja.idle_animation()
+
+            # Update enemy flame
+            for enemy in self.enemies:
+                enemy.update_flame()
+
+            # Wait for any animations to finish
+            await self.wait_for_animations()
+
+            if self.check_round_completion():
+                break
+
+    def check_round_completion(self) -> bool:
+        if self.server.shutting_down:
+            self.close()
+
+        if all(client.disconnected for client in self.clients):
+            self.close()
+
+        if not self.enemies:
+            # Enemies have been defeated
+            return True
+
+        if all(ninja.hp <= 0 for ninja in self.ninjas):
+            # All ninjas have been defeated
+            return True
+
+        return False
+
+    def send_tag(self, tag: str, *args) -> None:
+        for player in self.clients:
+            player.send_tag(tag, *args)
+
+    async def wait_for_players(self, condition: Callable, timeout=8) -> bool:
+        """Wait for all players to finish a condition"""
+        start_time = time.time()
+
+        for player in self.clients:
+            if player.disconnected:
+                continue
+
+            if player.is_bot:
+                continue
+
+            while not condition(player) and not self.server.shutting_down:
+                if time.time() - start_time > timeout:
+                    self.logger.warning(f'Player Timeout: {player}')
+                    return False
+
+                await delay(0.05)
+
+        return True
+
+    async def wait_for_animations(self, timeout=8) -> bool:
+        """Wait for all animations to finish"""
+        # return early here for maximum adhd gameplay
+        return await self.callbacks.wait_for_animations(timeout)
+
+    def remove_after_animations(self, game_object: GameObject) -> None:
+        """Remove the given game object after all animations have finished"""
+        async def remove() -> None:
+            await self.wait_for_animations()
+
+            if self.objects.by_id(game_object.id) is game_object:
+                game_object.remove_object()
+
+        deferred = defer.Deferred.fromCoroutine(remove())
+        deferred.addErrback(
+            lambda failure: self.logger.error(failure.getTraceback())
+        )
+
+    async def wait_for_window(self, name: str, loaded=True, timeout=8) -> bool:
+        """Wait for a window to load / close"""
+        waits = []
+
+        for client in self.clients:
+            if client.is_bot:
+                continue
+
+            waits.append(
+                defer.Deferred.fromCoroutine(
+                    client.get_window(name).wait_for_state(loaded, timeout)
+                )
+            )
+
+        if all(client.disconnected or client.is_bot for client in self.clients):
+            self.close()
+
+        results = await defer.gatherResults(waits, consumeErrors=True)
+        return all(results)
+
+    async def wait_for_timer(self) -> None:
+        """Wait for the timer to finish"""
+        self.grid.show_tiles()
+        self.enable_cards()
+        await self.timer.run()
+        self.grid.hide_tiles()
+        self.disable_cards()
+
+    def initialize_objects(self) -> None:
+        self.grid.initialize_tiles()
+        self.create_environment()
+        self.create_enemies()
+        self.create_ninjas()
+
+    def create_ninjas(self) -> None:
+        spawn_positions = [
+            {'x': 0, 'y': 0},
+            {'x': 0, 'y': 2},
+            {'x': 0, 'y': 4}
+        ]
+        ninja_classes = {
+            'snow': SnowNinja,
+            'fire': FireNinja,
+            'water': WaterNinja
+        }
+
+        # Randomize spawn positions
+        random.shuffle(spawn_positions)
+
+        for index, client in enumerate(self.clients):
+            element = client.element
+            ninja_class = ninja_classes[element]
+
+            ninja = ninja_class(client, **spawn_positions[index])
+            ninja.place_object()
+            client.ninja = ninja
+
+    def create_enemies(self) -> None:
+        if self.round > 3:
+            return
+
+        max_enemies = {
+            0: range(1, 4),
+            1: range(1, 4),
+            2: range(1, 4),
+            3: range(4, 5)
+        }[self.round]
+
+        amount_enemies = random.choice(max_enemies)
+        enemy_classes = (Sly, Scrap, Tank)
+
+        for _ in range(amount_enemies):
+            while True:
+                enemy_class = random.choice(enemy_classes)
+
+                existing_enemies = [
+                    enemy for enemy in self.enemies
+                    if isinstance(enemy, enemy_class)
+                ]
+
+                # There can't be more than 3 enemies of the same type
+                if len(existing_enemies) < 3:
+                    break
+
+            enemy = enemy_class(self)
+            enemy.place_object()
+
+    def create_environment(self) -> None:
+        if config.ENABLE_BETA:
+            # Only one map was available in beta
+            self.map = 1
+
+        self.backgrounds = {
+            1: [
+                GameObject(self, 'env_mountaintop_bg', x=4.5, y=-1.1)
+            ],
+            2: [
+                GameObject(self, 'forest_bg', x=4.5, y=-1.1),
+                GameObject(self, 'forest_fg', x=4.5, y=6.1)
+            ],
+            3: [
+                GameObject(self, 'cragvalley_bg', x=4.5, y=-1.1),
+                GameObject(self, 'cragvalley_fg', x=4.5, y=6)
+            ]
+        }[self.map]
+
+        for background in self.backgrounds:
+            background.place_object()
+
+        rock_name = 'crag_rock' if self.map == 3 else 'rock_mountaintop'
+        rock_positions = [(2, 0), (6, 0), (2, 4), (6, 4)]
+
+        self.rocks = [
+            GameObject(
+                self,
+                rock_name,
+                x, y,
+                x_offset=0.5,
+                y_offset=1,
+                grid=True
+            )
+            for x, y in rock_positions
+        ]
+
+        for rock in self.rocks:
+            rock.place_object()
+
+    def spawn_ninjas(self) -> None:
+        for ninja in self.ninjas:
+            ninja.place_object()
+            ninja.idle_animation()
+            ninja.place_healthbar()
+
+    def spawn_enemies(self) -> None:
+        """Spawn enemies for the current round"""
+        for enemy in self.enemies:
+            # Choose spawn location on grid
+            x, y = self.grid.enemy_spawn_location()
+
+            self.grid[x, y] = enemy
+            enemy.place_object()
+
+            # Play spawn animation
+            enemy.spawn()
+            enemy.place_healthbar()
+
+    def remove_enemies(self) -> None:
+        for enemy in self.enemies:
+            enemy.remove_object()
+
+    def remove_ninjas(self) -> None:
+        for ninja in self.ninjas:
+            ninja.remove_object()
+
+    def remove_ui(self) -> None:
+        for object in self.objects.with_name('ui_confirm'):
+            object.remove_object()
+
+        for client in self.clients:
+            if not client.selected_card:
+                continue
+
+            client.selected_card.remove()
+
+        for client in self.clients:
+            if not client.selected_member_card:
+                continue
+
+            client.member_card.remove() # type: ignore (already checked)
+
+    def hide_game_ui(self) -> None:
+        window_names = (
+            'cardjitsu_snowinfotip.swf',
+            'cardjitsu_snowtimer.swf',
+            'cardjitsu_snowui.swf',
+            'cardjitsu_snowclose.swf'
+        )
+
+        for client in self.clients:
+            if client.disconnected:
+                continue
+
+            if client.is_bot:
+                continue
+
+            client.last_tip = None
+            infotip = client.get_window('cardjitsu_snowinfotip.swf')
+            infotip.on_close = None  # Do not open a queued tip
+
+            for name in window_names:
+                client.get_window(name).close()
+
+    def hide_ghosts(self) -> None:
+        for ninja in self.ninjas:
+            ninja.hide_ghost(reset_positions=False)
+
+    async def move_ninjas(self) -> None:
+        for ninja in self.ninjas:
+            if ninja.placed_ghost:
+                ninja.client.update_cards()
+
+            ninja.move_ninja(
+                ninja.ghost.grid_x,
+                ninja.ghost.grid_y
+            )
+
+        # Wait for move animations
+        await self.wait_for_animations()
+
+        for ninja in self.ninjas:
+            ninja.reset_sprite_settings()
+
+    def show_targets(self) -> None:
+        for ninja in self.ninjas:
+            ninja.show_targets()
+
+    def hide_targets(self) -> None:
+        for ninja in self.ninjas:
+            ninja.hide_targets()
+
+    def remove_targets(self) -> None:
+        for ninja in self.ninjas:
+            ninja.remove_targets()
+
+    def show_environment(self) -> None:
+        for background in self.backgrounds:
+            obj = self.objects.by_id(background.id)
+            if obj: obj.place_sprite(background.name)
+
+        for rock in self.rocks:
+            obj = self.objects.by_id(rock.id)
+            if obj: obj.place_sprite(rock.name)
+
+    def remove_objects(self) -> None:
+        self.remove_targets()
+        self.remove_ui()
+
+        for ninja in self.ninjas:
+            ninja.remove_object()
+
+            if ninja.shield:
+                ninja.shield.remove_object()
+
+            if ninja.rage:
+                ninja.rage.remove_object()
+
+        for enemy in self.enemies:
+            enemy.remove_object()
+
+            if enemy.flame:
+                enemy.flame.remove_object()
+
+        for rock in self.rocks:
+            rock.remove_object()
+
+    async def do_ninja_actions(self) -> None:
+        await self.do_ninja_attacks()
+        await self.do_powercard_attacks()
+        await self.do_ninja_revive()
+        await self.wait_for_animations()
+
+    async def do_ninja_attacks(self) -> None:
+        ninjas_without_cards = [
+            ninja for ninja in self.ninjas
+            if not ninja.client.selected_card
+            and not ninja.client.selected_member_card
+        ]
+        ninja_actions = [
+            (ninja, ninja.selected_object)
+            for ninja in ninjas_without_cards
+            if ninja.selected_target and ninja.selected_object is not None
+        ]
+
+        for ninja, target in ninja_actions:
+            if isinstance(target, Enemy):
+                await ninja.attack_target(target)
+
+            if isinstance(target, Ninja):
+                await ninja.heal_target(target)
+
+            if ninja.heals >= 15:
+                # Unlock "Heal 15" stamp
+                self.snow.unlock_stamp(477)
+
+            await self.wait_for_animations(timeout=3)
+
+    async def do_powercard_attacks(self) -> None:
+        ninjas_with_cards = [
+            ninja for ninja in self.ninjas
+            if ninja.client.placed_powercard
+        ]
+
+        is_combo = len(ninjas_with_cards) > 1
+
+        if is_combo:
+            self.total_combos += 1
+
+            if len(ninjas_with_cards) >= 3:
+                # Unlock "3 Ninja Combo stamp"
+                self.unlock_stamp(467)
+
+            if self.total_combos >= 3:
+                # Unlock "3 Combos" stamp
+                self.unlock_stamp(485)
+
+            combo_waiter = self.callbacks.register_event(
+                self, 'comboScreenComplete'
+            )
+            await self.display_combo_title([
+                ninja.client.element
+                for ninja in ninjas_with_cards
+            ])
+            await self.callbacks.wait_for_event(
+                'comboScreenComplete',
+                timeout=6, waiter=combo_waiter
+            )
+
+        for ninja in ninjas_with_cards:
+            await ninja.use_powercard(is_combo)
+            await self.wait_for_animations()
+
+    async def do_ninja_revive(self) -> None:
+        ninjas_with_member_cards = [
+            client for client in self.clients
+            if client.selected_member_card
+        ]
+
+        if ninjas_with_member_cards:
+            for client in self.clients:
+                if client.disconnected:
+                    continue
+
+                revive_splash = client.get_window('cardjitsu_snowrevive.swf')
+                revive_splash.load(xPercent=0.2, yPercent=0)
+
+            # Wait for revive splash to load and close
+            await self.wait_for_window('cardjitsu_snowrevive.swf', loaded=True)
+            await self.wait_for_window('cardjitsu_snowrevive.swf', loaded=False)
+
+            for ninja in ninjas_with_member_cards:
+                await ninja.member_card.consume() # type: ignore (already checked)
+                await self.wait_for_animations()
+
+    async def do_enemy_actions(self) -> None:
+        if config.DISABLE_ENEMY_AI:
+            return
+
+        for enemy in self.enemies:
+            if enemy.hp <= 0:
+                # Enemy is dead
+                continue
+
+            next_move, target = enemy.next_target()
+
+            if not next_move and not target:
+                # Enemy is stuck
+                continue
+
+            if enemy.stunned:
+                # Enemy was stunned by a fire ninja
+                continue
+
+            if next_move:
+                enemy.move_enemy(next_move.grid_x, next_move.grid_y)
+                await self.wait_for_animations()
+
+            if target is None:
+                # Set sprite to default direction
+                enemy.reset_sprite_settings()
+                continue
+
+            target_object = self.grid[target.grid_x, target.grid_y]
+
+            if target_object is None or not isinstance(target_object, Ninja):
+                # Ninja doesn't exist?
+                continue
+
+            if target_object.hp <= 0:
+                # Ninja was ko'd
+                continue
+
+            if target_object.x < enemy.x:
+                # Enemy's sprite might be flipped to wrong direction
+                enemy.reset_sprite_settings()
+
+            await enemy.attack_target(target_object)
+
+            if target_object.x > enemy.x:
+                # Flip ninja's sprite to face the enemy
+                target_object.mirror_mode = MirrorMode.X
+
+            await self.wait_for_animations()
+            target_object.reset_sprite_settings()
+
+        # Remove enemy stunned state
+        for enemy in self.enemies:
+            if not enemy.stunned:
+                continue
+
+            enemy.stunned = False
+            enemy.idle_animation()
+
+    async def show_ui(self) -> None:
+        for client in self.clients:
+            snow_ui = client.get_window('cardjitsu_snowui.swf')
+            snow_ui.layer = 'bottomLayer'
+            snow_ui.load(
+                {
+                    'cardsAssetPath': config.CARDS_ASSET_LOCATION,
+                    'element': client.element,
+                    'isMember': client.is_member,
+                },
+                loadDescription="",
+                assetPath="",
+                xPercent=0.5,
+                yPercent=1
+            )
+
+        await self.wait_for_window('cardjitsu_snowui.swf', loaded=True)
+
+    def send_tip(self, phase: TipPhase, client: "Penguin" | None = None) -> None:
+        clients = [client] if client else self.clients
+
+        for client in clients:
+            if phase in client.displayed_tips:
+                continue
+
+            if not client.tip_mode:
+                continue
+
+            client.displayed_tips.append(phase)
+
+            def after_close(client: "Penguin"):
+                client.send_tip(phase)
+
+            if client.last_tip != None:
+                # Wait for infotip to close
+                infotip = client.get_window('cardjitsu_snowinfotip.swf')
+                infotip.on_close = after_close
+                continue
+
+            client.send_tip(phase)
+
+    def hide_tip(self, client: "Penguin") -> None:
+        client.hide_tip()
+
+    def enable_cards(self) -> None:
+        for client in self.clients:
+            is_alive = client.ninja.hp > 0
+            payload_trigger = "enableCards" if is_alive else "enableMemberCard"
+            snow_ui = client.get_window('cardjitsu_snowui.swf')
+            snow_ui.send_payload(payload_trigger)
+
+    def disable_cards(self) -> None:
+        for client in self.clients:
+            snow_ui = client.get_window('cardjitsu_snowui.swf')
+            snow_ui.send_payload('disableCards')
+
+    def update_cards(self) -> None:
+        for client in self.clients:
+            client.update_cards()
+
+    def unlock_stamp(self, id: int) -> None:
+        for client in self.clients:
+            client.unlock_stamp(id)
+
+    async def display_round_title(self) -> None:
+        round_time = ((self.game_start + 300) - time.time()) * 1000
+
+        for client in self.clients:
+            round_title = client.get_window('cardjitsu_snowrounds.swf')
+            round_title.layer = 'bottomLayer'
+            round_title.load(
+                {
+                    'bonusCriteria': self.bonus_criteria,
+                    'remainingTime': max(0, round_time),
+                    'roundNumber': self.round
+                },
+                loadDescription="",
+                assetPath="",
+                xPercent=0.15,
+                yPercent=0.15
+            )
+
+        await self.wait_for_window('cardjitsu_snowrounds.swf', loaded=True)
+
+    async def display_combo_title(self, elements: List[str]) -> None:
+        for client in self.clients:
+            combo_title = client.get_window('cardjitsu_snowcombos.swf')
+            combo_title.layer = 'bottomLayer'
+            combo_title.load(
+                {'data': elements},
+                loadDescription="",
+                assetPath="",
+                xPercent=0.5,
+                yPercent=0.5
+            )
+
+        await self.wait_for_window(
+            'cardjitsu_snowcombos.swf',
+            loaded=True,
+            timeout=4
+        )
+
+    def get_payout_round(self) -> int:
+        """Get the round number for the payout screen"""
+        if self.round >= 3:
+            # Players have entered bonus round
+            return 9 - len(self.enemies)
+
+        if not self.enemies and self.round == 2:
+            # Players have defeated all enemies
+            return 4
+
+        # Players have been defeated
+        return self.round + 1
+
+    def display_payout(self) -> None:
+        if config.ENABLE_BETA:
+            self.display_beta_payout()
+            return
+
+        snow_stamps = self.server.data.fetch_stamps(60)
+        has_won = len(self.enemies) <= 0
+
+        for client in self.clients:
+            if client.disconnected or client.is_bot:
+                continue
+
+            if client.object.snow_ninja_rank < 24:
+                required_exp = ExpRequirements.get(client.object.snow_ninja_rank + 1, 3000)
+                current_exp = round((client.object.snow_ninja_progress / 100) * required_exp)
+
+                # Calculate new exp
+                result_exp = current_exp + self.exp
+                exp_percentage = round(result_exp / required_exp * 100)
+
+                # Calculate new rank
+                ranks_gained = exp_percentage // 100
+                result_rank = round(client.object.snow_ninja_rank + ranks_gained)
+
+            else:
+                # Clamp rank to 24
+                result_rank = 24
+                exp_percentage = 100
+
+            # Enable double coins when player has unlocked all stamps
+            double_coins = self.server.data.has_completed_stamp_group(client.pid, 60)
+            coins = self.coins * (2 if double_coins else 1)
+
+            updates = {
+                'coins': client.object.coins + coins,
+                'snow_ninja_rank': result_rank,
+                'snow_ninja_progress': exp_percentage  % 100
+            }
+            payout_stamp_ids = []
+            payout_item_ids = []
+
+            if result_rank >= 13 and not config.DISABLE_STAMPS:
+                # Unlock "Snow Pro" stamp
+                payout_stamp_ids.append(487)
+
+            if has_won:
+                # Update win count
+                key = f'snow_progress_{client.element}_wins'
+                wins = getattr(client.object, key, 0)
+                updates[key] = wins + 1
+
+                if updates[key] >= 3 and not config.DISABLE_STAMPS:
+                    stamp_ids = {
+                        'fire': 470,
+                        'water': 471,
+                        'snow': 469
+                    }
+                    payout_stamp_ids.append(stamp_ids[client.element])
+
+            for rank in range(client.object.snow_ninja_rank + 1, result_rank + 1):
+                if not (item := SnowRewards.get(rank)):
+                    continue
+
+                payout_item_ids.append(item)
+
+            if not config.DISABLE_REWARDS:
+                # Persist payout in data provider (e.g. the houdini database)
+                awarded_stamps = self.server.data.apply_payout(
+                    client.pid,
+                    updates=updates,
+                    item_ids=payout_item_ids,
+                    stamp_ids=payout_stamp_ids
+                )
+
+                if updates and result_rank != client.object.snow_ninja_rank:
+                    self.logger.info(f'{client} ranked up from {client.object.snow_ninja_rank} to {result_rank}')
+
+                for item_id in payout_item_ids:
+                    self.logger.info(f'{client} unlocked item {item_id}')
+
+                for stamp in awarded_stamps:
+                    client.notify_stamp(stamp)
+
+            # Display payout swf window
+            payout = client.get_window('cardjitsu_snowpayout.swf')
+            payout.layer = 'bottomLayer'
+            payout.load(
+                {
+                    "coinsEarned": coins,
+                    "doubleCoins": int(double_coins),
+                    "damage": 0,
+                    "isBoss": 0,
+                    "rank": client.object.snow_ninja_rank + 1,
+                    "round": self.get_payout_round(),
+                    "showItems": 0,
+                    "stampList": [
+                        {
+                            "stamp_id": stamp.id,
+                            "name": f'global_content.stamps.{stamp.id}.name',
+                            "description": f'global_content.stamps.{stamp.id}.description',
+                            "rank_token": f'global_content.stamps.{stamp.id}.rank_token',
+                            "rank": stamp.rank,
+                            "is_member": stamp.member,
+                        }
+                        for stamp in snow_stamps
+                    ],
+                    "stamps": [
+                        {
+                            "_id": stamp.id,
+                            "new": stamp.id in client.unlocked_stamps
+                        }
+                        for stamp in self.server.data.fetch_penguin_stamps(client.pid, 60)
+                    ],
+                    "xpStart": client.object.snow_ninja_progress,
+                    "xpEnd": exp_percentage if result_rank < 24 else 100,
+                },
+                loadDescription="",
+                assetPath="",
+                xPercent=0.08,
+                yPercent=0.05
+            )
+
+    def display_beta_payout(self) -> None:
+        for client in self.clients:
+            if client.disconnected:
+                continue
+
+            # Calculate percentage based on round
+            exp_gained = (self.get_payout_round() * 11) + 1
+            beta_reward_item = 1600
+
+            if not config.DISABLE_REWARDS and exp_gained >= 100:
+                # Add item to inventory
+                self.server.data.apply_payout(
+                    client.pid,
+                    updates={},
+                    item_ids=[beta_reward_item]
+                )
+                self.logger.info(
+                    f'{client} unlocked item {beta_reward_item}'
+                )
+
+            # Display payout swf window
+            payout = client.get_window('cardjitsu_snowpayoutbeta.swf')
+            payout.layer = 'bottomLayer'
+            payout.load(
+                {
+                    "coinsEarned": 0,
+                    "doubleCoins": False,
+                    "damage": 0, # Only important for tusk battle
+                    "isBoss": 0,
+                    "rank": 24,
+                    "round": self.get_payout_round(),
+                    "showItems": 0, # Only important for tusk battle
+                    "stampList": [],
+                    "stamps": [],
+                    "xpStart": 0,
+                    "xpEnd": exp_gained
+                },
+                loadDescription="",
+                assetPath="",
+                xPercent=0.08,
+                yPercent=0.05
+            )
+
+    async def display_win_sequence(self) -> None:
+        await delay(2)
+
+        if all(ninja.hp <= 0 for ninja in self.ninjas):
+            return
+
+        for ninja in self.ninjas:
+            if ninja.client.disconnected:
+                continue
+
+            if ninja.hp <= 0:
+                ninja.set_health(1)
+
+            ninja.win_animation()
+
+        await delay(3.5)

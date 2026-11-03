@@ -8,7 +8,7 @@ These instructions supplement the root `AGENTS.md` for changes under `local/`.
 - `compose.yml`: local services, loopback bindings, mounts, health checks, and persistent volumes.
 - `web/server.mjs`: serves the preserved client, renders local addresses, proxies Dash, and bridges WebSocket traffic to TCP game servers. Node ESM; host development requires Node 22 or newer.
 - `agent-start`, `engine/`, and `web/engine/`: optional host Claude PTY runtime, explicit project/session state, and browser terminal. See `AGENT_ENGINE.md` for supported scope and recovery.
-- `houdini_bootstrap.py` and `snowflake_bootstrap.py`: narrow launch-time compatibility adapters around pinned upstream code.
+- `houdini_bootstrap.py` and `snowflake_bootstrap.py`: narrow launch-time compatibility adapters around vendored upstream code.
 - `verify_seed.py`: idempotent local account creation. `verify_game.py`: mutating checks against dedicated fixture accounts.
 - `client-bridge/`: JPEXS-built `engine.swf` overlay (output in ignored `.local/client-bridge/`) and its browser contract. `bridge-fixtures`, `bridge_seed.py`, and `verify_bridge.py` create the disposable `bridgecheck` visitor and project-igloo fixtures.
 
@@ -42,7 +42,7 @@ done
 bash -n local/web/setup-ruffle.sh
 ```
 
-Houdini regressions use the built world image and initialized upstream source:
+Houdini regressions use the built world image and vendored upstream source:
 
 ```sh
 ./local/compose run --rm --no-deps -v "$PWD/local:/local:ro" \
