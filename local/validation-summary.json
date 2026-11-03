@@ -95,7 +95,8 @@
     "card_jitsu_snow": "Server startup verified; gameplay not tested"
   },
   "game_source_modifications": false,
-  "github_repository_created": false,
+  "github_repository_created": true,
+  "github_repository_url": "https://github.com/Robert-Conover/claude-penguin",
   "player_database_persistence": {
     "status": "passed_read_only_after_world_restart",
     "penguin_id": 103,

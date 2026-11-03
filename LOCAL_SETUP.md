@@ -4,7 +4,7 @@ This checkout runs the later AS3 generation of original Club Penguin with Houdin
 
 The original client renders and runs in Safari through Ruffle. Login, room travel, the map, catalogs, purchases, inventory, puffle adoption/walking, and the introductory tour have passed interactive checks. Cart Surfer loaded into gameplay; a completed round and reward remain unverified. See [validation](local/VALIDATION.md) for the tested scope and remaining gaps.
 
-The intended project name is `claude-penguin`; this local folder remains `club-penguin`.
+The project is [claude-penguin](https://github.com/Robert-Conover/claude-penguin); this Mac's local folder remains `club-penguin`.
 
 ## Play
 
@@ -72,6 +72,6 @@ The legacy AS2 media submodule is intentionally not downloaded. Only the English
 
 ## Local boundaries and persistence
 
-The browser, login, world, and Snow ports bind only to `127.0.0.1` (8080, 6112, 9875, 7002). PostgreSQL, Redis, and Dash are private to the container network. No public hosting or GitHub repository has been created.
+The browser, login, world, and Snow ports bind only to `127.0.0.1` (8080, 6112, 9875, 7002). PostgreSQL, Redis, and Dash are private to the container network. The source repository is public on GitHub; the running game is hosted only on this Mac.
 
-The root remote is named `upstream`; its push URL, and the initialized submodule push URLs, are set to `DISABLED`. Upstream history and licenses are preserved. Credentials, Ruffle binaries, logs, and raw verification reports are ignored under `.local/`; database state lives in named Docker volumes in the dedicated VM.
+On this Mac, `origin` points to `Robert-Conover/claude-penguin`, with `main` as the published branch. The original Wand remote remains named `upstream`; its push URL, and the initialized submodule push URLs, are set to `DISABLED`. The inherited automatic submodule-update workflow has been removed to preserve the verified revisions. Upstream history and licenses are preserved. Credentials, Ruffle binaries, logs, and raw verification reports are ignored under `.local/`; database state lives in named Docker volumes in the dedicated VM.

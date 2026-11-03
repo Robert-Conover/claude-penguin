@@ -1,6 +1,37 @@
-> **Local Mac setup:** See [LOCAL_SETUP.md](LOCAL_SETUP.md). Start with `./local/start`; the upstream instructions below are preserved for reference.
+# Claude Penguin
 
-# wand
+An experiment in bringing Claude Code agents into Club Penguin, with puffles representing agents in the game world.
+
+The current baseline runs the original AS3 client locally through Ruffle, backed by community game servers. Login, room travel, catalogs, purchases, and puffle adoption/walking have been verified. Claude Code integration is planned; it has not been implemented yet.
+
+## Run locally on macOS
+
+Install Git, Python 3, and the Homebrew packages `colima`, `docker`, and `docker-compose`, then:
+
+```sh
+git clone https://github.com/Robert-Conover/claude-penguin.git
+cd claude-penguin
+./local/start
+```
+
+The launcher downloads the pinned game submodules and Ruffle runtime on first use. The archived media alone is about 4.1 GB.
+
+Open **http://localhost:8080/** and sign in with the disposable development account **player / PenguinLocal2026!**.
+
+Stop the local stack with `./local/stop`. Player progress is preserved between runs.
+
+See [local setup](LOCAL_SETUP.md), [validation results and remaining gaps](local/VALIDATION.md), and [pinned source revisions](local/sources.json).
+
+## Credits and source layout
+
+Built on [Solero Wand](https://github.com/solero/wand), [Houdini](https://github.com/solero/houdini), [Dash](https://github.com/solero/dash), [Snowflake](https://github.com/Lekuruu/snowflake), and the archived vanilla-media client. Game components remain pinned upstream submodules; the Mac launcher, compatibility wrappers, and checks live in `local/`.
+
+Upstream history and the [Wand license](LICENSE.md) are preserved. Referenced components retain their own licensing; the Wand license does not license Club Penguin artwork or other game assets. This is an unofficial experiment.
+
+<details>
+<summary>Original Wand setup instructions (upstream reference)</summary>
+
+## Wand
 
 Wand makes it easy to configure dash, houdini and a media server utilizing docker & docker-compose.
 
@@ -82,3 +113,5 @@ $ sudo docker-compose up
 ```
 
 **Step 5** You're done!
+
+</details>
