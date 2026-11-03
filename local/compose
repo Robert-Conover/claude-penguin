@@ -1,0 +1,5 @@
+#!/bin/sh
+set -eu
+project_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+export DOCKER_CONTEXT=colima-club-penguin
+exec docker-compose --env-file "$project_dir/.local/env" -f "$project_dir/local/compose.yml" "$@"

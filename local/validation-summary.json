@@ -1,0 +1,70 @@
+{
+  "date": "2026-11-03",
+  "status": "backend_verified_visual_pending",
+  "origin": "http://localhost:8080",
+  "fresh_account_protocol": {
+    "status": "passed",
+    "scope": "local Houdini AS3 protocol; no visual or minigame coverage",
+    "username": "freshcheck",
+    "penguin_id": 104,
+    "puffle_id": 2,
+    "igloo_id": 2,
+    "coins": 9580,
+    "checks": [
+      "AS3 login, world authentication, player load and spawn",
+      "Town Center and Pet Shop room transitions",
+      "Player movement broadcast",
+      "Inventory load and green color purchase",
+      "Blue puffle adoption",
+      "Default igloo creation/load and entry",
+      "Puffle brushing and care statistics",
+      "Puffle walking and returning to igloo",
+      "Relogin persistence: identity, coins, inventory, puffle, care stats and igloo"
+    ]
+  },
+  "after_full_stack_restart": {
+    "status": "passed",
+    "scope": "local Houdini AS3 protocol; no visual or minigame coverage",
+    "username": "freshcheck",
+    "penguin_id": 104,
+    "puffle_id": 2,
+    "igloo_id": 2,
+    "coins": 9580,
+    "checks": [
+      "AS3 login, world authentication, player load and spawn",
+      "Town Center and Pet Shop room transitions",
+      "Player movement broadcast",
+      "Inventory load (green color fixture already owned)",
+      "Existing blue puffle fixture loaded",
+      "Default igloo creation/load and entry",
+      "Puffle brushing and care statistics",
+      "Puffle walking and returning to igloo",
+      "Relogin persistence: identity, coins, inventory, puffle, care stats and igloo"
+    ]
+  },
+  "http": {
+    "status": "passed",
+    "get_checks": 95,
+    "javascript_files": 12,
+    "stylesheets": 10,
+    "wasm_files": 2,
+    "swf_files": 65,
+    "minigame_registry_entries": 56,
+    "real_websocket_handshake_checks": 4
+  },
+  "launcher": {
+    "status": "passed",
+    "command": "./local/start",
+    "preserved_existing_accounts": true
+  },
+  "browser_gameplay": {
+    "status": "not_run",
+    "reason": "Mac locked; automatic unlock could not unlock it. User unlock requested."
+  },
+  "minigame_gameplay": {
+    "status": "not_run",
+    "note": "Asset availability and server startup do not verify playable minigames."
+  },
+  "game_source_modifications": false,
+  "github_repository_created": false
+}

@@ -1,3 +1,5 @@
+> **Local Mac setup:** See [LOCAL_SETUP.md](LOCAL_SETUP.md). Start with `./local/start`; the upstream instructions below are preserved for reference.
+
 # wand
 
 Wand makes it easy to configure dash, houdini and a media server utilizing docker & docker-compose.

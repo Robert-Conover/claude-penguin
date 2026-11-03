@@ -1,2 +1,7 @@
 /.data/
 /.redis/
+/.local/
+
+**/__pycache__/
+
+/local/web/node_modules/

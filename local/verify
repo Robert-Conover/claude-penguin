@@ -1,0 +1,6 @@
+#!/bin/sh
+set -eu
+project_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+cd "$project_dir"
+export CLUB_PENGUIN_TEST_PASSWORD="${CLUB_PENGUIN_TEST_PASSWORD:-PenguinLocal2026!}"
+python3 local/verify_game.py

@@ -1,0 +1,41 @@
+{
+  "recorded_at": "2026-11-03",
+  "game": "Original Club Penguin, AS3 vanilla generation",
+  "note": "Community server implementation and archived client/media. Exact final-day completeness has not been established.",
+  "components": [
+    {
+      "name": "wand",
+      "url": "https://github.com/solero/wand.git",
+      "commit": "030c2a59c668adee94b12f5b9952a96b56e26447",
+      "commit_date": "2026-10-30T04:43:24Z"
+    },
+    {
+      "name": "houdini",
+      "url": "https://github.com/solero/houdini",
+      "commit": "36eaa5cbd342d743c40a8c47fe140abc710eb069",
+      "commit_date": "2026-10-16T14:55:05+07:00"
+    },
+    {
+      "name": "dash",
+      "url": "https://github.com/solero/dash",
+      "commit": "89ccac34883088f176c594ae55e0e93a29dac265",
+      "commit_date": "2025-11-16T09:55:05+07:00"
+    },
+    {
+      "name": "snowflake",
+      "url": "https://github.com/Lekuruu/snowflake.git",
+      "commit": "b8cf1e2a2b87bcdef814a693fca8fede742f11ad",
+      "commit_date": "2026-10-29T20:31:58+01:00"
+    },
+    {
+      "name": "vanilla-media",
+      "url": "https://git.solero.me/solero/vanilla-media",
+      "commit": "e8666de19835faf61782358d52a3b41c9226a00a",
+      "commit_date": "2024-03-09T12:35:46Z"
+    }
+  ],
+  "ruffle": {
+    "version": "nightly-2026-11-03",
+    "archive_sha256": "b3762367e4cdc1313adbd756eba99c0660af63bb0d1e187dc3cd92644428a100"
+  }
+}

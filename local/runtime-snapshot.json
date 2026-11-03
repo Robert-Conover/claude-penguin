@@ -1,0 +1,41 @@
+{
+  "recorded_at": "2026-11-03",
+  "base_images": [
+    {
+      "reference": "postgres:16-alpine",
+      "image_id": "sha256:0cefaabd882e42bcb2a2f3dc56d3ce4770560ba62fd7f197f1a2e008fd5731ab",
+      "repository_digests": [
+        "postgres@sha256:0cefaabd882e42bcb2a2f3dc56d3ce4770560ba62fd7f197f1a2e008fd5731ab"
+      ]
+    },
+    {
+      "reference": "redis:7-alpine",
+      "image_id": "sha256:8da19c7399dca900c6822a1cf30f9d2285585e2c4b457ff4095b0f4500054d3f",
+      "repository_digests": [
+        "redis@sha256:8da19c7399dca900c6822a1cf30f9d2285585e2c4b457ff4095b0f4500054d3f"
+      ]
+    },
+    {
+      "reference": "python:3.11.3-alpine",
+      "image_id": "sha256:4e8e9a59bf1b3ca8e030244bc5f801f23e41e37971907371da21191312087a07",
+      "repository_digests": [
+        "python@sha256:4e8e9a59bf1b3ca8e030244bc5f801f23e41e37971907371da21191312087a07"
+      ]
+    },
+    {
+      "reference": "python:3.13-alpine",
+      "image_id": "sha256:7984cf56ceaddebe4fefeb75d64000b9f45d8b77b11a09b24524da6cdc3af0c8",
+      "repository_digests": [
+        "python@sha256:7984cf56ceaddebe4fefeb75d64000b9f45d8b77b11a09b24524da6cdc3af0c8"
+      ]
+    },
+    {
+      "reference": "node:24-alpine",
+      "image_id": "sha256:8a32c8cf649a49915a66e81e7a609223c708d0adabf288ee3f4077d765542f85",
+      "repository_digests": [
+        "node@sha256:8a32c8cf649a49915a66e81e7a609223c708d0adabf288ee3f4077d765542f85"
+      ]
+    }
+  ],
+  "note": "Observed working dependency versions. Upstream Dockerfiles still resolve their requirements when rebuilt."
+}

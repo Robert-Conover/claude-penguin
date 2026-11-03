@@ -1,0 +1,17 @@
+{
+  "name": "club-penguin-local-web",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node server.mjs",
+    "test": "node --test server.test.mjs",
+    "verify:http": "node verify-http.mjs"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "ws": "8.22.1"
+  }
+}

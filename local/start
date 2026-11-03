@@ -1,0 +1,30 @@
+#!/bin/sh
+set -eu
+project_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+cd "$project_dir"
+for tool in git python3 colima docker docker-compose curl unzip; do
+  command -v "$tool" >/dev/null || { echo "Missing dependency: $tool" >&2; exit 1; }
+done
+# Preserve the pinned source revisions; no remote updates or push operations.
+git submodule update --init --depth 1 houdini dash snowflake vanilla-media
+python3 - <<'BOOTSTRAP'
+from pathlib import Path
+import secrets
+Path('.local').mkdir(exist_ok=True)
+for name in ('login', 'world'):
+    Path('.local/logs', name).mkdir(parents=True, exist_ok=True)
+Path('dash/items').mkdir(exist_ok=True)
+env = Path('.local/env')
+if not env.exists():
+    env.write_text('POSTGRES_USER=clubpenguin\nPOSTGRES_DB=clubpenguin\nPOSTGRES_PASSWORD=' + secrets.token_hex(24) + '\n')
+    env.chmod(0o600)
+BOOTSTRAP
+if [ ! -f .local/ruffle/ruffle.js ] || ! head -1 .local/ruffle/VERSION 2>/dev/null | grep -qx nightly-2026-11-03; then
+  ./local/web/setup-ruffle.sh
+fi
+if ! colima status --profile club-penguin >/dev/null 2>&1; then
+  colima start club-penguin --cpu 4 --memory 4 --disk 30 --vm-type vz     --mount "$project_dir:w" --activate=false --ssh-config=false
+fi
+./local/compose up -d --build --wait --wait-timeout 120
+./local/compose run --rm seed
+printf '\nPlay at http://localhost:8080/\nLocal account: player / PenguinLocal2026!\n'

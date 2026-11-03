@@ -1,0 +1,122 @@
+name: club-penguin
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ../houdini/houdini.sql:/docker-entrypoint-initdb.d/01-houdini.sql:ro
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"']
+      interval: 3s
+      timeout: 3s
+      retries: 40
+  redis:
+    image: redis:7-alpine
+    command: [redis-server, --appendonly, 'yes']
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: [CMD, redis-cli, ping]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+  login:
+    image: club-penguin-houdini:local
+    build: ../houdini
+    volumes:
+      - ../houdini:/usr/src/houdini:ro
+      - ../.local/logs/login:/logs
+    command: [login, --name, Login, --port, '6112', --redis-address, redis, --database-address, db, --database-username, '${POSTGRES_USER}', --database-name, '${POSTGRES_DB}', --database-password, '${POSTGRES_PASSWORD}', --logging-general, /logs/general.log, --logging-error, /logs/errors.log]
+    ports: ['127.0.0.1:6112:6112']
+    depends_on:
+      db: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    healthcheck:
+      test: [CMD, python, -c, 'import socket; socket.create_connection(("127.0.0.1",6112),2).close()']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+  world:
+    image: club-penguin-houdini:local
+    build: ../houdini
+    volumes:
+      - ../houdini:/usr/src/houdini:ro
+      - ../.local/logs/world:/logs
+    command: [world, -id, '3100', --name, Blizzard, --port, '9875', --lang, en, --redis-address, redis, --database-address, db, --database-username, '${POSTGRES_USER}', --database-name, '${POSTGRES_DB}', --database-password, '${POSTGRES_PASSWORD}', --logging-general, /logs/general.log, --logging-error, /logs/errors.log]
+    ports: ['127.0.0.1:9875:9875']
+    depends_on:
+      login: {condition: service_healthy}
+    healthcheck:
+      test: [CMD, python, -c, 'import socket; socket.create_connection(("127.0.0.1",9875),2).close()']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+  dash:
+    build: ../dash
+    env_file: ../.local/env
+    volumes:
+      - ../dash:/usr/src/dash:ro
+      - ./dash_config.py:/local/dash_config.py:ro
+      - ../vanilla-media/media/avatar/paper:/usr/src/dash/items:ro
+    command: [-c, ../../../local/dash_config.py]
+    depends_on:
+      db: {condition: service_healthy}
+      redis: {condition: service_healthy}
+  snowflake:
+    build: ../snowflake
+    entrypoint: [python, /local/snowflake_bootstrap.py]
+    env_file: ../.local/env
+    environment:
+      POSTGRES_HOST: db
+      POSTGRES_DBNAME: ${POSTGRES_DB}
+      REDIS_HOST: redis
+      PORT: '7002'
+      MEDIA_LOCATION: http://localhost:8080/media
+    volumes:
+      - ../snowflake:/usr/src/snowflake:ro
+      - ./snowflake_bootstrap.py:/local/snowflake_bootstrap.py:ro
+    ports: ['127.0.0.1:7002:7002']
+    depends_on:
+      db: {condition: service_healthy}
+      redis: {condition: service_healthy}
+  web:
+    build: ./web
+    environment:
+      PORT: '8080'
+      PROJECT_ROOT: /project
+      RUFFLE_ROOT: /project/.local/ruffle
+      PUBLIC_ORIGIN: http://localhost:8080
+    volumes:
+      - ..:/project:ro
+    ports: ['127.0.0.1:8080:8080']
+    depends_on:
+      login: {condition: service_healthy}
+      world: {condition: service_healthy}
+      dash: {condition: service_started}
+      snowflake: {condition: service_started}
+    healthcheck:
+      test: [CMD, node, -e, 'fetch("http://localhost:8080/healthz").then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  seed:
+    profiles: [tools]
+    image: club-penguin-houdini:local
+    env_file: ../.local/env
+    environment:
+      POSTGRES_HOST: db
+    volumes:
+      - ..:/project:ro
+    entrypoint: [python, /project/local/verify_seed.py]
+    depends_on:
+      db: {condition: service_healthy}
+
+volumes:
+  postgres-data:
+  redis-data:
