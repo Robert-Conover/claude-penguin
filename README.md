@@ -17,7 +17,7 @@
   <a href="CONTRIBUTING.md">Contribute</a>
 </p>
 
-> **Early development:** the original game runs locally, and an opt-in engine connects one puffle to a real Claude Code terminal. A successful coding task and live permission handling still need verification after Claude sign-in. The banner is concept art.
+> **Early development:** the original game runs locally, and an opt-in engine connects one puffle to a real Claude Code terminal. A real coding task and manual permission handling have passed through the host engine; full in-game acceptance remains in progress. The banner is concept art.
 
 ## The idea
 
@@ -40,7 +40,7 @@ That's the idea behind Claude Penguin: the original game's rooms, penguins, and 
 
 **Current scope:** one registered repository and one puffle, using a dedicated fixture igloo. The worker edits that repository's checkout directly; isolated worktrees and multiple projects are still planned. The destination chooser uses matching browser styling; the puffle card and Work/Igloos controls render inside Flash.
 
-**Still to prove:** a successful coding task, actual tool permission approval, active-turn interruption, and full runtime animation acceptance. The first real task reached an expired Claude login; changes shown during verification were explicitly created as viewer fixtures, not by Claude. See the dated [validation record](local/VALIDATION.md) for the exact tested scope and remaining gameplay checks.
+**Latest agent evidence:** after sign-in, Claude produced a real greeting fix and two passing tests in a disposable repository, with one-time manual approvals. These checks used the host API and real terminal. **Still to prove:** native task submission with successful model output, travel and notifications during real work, and runtime animation acceptance. Browser access was unavailable during the latest pass. Cancellation without a confirming terminal signal now requests attention; it is not reported as confirmed interruption. See the dated [validation record](local/VALIDATION.md) for the exact tested scope and remaining gameplay checks.
 
 ## Product roadmap
 
@@ -52,7 +52,7 @@ Checked milestones are implemented within the scope shown. Unchecked rows track 
 | ☑&nbsp;Built | **Game bridge** | Two fixture igloos with explicit identities, real puffle clicks, and animation controls. |
 | ☑&nbsp;Built | **Persistent puffle session** | One repository and named Claude terminal, lifecycle status, task history, reconnect/resume, and changes review. |
 | ☑&nbsp;Built | **Native puffle menus** | In-game Work/Igloos buttons and task card, original puffle artwork, and drafts retained across secondary views. |
-| ☐&nbsp;Next | **Complete the real agent loop** | Give a task, travel to Town, answer a real permission request, interrupt when needed, and return to review Claude-generated changes with accurate status cues. |
+| ☐&nbsp;Next | **Complete the in-game agent loop** | Submit through the native card, travel to Town during real work, handle attention, and return to review Claude-generated changes with accurate status cues. |
 | ☐&nbsp;Planned | **Your Igloos neighborhood** | A map destination for multiple repositories, each with its own igloo, activity count, and separate project state. Work stays accessible across the island. |
 | ☐&nbsp;Planned | **Multiple puffles per project** | Concurrent agents with isolated branches/worktrees and explicit review and integration actions. |
 | ☐&nbsp;Planned | **Project coordination** | Task boards, useful furniture interactions, and temporary helper puffles for delegated work. |

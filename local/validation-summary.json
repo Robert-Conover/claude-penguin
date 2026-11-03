@@ -305,5 +305,62 @@
       "Minigame coexistence and other viewport/device acceptance"
     ],
     "evidence_directory": ".local/menu-evidence/"
+  },
+  "authenticated_agent_acceptance": {
+    "date": "2026-11-03",
+    "status": "host_agent_loop_passed_native_browser_acceptance_blocked",
+    "claude_version": "2.1.317",
+    "interface": "Authenticated engine HTTP/WebSocket API and actual Claude PTY",
+    "coding_task_success": true,
+    "claude_generated_changes": true,
+    "independent_task_tests": {
+      "passed": 2,
+      "failed": 0
+    },
+    "manual_permission_approval": true,
+    "persistent_permission_changes": false,
+    "prior_viewer_fixtures_preserved": true,
+    "websocket_reattach": true,
+    "exact_session_resume_after_engine_restart": true,
+    "conversation_recall_after_restart": true,
+    "active_turn_cancellation_observed": true,
+    "automatic_interrupt_confirmation": false,
+    "interrupt_fallback": "needs-you with cancellation explicitly unconfirmed; actual new prompt clears pending state and marks prior task interrupted",
+    "terminal_retry_passed": true,
+    "native_browser_checks": false,
+    "browser_blockers": [
+      "Mac locked; automatic unlock failed",
+      "Codex in-app browser: Local browser use is disabled in Work settings"
+    ],
+    "regression_tests": {
+      "engine": 17,
+      "web_and_ui": 11,
+      "client_contract": 9,
+      "swf_preservation": 5
+    },
+    "ci": {
+      "workflow": ".github/workflows/regression.yml",
+      "hosted_run": false,
+      "final_linux_source_only_passed": 41,
+      "expected_generated_overlay_skips": 1,
+      "node_version_local_validation": "22.23.4",
+      "python_versions_local_validation": [
+        "3.9.6",
+        "3.11.2"
+      ],
+      "workflow_python": "3.12"
+    },
+    "remaining": [
+      "Native submission with successful model output",
+      "Town travel and attention during successful real work",
+      "Browser reconnect and rendered changes review in this pass",
+      "Runtime animation acceptance",
+      "Automatic interrupt confirmation on CLI 2.1.317",
+      "Running-tool cancellation",
+      "Minigame coexistence"
+    ],
+    "evidence_directory": ".local/acceptance-2026-11-03/",
+    "handoff": "Host engine on 8081; test Claude stopped; same saved session and generated changes retained",
+    "idle_interrupt_no_op_live": true
   }
 }

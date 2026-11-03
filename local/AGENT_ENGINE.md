@@ -103,12 +103,16 @@ Startup without a session hook becomes **Needs you** so trust or setup prompts
 remain visible. **Ready for review** means the turn ended; it does not establish
 that the requested task succeeded or that a change is correct.
 
-**Interrupt** on the native card, or **Interrupt turn** in the terminal window,
-sends one Escape. Escape is context-sensitive and may dismiss
-a prompt. The panel first reports an interrupt request; it reports **Interrupted**
-when subsequent terminal output confirms Claude returned to input. An unrelated
-idle marker is never treated as task completion. Use the terminal to inspect
-what happened before issuing another instruction.
+During an active turn, **Interrupt** on the native card, or **Interrupt turn**
+in the terminal window, sends one Escape. It does nothing for an already idle or
+ended turn. Escape is context-sensitive and may dismiss a prompt. The panel first reports an interrupt request; it reports **Interrupted**
+when a subsequent terminal idle marker confirms Claude returned to input. Some
+Claude versions or terminal configurations do not emit that marker. Until it
+arrives, the native card stays **Needs you** and directs you to Open Claude.
+The terminal view reports that cancellation is not confirmed; task submission
+through the card remains disabled. Inspect the live terminal to retry, or stop
+and resume the saved session. An unrelated idle marker
+is never treated as task completion.
 
 **Stop session** in the terminal window terminates the Claude process owned by
 this engine. It preserves

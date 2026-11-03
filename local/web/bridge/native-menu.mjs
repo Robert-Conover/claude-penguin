@@ -8,7 +8,7 @@ export function nativeMenuState(engineState) {
   const status = worker?.status ?? 'offline';
   const activity = !connected ? 'Your puffle is waiting for the local runtime.' : ({
     starting: 'Waking up…', idle: 'Ready for a new task!', working: 'Working on your task…',
-    'needs-you': 'Open Claude to answer a question or permission request.',
+    'needs-you': 'Open Claude to check what your puffle needs.',
     review: 'The turn ended. Take a look at the changes.',
     interrupted: 'Taking a break. You can pick up where you left off.',
     failed: 'Something went wrong. Open Claude to take a look.',

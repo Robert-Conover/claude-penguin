@@ -122,8 +122,8 @@ test('terminal replay includes output once with a sequence and interrupt needs a
   s.manager.interrupt(s.target);
   assert.equal(proc.writes.at(-1), '\x1b');
   await s.manager.terminal(s.target);
-  assert.equal(s.manager.snapshot().workers[0].status, 'working', 'idle queued before Escape cannot confirm its effect');
-  assert.equal(s.manager.snapshot().workers[0].status, 'working', 'sending escape alone does not prove interruption');
+  assert.equal(s.manager.snapshot().workers[0].status, 'needs-you', 'idle queued before Escape cannot confirm its effect');
+  assert.match(s.manager.snapshot().workers[0].activity, /Cancellation is not yet confirmed/, 'sending escape alone does not prove interruption');
   proc.data('\x1b]9;4;0\x07');
   screen = await s.manager.terminal(s.target);
   assert.equal(screen.sequence, 4);
@@ -134,6 +134,86 @@ test('terminal replay includes output once with a sequence and interrupt needs a
   assert.deepEqual(streamed.map(event => event.sequence), [1, 2, 3, 4]);
   s.manager.resize({ ...s.target, cols: 90, rows: 24 });
   assert.deepEqual(proc.size, { cols: 90, rows: 24 });
+});
+
+test('interrupt without an idle marker requests attention until an authenticated new prompt starts', async t => {
+  const s = await setup(t);
+  await s.manager.start(s.target);
+  await s.hook('SessionStart', { source: 'startup' });
+  await s.hook('UserPromptSubmit', { prompt: 'Original task', prompt_id: 'turn-1' });
+  const proc = s.processes[0].proc;
+  s.manager.interrupt(s.target);
+  proc.data('Interrupted.\r\n> Original task');
+  await s.manager.terminal(s.target);
+  let worker = s.manager.snapshot().workers[0];
+  assert.equal(worker.status, 'needs-you', 'text alone cannot prove the turn stopped');
+  assert.match(worker.activity, /Cancellation is not yet confirmed/);
+  assert.equal(worker.taskHistory[0].endedAt, undefined);
+  await assert.rejects(s.manager.submit({ ...s.target, text: 'Unsafe second task' }), /live terminal/);
+  for (const event of ['PreToolUse', 'PostToolUse', 'PostToolUseFailure']) {
+    await s.hook(event, { tool_name: 'Bash', prompt_id: 'turn-1' });
+    worker = s.manager.snapshot().workers[0];
+    assert.equal(worker.status, 'needs-you', `${event} cannot silently clear pending cancellation`);
+    assert.match(worker.activity, /Cancellation is not yet confirmed/);
+    assert.equal(worker.taskHistory[0].endedAt, undefined);
+  }
+  s.manager.input({ ...s.target, data: 'Retry from the terminal\r' });
+  assert.equal(s.manager.snapshot().workers[0].status, 'needs-you', 'input alone is not a lifecycle event');
+  await s.hook('UserPromptSubmit', { prompt: 'Retry from the terminal', prompt_id: 'turn-2' });
+  proc.data('\x1b]9;4;0\x07');
+  await s.manager.terminal(s.target);
+  worker = s.manager.snapshot().workers[0];
+  assert.equal(worker.status, 'working', 'a late idle marker cannot interrupt the new task');
+  assert.equal(worker.taskHistory[0].status, 'interrupted');
+  assert.equal(worker.taskHistory[1].status, 'working');
+});
+
+test('a pending interrupt cannot overwrite a subsequent terminal lifecycle event', async t => {
+  for (const [event, fields, expected] of [
+    ['Stop', {}, 'review'],
+    ['StopFailure', { error: 'rate_limit' }, 'failed'],
+    ['SessionEnd', { reason: 'clear' }, 'interrupted'],
+  ]) {
+    const s = await setup(t);
+    await s.manager.start(s.target);
+    await s.hook('SessionStart', { source: 'startup' });
+    await s.hook('UserPromptSubmit', { prompt: 'Work', prompt_id: 'turn-1' });
+    s.manager.interrupt(s.target);
+    await s.hook(event, fields);
+    const worker = s.manager.snapshot().workers[0];
+    const revision = s.manager.snapshot().revision;
+    assert.equal(worker.status, expected);
+    s.processes[0].proc.data('\x1b]9;4;0\x07');
+    await s.manager.terminal(s.target);
+    assert.deepEqual(s.manager.snapshot().workers[0], worker, `${event} must survive a late idle marker`);
+    assert.equal(s.manager.snapshot().revision, revision);
+  }
+});
+
+test('interrupt racing an already ended turn preserves readiness and does not send Escape', async t => {
+  for (const status of ['idle', 'review', 'interrupted', 'failed']) {
+    const s = await setup(t);
+    await s.manager.start(s.target);
+    await s.hook('SessionStart', { source: 'startup' });
+    const proc = s.processes[0].proc;
+    if (status !== 'idle') await s.hook('UserPromptSubmit', { prompt: 'Work' });
+    if (status === 'review') await s.hook('Stop');
+    if (status === 'failed') await s.hook('StopFailure', { error: 'rate_limit' });
+    if (status === 'interrupted') {
+      s.manager.interrupt(s.target);
+      proc.data('\x1b]9;4;0\x07');
+      await s.manager.terminal(s.target);
+    }
+    const before = s.manager.snapshot();
+    const writes = proc.writes.length;
+    assert.equal(s.manager.interrupt(s.target).status, status);
+    assert.equal(proc.writes.length, writes);
+    assert.deepEqual(s.manager.snapshot(), before);
+    if (status !== 'failed') {
+      await s.manager.submit({ ...s.target, text: 'Next task' });
+      assert.deepEqual(proc.writes.slice(-2), ['\x1b[200~Next task\x1b[201~', '\r']);
+    }
+  }
 });
 
 test('runtime restart resumes exact established session and failed resume never creates a replacement', async t => {

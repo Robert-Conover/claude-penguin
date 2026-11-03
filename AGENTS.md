@@ -2,7 +2,7 @@
 
 ## Project and scope
 
-Claude Penguin runs the original Club Penguin AS3 client locally and aims to represent real Claude Code agents as puffles. The game baseline exists; agent integration is planned. Keep implemented behavior, proposed behavior, and validation gaps distinct in code, docs, and demos.
+Claude Penguin runs the original Club Penguin AS3 client locally and connects one puffle to a persistent Claude Code session through an opt-in host engine. Multiple projects and concurrent puffles remain planned. Keep implemented behavior, proposed behavior, and validation gaps distinct in code, docs, and demos.
 
 Most project-owned runtime code is in `local/`. `houdini/`, `dash/`, `snowflake/`, `vanilla-media/`, and `legacy-media/` are upstream Git submodules, not ordinary source directories. The AS2 `legacy-media` module is intentionally uninitialized by our launcher.
 
