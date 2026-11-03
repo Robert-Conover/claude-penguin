@@ -174,7 +174,7 @@ export function createLocalServer(options = {}) {
       if (urlPath === '/bridge/assets/engine.swf') {
         return await serveFile(req, res, path.join(root, '.local/client-bridge'), '/' + path.basename(urlPath));
       }
-      if (/^\/bridge\/(bootstrap\.js|panel\.mjs|model\.mjs|panel\.css)$/.test(urlPath)) {
+      if (/^\/bridge\/(bootstrap\.js|panel\.mjs|model\.mjs|native-menu\.mjs|panel\.css)$/.test(urlPath)) {
         return await serveFile(req, res, path.join(here, 'bridge'), '/' + path.basename(urlPath));
       }
       if (['/', '/index.html', '/en/', '/en/index.html', '/es/', '/fr/', '/pt/'].includes(urlPath)) {

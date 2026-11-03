@@ -27,8 +27,16 @@ if [ ! -f .local/ruffle/ruffle.js ]; then
 fi
 node --input-type=module - <<'CHECK_FIXTURES'
 import { readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { validateFixtures } from './local/web/bridge/model.mjs';
 validateFixtures(JSON.parse(readFileSync('.local/bridge-fixtures.json', 'utf8')));
+const build = JSON.parse(readFileSync('.local/client-bridge/build.json', 'utf8'));
+const hash = file => createHash('sha256').update(readFileSync(file)).digest('hex');
+if (build.extensionSha256 !== hash('local/client-bridge/bridge.as') ||
+    build.outputSha256 !== hash('.local/client-bridge/engine.swf') || build.originalTagsUnchanged !== true) {
+  console.error('The game menu overlay is out of date. Run python3 local/client-bridge/build.py, then restart.');
+  process.exit(1);
+}
 CHECK_FIXTURES
 curl --fail --silent --show-error --max-time 5 http://localhost:8080/healthz >/dev/null || {
   echo 'The baseline game is not ready on port 8080. Run ./local/start first.' >&2

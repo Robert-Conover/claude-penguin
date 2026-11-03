@@ -3,7 +3,9 @@
 The opt-in host engine connects Atlas in Bridge Alpha to one real Claude Code
 terminal on this Mac. The original game remains in its existing containers. The
 engine runs separately on loopback port 8081 and starts a Claude process only when
-you choose **Start / resume** in the puffle panel.
+you choose **Start / Resume** in the puffle card. After game login, that card and
+the **Work** and **Igloos** buttons are drawn inside the Flash client. The full
+Claude terminal opens separately when needed.
 
 This milestone supports one registered Git repository and one named worker. It
 uses the existing `bridgecheck` visitor and `bridge-alpha` fixture destination;
@@ -39,6 +41,10 @@ the baseline game's HTTP readiness. It installs locked dependencies with
 then runs the host server in the foreground. Keep that terminal open while
 agents work. The launcher does not start a Claude session automatically.
 
+After updating the client bridge source, rebuild with
+`python3 local/client-bridge/build.py` and reload the game. The launcher checks
+the overlay's source and output hashes so an older menu cannot be loaded silently.
+
 Open [the agent page](http://localhost:8081/?bridge=1&agents=1#/login), log in as
 `bridgecheck` with the disposable password `PenguinLocal2026!`, and choose
 Blizzard. If fixture setup originally used a different
@@ -48,23 +54,39 @@ The ordinary [game page](http://localhost:8080/) and
 
 ## Work with Atlas
 
-1. Open **Work**, connect an absolute path to an existing Git repository with at
-   least one commit, and name the session. For verification, use a disposable
-   repository with a clean working tree.
-2. Choose **Start / resume**. The Terminal tab contains the actual Claude Code
-   terminal. Answer folder trust, questions, and permissions there. The process
-   starts in manual permission mode and retains applicable Claude settings.
-3. Send an instruction in **New task or follow-up**, or type directly in the
-   terminal. The worker edits the registered checkout directly. This milestone
-   does not create an isolated branch or worktree for it.
-4. Visit Town or close the panel while Claude works. The PTY belongs to the host
-   engine, so game travel and browser disconnection do not terminate it. **Work**
-   remains available for attention and review without returning to the igloo.
-5. Open **Changes** to inspect tracked changes and bounded previews of untracked
-   files. The comparison starts at the commit recorded when the worker was
+1. Open **Work**. The setup card connects an absolute path to an existing Git
+   repository with at least one commit and lets you name the session. For
+   verification, use a disposable repository with a clean working tree.
+2. Once connected, click Atlas in its igloo or choose **Work** from anywhere on
+   the island. The native Flash puffle card shows its current state, a task field,
+   and the **Start / Resume**, **Interrupt**, **Send task**, **Open Claude**, and
+   **Changes** buttons.
+3. Choose **Start / Resume**, then **Open Claude** for folder trust, questions,
+   authentication, or permissions. This opens the real terminal in a separate
+   window styled to match the game. Claude starts in manual permission mode and
+   retains applicable settings. **Session details** reveals the repository path,
+   session UUID, and detailed runtime activity when needed.
+4. Enter an instruction on the native card and choose **Send task**, or type
+   directly in Claude's terminal. The worker edits the registered checkout
+   directly; this milestone does not create an isolated branch or worktree.
+5. Choose the native **Igloos** button to open the destination list, which uses
+   matching browser menu styling. Select your project or **Visit Town**. Closing
+   a menu or traveling leaves the host-owned PTY running. **Work** remains
+   available for attention and review without returning to the igloo.
+6. **Changes** opens a browser viewer for tracked changes and bounded untracked
+   previews. The comparison starts at the commit recorded when the worker was
    created, including subsequent agent commits and current working-tree edits.
    Pre-existing edits are identified but are not separated from agent edits.
-   Review and integration remain explicit actions outside the panel.
+   Review and integration remain explicit actions outside the menu. **Back to
+   puffle** returns from the terminal or Changes viewer to the native card.
+
+Before game login, or while the native menu is unavailable, **Work** uses a
+compact browser puffle card with the same game-inspired appearance. Its **Task**,
+**Changes**, and **Journal** tabs retain task entry, diff review, and history.
+The terminal is behind **Open Claude**, rather than the default view. Returning
+from a viewer also uses this fallback if the game cannot reopen its native card.
+The destination list and terminal remain browser surfaces; they are not original
+Flash menus.
 
 The worker UUID and Claude session UUID persist. Initial launch uses
 `--session-id`; once Claude confirms that session, later starts use that exact
@@ -81,13 +103,15 @@ Startup without a session hook becomes **Needs you** so trust or setup prompts
 remain visible. **Ready for review** means the turn ended; it does not establish
 that the requested task succeeded or that a change is correct.
 
-**Interrupt turn** sends one Escape. Escape is context-sensitive and may dismiss
+**Interrupt** on the native card, or **Interrupt turn** in the terminal window,
+sends one Escape. Escape is context-sensitive and may dismiss
 a prompt. The panel first reports an interrupt request; it reports **Interrupted**
 when subsequent terminal output confirms Claude returned to input. An unrelated
 idle marker is never treated as task completion. Use the terminal to inspect
 what happened before issuing another instruction.
 
-**Stop session** terminates the Claude process owned by this engine. It preserves
+**Stop session** in the terminal window terminates the Claude process owned by
+this engine. It preserves
 the conversation identity for an explicit resume. It is distinct from closing
 the panel, which leaves Claude running.
 

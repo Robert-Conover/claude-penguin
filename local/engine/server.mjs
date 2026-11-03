@@ -55,6 +55,8 @@ export function createEngineServer({ manager, publicOrigin = 'http://localhost:8
     ['/engine/client.mjs', [path.join(root, 'local/web/engine/client.mjs'), 'text/javascript; charset=utf-8']],
     ['/engine/client.css', [path.join(root, 'local/web/engine/client.css'), 'text/css; charset=utf-8']],
     ['/engine/ui-model.mjs', [path.join(root, 'local/web/engine/ui-model.mjs'), 'text/javascript; charset=utf-8']],
+    ['/engine/art/puffle-blue.svg', [path.join(root, 'local/web/engine/art/puffle-blue.svg'), 'image/svg+xml']],
+    ['/engine/art/puffle-blue.png', [path.join(root, 'local/web/engine/art/puffle-blue.png'), 'image/png']],
     ['/engine/vendor/xterm.js', [path.join(here, 'node_modules/@xterm/xterm/lib/xterm.js'), 'text/javascript; charset=utf-8']],
     ['/engine/vendor/xterm.css', [path.join(here, 'node_modules/@xterm/xterm/css/xterm.css'), 'text/css; charset=utf-8']],
     ['/engine/vendor/addon-fit.js', [path.join(here, 'node_modules/@xterm/addon-fit/lib/addon-fit.js'), 'text/javascript; charset=utf-8']],

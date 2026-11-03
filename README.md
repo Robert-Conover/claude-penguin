@@ -34,7 +34,7 @@ That's the idea behind Claude Penguin: the original game's rooms, penguins, and 
 | 🛍️ **Make it yours** | Catalog browsing, purchases, equipped color, and puffle adoption and walking have been checked in Safari. |
 | 💾 **Keep your progress** | Local accounts and game state persist. Backend reconnect and stack-restart checks passed. |
 | 🎮 **Keep testing** | Cart Surfer reaches active gameplay. Completed rounds, rewards, browser furniture placement, and some other interactions still need verification. |
-| ✨ **Puffles as agents** | The opt-in [agent engine](local/AGENT_ENGINE.md) connects Atlas to one repository and a persistent Claude Code terminal. Real startup, task submission, failure reporting, browser reconnect, and exact-session resume have been checked. Successful task execution and live permission/interrupt checks remain pending. |
+| ✨ **Puffles as agents** | The opt-in [agent engine](local/AGENT_ENGINE.md) gives Atlas a native in-game task card, connected to one repository and a persistent Claude Code session. The real terminal and changes open from the card. Startup, failure reporting, reconnect, and exact-session resume have been checked; successful task execution and live permission/interrupt checks remain pending. |
 
 See the [validation record](local/VALIDATION.md) for the exact tested scope. Available game assets do not imply that every original feature works.
 

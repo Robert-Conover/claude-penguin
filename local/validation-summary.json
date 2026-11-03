@@ -257,5 +257,53 @@
     "evidence_directory": ".local/engine-evidence/",
     "demo_state_directory": ".local/agent-engine-demo/",
     "handoff": "Demo engine remains on port 8081 with test Claude process stopped; saved session can resume after host sign-in."
+  },
+  "native_agent_menus": {
+    "date": "2026-11-03",
+    "status": "native_menu_and_secondary_views_verified",
+    "entrypoint": "http://localhost:8081/?bridge=1&agents=1#/login",
+    "browser": "Codex in-app browser on macOS",
+    "rendering": {
+      "native_avm1": [
+        "Work and Igloos HUD buttons",
+        "Puffle task/status card",
+        "Task text entry and session action buttons"
+      ],
+      "browser": [
+        "Repository setup and fallback card",
+        "Igloo chooser",
+        "Claude terminal",
+        "Changes and task journal"
+      ]
+    },
+    "browser_checks": [
+      "Native Work opens in-game card; external toolbar disappears",
+      "Actual Atlas click opens matching native card",
+      "Native Start resumes real Claude and lifecycle updates Waking up then Ready for a task",
+      "Typing an unsent native draft; Open Claude and Back preserve it",
+      "Open Claude hands off to actual terminal; stop process retains session",
+      "Native Changes opens read-only viewer; Back restores native card",
+      "Igloos HUD opens chooser and travels to mapped igloo",
+      "Closing native card restores penguin movement",
+      "Final terminal fit and expanded Changes layout"
+    ],
+    "regression_tests": {
+      "engine": 14,
+      "web_and_ui": 11,
+      "client_contract": 9,
+      "original_swf_preservation": 5
+    },
+    "live_http_checks": 95,
+    "live_socket_handshakes": 4,
+    "generated_overlay_sha256": "27f0f0f9bb74d22ce7cf9482708f66ceeb47b1f0f83d17858132a9c473935a79",
+    "art": "Original blue puffle sprite 13/frame 1 exported reproducibly from pinned archive",
+    "original_submodules_modified": false,
+    "new_model_prompts_submitted": 0,
+    "remaining": [
+      "Successful native task submission with model response after Claude sign-in",
+      "Actual tool permission approval and active-turn interruption",
+      "Minigame coexistence and other viewport/device acceptance"
+    ],
+    "evidence_directory": ".local/menu-evidence/"
   }
 }

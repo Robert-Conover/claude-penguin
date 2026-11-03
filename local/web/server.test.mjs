@@ -55,6 +55,7 @@ test('serves preserved client, renders local addresses, proxies web services and
     assert.match(experiment, /window.originalCallback/);
     assert.equal((await fetch(`${origin}/bridge/fixtures.json`)).status, 503);
     assert.equal((await fetch(`${origin}/bridge/panel.mjs`)).headers.get('content-type'), 'text/javascript; charset=utf-8');
+    assert.equal((await fetch(`${origin}/bridge/native-menu.mjs`)).headers.get('content-type'), 'text/javascript; charset=utf-8');
     assert.equal((await fetch(`${origin}/bridge/assets/engine.swf`)).status, 404);
     await put('.local/client-bridge/engine.swf', 'patched-fixture');
     await put('vanilla-media/media/play/v2/client/engine.swf', 'original-fixture');

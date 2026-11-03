@@ -1,4 +1,5 @@
 import { states, validateFixtures, projectAtSnapshot, projectForClick, waitForArrival } from './model.mjs';
+import { nativeMenuState, allowedNativeAction } from './native-menu.mjs';
 
 const agentMode = window.CP_AGENT_MODE === true;
 const work = document.createElement('button');
@@ -22,8 +23,9 @@ panel.innerHTML = `<button class="cp-close" aria-label="Close work panel">×</bu
   </section><p class="cp-evidence" id="cp-evidence">Log in as bridgecheck using the disposable local password.</p>`;
 document.body.append(toolbar, work, panel);
 if (agentMode) {
+  document.body.classList.add('cp-agent-mode');
   panel.querySelector('small').textContent = 'Project destinations';
-  panel.querySelector('.cp-notice').textContent = 'Connect one repository to Atlas in Bridge Alpha. Work opens its real Claude Code terminal from anywhere on the island.';
+  panel.querySelector('.cp-notice').textContent = 'Choose an igloo to visit your puffles.';
   panel.querySelector('.cp-states').hidden = true;
   panel.hidden = true;
   work.setAttribute('aria-expanded', 'false');
@@ -32,22 +34,49 @@ let fixtures, snapshot, selected, configuring = false, navigating = false, pollR
 let lastError = '', lastConnection = '';
 let engineState = window.ClaudePenguinEngine?.getState() ?? { connected: false, snapshot: { projects: [], workers: [] } };
 let lastAnimation = '';
+let nativeMenuReady = false;
 const statusByProject = new Map();
 const el = id => document.getElementById(id);
 function showPanel(show) {
   panel.hidden = !show;
   if (!agentMode) work.setAttribute('aria-expanded', String(show));
-  else if (show) window.ClaudePenguinEngine?.close();
+  else if (show) { hideNativeMenu(); window.ClaudePenguinEngine?.close(); }
 }
-work.onclick = () => agentMode ? window.ClaudePenguinEngine?.toggle() : showPanel(panel.hidden);
+work.onclick = () => agentMode ? openWork() : showPanel(panel.hidden);
 panel.querySelector('.cp-close').onclick = () => showPanel(false);
 if (agentMode) {
   el('cp-igloos').onclick = () => showPanel(panel.hidden);
-  window.addEventListener('cp-engine-state', ({ detail }) => { engineState = detail; render(); syncAnimation(); });
+  window.addEventListener('cp-engine-state', ({ detail }) => { engineState = detail; render(); syncAnimation(); syncNativeMenu(); });
   window.addEventListener('cp-engine-visibility', ({ detail }) => {
     work.setAttribute('aria-expanded', String(detail.open));
-    if (detail.open) panel.hidden = true;
+    if (detail.open) { panel.hidden = true; hideNativeMenu(); }
   });
+  window.addEventListener('cp-engine-native-return', event => { event.preventDefault(); openWork(event.detail.fixtureId); });
+}
+
+function hideNativeMenu() {
+  if (nativeMenuReady) try { call('cpBridgeHideAgentMenu'); } catch { /* Room is changing. */ }
+}
+function syncNativeMenu() {
+  if (!agentMode) return;
+  try {
+    const result = call('cpBridgeSetAgentMenu', nativeMenuState(engineState));
+    nativeMenuReady = result.nativeMenu === true && result.hudReady === true;
+  } catch { nativeMenuReady = false; }
+  document.body.classList.toggle('cp-native-agent-menu', nativeMenuReady);
+}
+function openWork(fixtureId) {
+  const state = nativeMenuState(engineState);
+  if (nativeMenuReady && state.fixtureId && (!fixtureId || state.fixtureId === fixtureId)) {
+    try {
+      panel.hidden = true;
+      window.ClaudePenguinEngine?.close();
+      call('cpBridgeShowAgentMenu');
+      return;
+    } catch { /* Keep the browser card available when the game menu cannot open. */ }
+  }
+  if (fixtureId) window.ClaudePenguinEngine?.openForFixture(fixtureId);
+  else window.ClaudePenguinEngine?.open();
 }
 
 function call(name, ...args) {
@@ -72,6 +101,8 @@ function render() {
     button.setAttribute('aria-pressed', String(statusByProject.get(selected?.projectId) === button.dataset.state));
   });
   if (agentMode) {
+    const currentProject = engineState.snapshot?.projects?.find(item => item.fixtureId === current?.projectId);
+    el('cp-location').textContent = navigating ? 'On our way…' : live ? (current ? `You are in ${currentProject?.name ?? current.name}.` : 'You are exploring the island.') : 'Log in as bridgecheck to visit your igloos.';
     const workers = engineState.snapshot?.workers ?? [];
     const attention = workers.filter(worker => ['needs-you', 'review', 'failed'].includes(worker.status)).length;
     work.textContent = !engineState.connected ? 'Work · offline' : attention ? `Work · ${attention} need attention` : 'Work';
@@ -80,7 +111,7 @@ function render() {
       const fixture = fixtures?.projects.find(item => item.projectId === button.dataset.fixtureId);
       const worker = project && workers.find(item => item.projectId === project.id);
       button.querySelector('.cp-project-name').textContent = project?.name ?? fixture?.name ?? 'Project igloo';
-      button.querySelector('span').textContent = worker ? `${worker.name} · ${engineState.connected ? worker.status : 'runtime offline'}` : `${fixture?.puffleName ?? 'Puffle'} · no connected session`;
+      button.querySelector('span').textContent = worker ? `${worker.name} · ${engineState.connected ? (states[worker.status] ?? ({idle:'Ready',offline:'Resting',starting:'Starting',review:'Ready for review'})[worker.status] ?? worker.status) : 'offline'}` : `${fixture?.puffleName ?? 'Puffle'} · not connected`;
     });
   } else {
     const attention = [...statusByProject.values()].filter(state => state === 'needs-you').length;
@@ -147,13 +178,21 @@ for (const [state, text] of agentMode ? [] : Object.entries(states)) {
 window.addEventListener('claude-penguin-bridge', ({ detail }) => {
   try {
     const event = typeof detail === 'string' ? JSON.parse(detail) : detail;
+    if (agentMode && event?.type === 'agent-menu-action') {
+      snapshot = call('cpBridgeSnapshot');
+      if (!allowedNativeAction(fixtures, snapshot, engineState, event) || navigating) return;
+      if (event.action === 'work') openWork();
+      else if (event.action === 'igloos') showPanel(panel.hidden);
+      else window.ClaudePenguinEngine?.handleNativeAction(event);
+      return;
+    }
     if (event?.type !== 'puffle-click') return;
     snapshot = call('cpBridgeSnapshot');
     const project = projectForClick(fixtures, snapshot, event);
     if (!project || navigating) return;
     if (agentMode) {
       showPanel(false);
-      window.ClaudePenguinEngine?.openForFixture(project.projectId);
+      openWork(project.projectId);
       return;
     }
     selected = project;
@@ -193,7 +232,7 @@ async function poll() {
     if (error.code === 'visitor-mismatch') { statusByProject.clear(); selected = null; el('cp-puffle').hidden = true; }
     connection(error.message);
   }
-  finally { pollRunning = false; render(); syncAnimation(); }
+  finally { pollRunning = false; render(); syncAnimation(); syncNativeMenu(); }
 }
 try {
   const response = await fetch('/bridge/fixtures.json');

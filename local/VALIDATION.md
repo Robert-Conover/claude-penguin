@@ -166,3 +166,48 @@ Raw evidence remains ignored under `.local/engine-evidence/`, with session state
 in `.local/agent-engine-demo/`. Default `.local/agent-engine/` state was not used.
 The demo engine remains on port 8081; its test Claude process was explicitly
 stopped after verification, retaining the saved conversation for later sign-in.
+
+
+## Native puffle menus — November 3, 2026, interface revision
+
+The agent page now uses owned AVM1 MovieClips and TextFields inside the original
+Flash interface for its Work/Igloos HUD and puffle task card. These are new native
+menus, styled against the original player card; they do not replace the stock
+puffle-care menu. The blue puffle portrait is exported from the pinned original
+sprite with [documented provenance](web/engine/art/README.md). All original engine
+tags and upstream submodules remain unchanged.
+
+Verified in the Codex in-app browser with `bridgecheck`:
+
+- Native HUD renders within the game and replaces the external toolbar after
+  entry. Work opens the native card, and clicking actual Atlas opens that same
+  card with its explicit project mapping.
+- Native Start/Resume starts the actual saved Claude session. Lifecycle events
+  update the card from Waking up to Ready for a task. A draft was typed in the
+  native text field but was not sent. Opening Claude and returning preserved
+  that draft in the native card; no additional model prompts were submitted.
+- Open Claude opens the secondary browser terminal, and its Stop action retains
+  the session identity. The native Changes button opens the read-only viewer;
+  Back returns to the Flash card. The final terminal layout has no unintended
+  horizontal overflow, and the expanded diff viewer uses the available width.
+- Igloos opens the game-styled destination chooser and successfully navigates to
+  the registered igloo. Closing the native card restores penguin movement.
+- The compact browser fallback card renders with the original puffle art before
+  game entry. Session paths/UUIDs remain in optional terminal details rather than
+  the main menu. Flash receives display status and fixture identity only.
+
+Passed: 14 engine tests, 11 wrapper/UI tests, nine client contract tests, five
+original-SWF preservation tests, 95 live HTTP checks and four game socket checks.
+The menu contracts cover visitor/project gates, modal cleanup, disconnected
+controls, duplicate-submit suppression until a real lifecycle event, and draft
+preservation without crossing project identities. The
+artwork reproducer was run twice with matching hashes. Shell syntax, launcher
+artifact freshness, JavaScript syntax, documentation links and whitespace were
+checked. The launcher refuses a stale source/output overlay instead of silently
+loading the previous menu after an update.
+
+Successful model execution still awaits Claude sign-in. Native submission with a
+successful response, real tool permission approval, active-turn interruption,
+minigame coexistence, and other viewport/device acceptance remain unverified.
+The demo Claude process is stopped; its saved session and host engine remain.
+Screenshots are ignored under `.local/menu-evidence/`.
