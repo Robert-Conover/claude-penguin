@@ -211,3 +211,79 @@ successful response, real tool permission approval, active-turn interruption,
 minigame coexistence, and other viewport/device acceptance remain unverified.
 The demo Claude process is stopped; its saved session and host engine remain.
 Screenshots are ignored under `.local/menu-evidence/`.
+
+## Authenticated agent acceptance and CI — November 3, 2026, later host pass
+
+**Real coding, manual approvals, terminal retry, and exact-session runtime resume
+passed. Full in-game acceptance remains pending.** This pass used Claude Code
+2.1.317 on macOS, the existing disposable repository, the saved Atlas conversation,
+and `.local/agent-engine-demo/` state. Commands used the engine's authenticated
+HTTP/WebSocket interfaces and actual Claude PTY, not simulated hooks. No normal
+player account was used or modified.
+
+The Mac was locked. Computer Use reported that automatic unlock could not unlock
+it; the Codex in-app browser also returned `Local browser use is disabled in Work
+settings` on repeated attempts. Consequently this pass does not establish native
+card submission, browser reload, Town travel during successful execution, visual
+attention/animation behavior, or rendered review of these new changes. Earlier
+browser observations above remain dated historical evidence.
+
+Passed through the host engine:
+
+- Confirmed host authentication and resumed the original saved Claude session.
+- Submitted a greeting fix: missing/undefined names default to `penguin`, while
+  named greetings remain intact. Claude changed `greeting.mjs`, created
+  `greeting.test.mjs`, and ran both Node tests successfully. An independent rerun
+  also passed both tests. These two files are actual Claude-authored work.
+- Observed real Bash and Write permission requests, corresponding `needs-you`
+  lifecycle state, and continued work after one-time terminal approvals. Manual
+  permissions remained enabled; no persistent allow rules were created.
+- Verified the changes endpoint includes the tracked code diff and the untracked
+  test. SHA256 comparisons confirmed the earlier Codex-authored README and preview
+  fixtures, and package manifest, were unchanged. Those older viewer fixtures
+  remain separate evidence and are still included in the cumulative diff.
+- Reattached fresh WebSocket clients to the same PTY and obtained terminal replay.
+  A normal host shutdown/restart preserved project, worker, and conversation IDs;
+  the new worker process used that exact `--resume` UUID. Claude recalled both
+  verification words and the code/test result after restart.
+- Interrupted a real active response through the engine's Escape action. The real
+  terminal returned to input and later displayed its interruption message. A
+  separate attempted `sleep 45` check was refused by Claude before execution and
+  is not evidence of tool-process cancellation.
+
+The interruption pass exposed a real compatibility gap: this CLI/terminal did not
+emit the OSC idle marker expected by the adapter, leaving the old UI state at
+`working` after cancellation. The corrected adapter reports `needs-you` with an
+explicit unconfirmed-cancellation message. It retains the unfinished task until
+an authenticated lifecycle event or supported marker resolves it. The native
+card uses generic attention text and keeps terminal access available. It does
+not infer completion from restored prompt text or from sending Escape. A live
+retest confirmed attention, terminal retry, and transition back to working/review;
+the previous task became interrupted when the retry's actual prompt hook arrived.
+Interrupt is now a no-op for already idle or ended turns, including a late click
+racing completion; a live idle-interrupt check preserved the ready state and
+revision. The [official hook contract](https://code.claude.com/docs/en/hooks#stop)
+does not send Stop for user interruption.
+
+Regression validation: 17 engine, 11 web/UI, nine client contract, and five SWF
+preservation tests passed with local artifacts present. The added regressions
+cover missing confirmation, late tool/lifecycle events, stale idle markers, and
+idle/completed-turn interruption. The workflow was checked with actionlint and
+its commands were exercised in source-only copies on macOS and Linux with Node
+22.23.4. Linux's final source-only run passed 41 checks and explicitly skipped the
+one real-overlay test. Local Python versions were 3.9.6/macOS and 3.11.2/Linux;
+the workflow selects Python 3.12. GitHub-hosted execution has not run yet.
+
+The new `.github/workflows/regression.yml` runs on PRs to and pushes on `dev` and
+`main`, plus manual dispatch, with Ubuntu/macOS jobs and read-only permissions.
+It installs locked npm dependencies without scripts and downloads no media or
+provider credentials. Its expected generated-overlay skip, and separate live
+acceptance responsibilities, are documented in CONTRIBUTING.md. It does not
+configure required branch checks.
+
+Raw lifecycle events, restart identity evidence, baseline hashes, and terminal
+capture stay ignored under `.local/acceptance-2026-11-03/`. The game services and
+host engine remain available; the test Claude process is stopped with its saved
+session and actual changes preserved. Remaining acceptance: the native browser
+loop after browser access is enabled, automatic interrupt confirmation on this
+CLI, running-tool cancellation, animation coverage, and minigame coexistence.

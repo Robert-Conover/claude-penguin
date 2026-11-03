@@ -1,6 +1,6 @@
 # Contributing to Claude Penguin
 
-The game baseline runs locally. Our next milestone is connecting real Claude Code sessions to puffles. The README describes the direction; it is not an implementation specification for that integration.
+The game baseline runs locally, and an opt-in host engine connects one puffle to a persistent Claude Code session. See the [agent engine guide](local/AGENT_ENGINE.md) for the supported scope and the dated [validation record](local/VALIDATION.md) for live acceptance evidence and remaining gaps.
 
 ## Branches and promotions
 
@@ -31,6 +31,14 @@ Use [LOCAL_SETUP.md](LOCAL_SETUP.md) to run the game. Most owned runtime code li
 Use the [runtime check matrix](local/AGENTS.md#validation-by-change) to choose validation. Documentation changes need link and rendering checks; they do not require restarting the game. For runtime work, report the command you ran and its result. Call out unavailable environments or untested UI paths plainly.
 
 A useful pull request explains the concrete problem, the resulting behavior, and relevant validation. For a visible change, include an actual screenshot or recording and label mockups as concepts. Preserve upstream attribution and avoid adding generated artifacts or local credentials.
+
+## Automated regression checks
+
+The [Regression checks workflow](.github/workflows/regression.yml) runs on pull requests targeting `dev` or `main`, pushes to those branches, and manual dispatch. It uses Node 22 and Python 3.12 on Ubuntu and macOS, installs locked dependencies with scripts disabled, checks launcher syntax, and runs the engine, web/UI, game-bridge contract, and synthetic SWF preservation suites.
+
+CI checks out only owned source. It does not download media submodules or start the game or Claude. The generated-overlay preservation test explicitly skips without a built overlay; run the [overlay build and preservation checks](local/client-bridge/README.md#build-and-verify) locally for client changes. Houdini container regressions, real game transport, browser interactions, and live Claude permissions/interruption also remain separate acceptance checks. A green workflow does not establish those behaviors.
+
+The workflow grants read-only repository permissions and needs no provider credentials. These checks do not configure branch protection or make themselves required for merging.
 
 ## Report a bug
 

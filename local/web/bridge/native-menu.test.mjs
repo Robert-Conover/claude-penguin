@@ -32,4 +32,13 @@ test('native actions require the fixture visitor, explicit matching project and 
   assert.equal(allowedNativeAction(fixtures, game, state, { ...action, action: 'start' }), false);
   assert.equal(allowedNativeAction(fixtures, game, state, { ...action, text: '' }), false);
   assert.equal(allowedNativeAction(fixtures, game, state, { ...action, action: 'terminal' }), true);
+  const interruptPending = structuredClone(state);
+  interruptPending.snapshot.workers[0].status = 'needs-you';
+  interruptPending.snapshot.workers[0].activity = 'Private interruption detail';
+  const menu = nativeMenuState(interruptPending);
+  assert.equal(menu.attention, 1);
+  assert.equal(menu.canSubmit, false);
+  assert.doesNotMatch(menu.activity, /private|permission|question/i);
+  assert.equal(allowedNativeAction(fixtures, game, interruptPending, action), false);
+  assert.equal(allowedNativeAction(fixtures, game, interruptPending, { ...action, action: 'terminal' }), true);
 });

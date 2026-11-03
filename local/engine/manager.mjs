@@ -19,6 +19,7 @@ const MAX_INPUT = 64 * 1024;
 const MAX_DIFF = 200000;
 const MAX_UNTRACKED = 20;
 const MAX_FILE = 32000;
+const INTERRUPT_ACTIVITY = 'Interrupt requested. Cancellation is not yet confirmed. Check the terminal; Escape may also dismiss a prompt.';
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 const now = () => new Date().toISOString();
 const copy = value => structuredClone(value);
@@ -228,8 +229,8 @@ export async function createManager({ stateDir, fixtures, onEvent = () => {}, cl
       term.loadAddon(serializer);
       Object.assign(runtime, { term, serializer });
       term.parser.registerOscHandler(9, data => {
-        // Claude emits an idle progress marker after Escape, which has no Stop
-        // hook. This only confirms a requested interrupt returned to input.
+        // Some Claude versions emit an idle progress marker after Escape, which
+        // has no Stop hook. Without it, retain explicit unconfirmed attention.
         if (runtime.interruptPending && runtime.parsingSequence > runtime.interruptAfterSequence && /^4;0(?:;|$)/.test(data) && runtime.pty) {
           runtime.interruptPending = false;
           taskState(worker, 'interrupted');
@@ -336,13 +337,14 @@ export async function createManager({ stateDir, fixtures, onEvent = () => {}, cl
   function interrupt(target) {
     const worker = workerFor(target);
     const runtime = activeRuntime(worker);
+    // A click racing a completed turn must not replace confirmed readiness or
+    // failure with an unresolved cancellation, or send Escape into idle input.
+    if (['idle', 'review', 'interrupted', 'failed'].includes(worker.status)) return workerView(worker);
     runtime.interruptPending = true;
     runtime.interruptAfterSequence = runtime.sequence;
     runtime.pty.write('\x1b');
     // Escape is context-sensitive. Do not claim execution stopped without a real lifecycle signal.
-    worker.activity = 'Interrupt requested. Check the terminal; Escape may also dismiss a prompt.';
-    worker.updatedAt = now();
-    commit();
+    update(worker, 'needs-you', INTERRUPT_ACTIVITY);
     return workerView(worker);
   }
 
@@ -398,6 +400,7 @@ export async function createManager({ stateDir, fixtures, onEvent = () => {}, cl
     switch (type) {
       case 'SessionStart':
         if (runtime.started && event.source === 'compact') { update(worker, worker.status, 'Claude compacted the current conversation.'); break; }
+        runtime.interruptPending = false;
         runtime.started = true;
         clearTimeout(runtime.startupTimer);
         worker.established = true;
@@ -415,6 +418,7 @@ export async function createManager({ stateDir, fixtures, onEvent = () => {}, cl
         break;
       }
       case 'PreToolUse':
+        if (runtime.interruptPending) { update(worker, 'needs-you', INTERRUPT_ACTIVITY); break; }
         if (event.tool_name === 'AskUserQuestion') { runtime.lastNeedsYouAt = Date.now(); update(worker, 'needs-you', 'Claude has a question. Answer in the terminal.'); }
         else update(worker, 'working', `Using ${String(event.tool_name ?? 'a tool').slice(0, 80)}.`);
         break;
@@ -424,6 +428,7 @@ export async function createManager({ stateDir, fixtures, onEvent = () => {}, cl
         break;
       case 'PostToolUse':
       case 'PostToolUseFailure':
+        if (runtime.interruptPending) { update(worker, 'needs-you', INTERRUPT_ACTIVITY); break; }
         update(worker, 'working', type === 'PostToolUseFailure' ? 'A tool reported a failure; Claude may recover or ask for help.' : 'Claude is working.');
         break;
       case 'Notification':
@@ -435,12 +440,14 @@ export async function createManager({ stateDir, fixtures, onEvent = () => {}, cl
         update(worker, 'review', 'Claude’s turn ended. Review the response and changes; completion has not been verified.');
         break;
       case 'StopFailure':
+        runtime.interruptPending = false;
         taskState(worker, 'failed');
         worker.lastError = `Claude reported ${String(event.error ?? 'an API failure').slice(0, 120)}. Check the terminal.`;
         update(worker, 'failed', worker.lastError);
         break;
       case 'SessionEnd':
         // /clear and /resume can end a conversation without terminating the PTY.
+        runtime.interruptPending = false;
         taskState(worker, 'interrupted');
         update(worker, 'interrupted', `Claude ended this session (${String(event.reason ?? 'unknown').slice(0, 60)}). The puffle remains bound to its saved session.`);
         break;

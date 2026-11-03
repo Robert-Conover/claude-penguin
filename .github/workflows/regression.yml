@@ -1,0 +1,89 @@
+name: Regression checks
+
+on:
+  push:
+    branches: [dev, main]
+  pull_request:
+    branches: [dev, main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  regression:
+    name: Regression (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+    steps:
+      - name: Check out owned source without media submodules
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+          submodules: false
+          fetch-depth: 2
+
+      - name: Set up Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: |
+            local/engine/package-lock.json
+            local/web/package-lock.json
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
+
+      - name: Install locked dependencies
+        run: |
+          npm ci --ignore-scripts --prefix local/engine
+          npm ci --ignore-scripts --prefix local/web
+
+      - name: Check launcher syntax
+        run: |
+          for file in local/start local/stop local/compose local/verify local/agent-start local/bridge-fixtures; do
+            sh -n "$file"
+          done
+          bash -n local/web/setup-ruffle.sh
+
+      - name: Test agent engine with disposable repositories and fake PTYs
+        run: npm test --prefix local/engine
+
+      - name: Test browser wrapper and UI contracts
+        run: npm test --prefix local/web
+
+      - name: Test game bridge contracts
+        run: node --test local/client-bridge/bridge.test.mjs
+
+      - name: Test synthetic SWF preservation
+        # The real generated-overlay test is expected to skip on a source-only checkout.
+        run: python3 -m unittest discover -v -s local/client-bridge -p 'test_*.py'
+
+      - name: Check whitespace
+        # On pull requests HEAD is GitHub's merge commit; compare against its base parent.
+        run: git diff --check HEAD^ HEAD
+
+      - name: Describe coverage limits
+        if: always()
+        run: |
+          cat >> "$GITHUB_STEP_SUMMARY" <<'EOF'
+          These checks use fake Claude PTYs, temporary repositories, local HTTP/socket
+          fixtures, client contract doubles, and four synthetic SWF preservation tests.
+          The generated-overlay preservation test skips because this job does not
+          download the pinned media archive or build the overlay.
+
+          Live Claude execution/permissions, the real overlay build and preservation,
+          Houdini container regressions, game-server checks, and interactive gameplay
+          remain separate checks documented in `local/VALIDATION.md` and `local/AGENTS.md`.
+          EOF
