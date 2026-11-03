@@ -34,7 +34,7 @@ That's the idea behind Claude Penguin: the original game's rooms, penguins, and 
 | 🛍️ **Make it yours** | Catalog browsing, purchases, equipped color, and puffle adoption and walking have been checked in Safari. |
 | 💾 **Keep your progress** | Local accounts and game state persist. Backend reconnect and stack-restart checks passed. |
 | 🎮 **Keep testing** | Cart Surfer reaches active gameplay. Completed rounds, rewards, browser furniture placement, and some other interactions still need verification. |
-| ✨ **Puffles as agents** | Planned. No Claude Code connection, task execution, or agent-status UI is implemented yet. |
+| ✨ **Puffles as agents** | An opt-in [game bridge experiment](local/GAME_BRIDGE.md) connects fixture igloos and puffle clicks to a panel with simulated animation cues. Real Claude Code sessions and task execution are still planned. |
 
 See the [validation record](local/VALIDATION.md) for the exact tested scope. Available game assets do not imply that every original feature works.
 

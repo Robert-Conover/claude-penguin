@@ -6,11 +6,12 @@ import { readFile, stat, realpath } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { WebSocket, WebSocketServer, createWebSocketStream } from 'ws';
 import { pipeline } from 'node:stream';
+import { validateFixtures } from './bridge/model.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const types = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
-  '.css': 'text/css; charset=utf-8', '.xml': 'application/xml; charset=utf-8',
+  '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.xml': 'application/xml; charset=utf-8',
   '.json': 'application/json; charset=utf-8', '.txt': 'text/plain; charset=utf-8',
   '.swf': 'application/x-shockwave-flash', '.wasm': 'application/wasm',
   '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
@@ -158,11 +159,29 @@ export function createLocalServer(options = {}) {
         const ready = files.every(Boolean);
         return reply(res, ready ? 200 : 503, JSON.stringify({ status: ready ? 'ready' : 'not_ready', clientPresent: files[0], rufflePresent: files[1] }), 'application/json', req.method);
       }
+      // The experiment is opt-in per page. Never replace archived assets globally.
+      if (urlPath === '/bridge/fixtures.json') {
+        try {
+          const manifest = await readFile(path.join(root, '.local/bridge-fixtures.json'), 'utf8');
+          return reply(res, 200, JSON.stringify(validateFixtures(JSON.parse(manifest))), types['.json'], req.method);
+        } catch (error) {
+          if (error.code !== 'ENOENT') throw error;
+          return reply(res, 503, JSON.stringify({ error: 'Run ./local/bridge-fixtures first.' }), types['.json'], req.method);
+        }
+      }
+      if (urlPath === '/bridge/assets/engine.swf') {
+        return await serveFile(req, res, path.join(root, '.local/client-bridge'), '/' + path.basename(urlPath));
+      }
+      if (/^\/bridge\/(bootstrap\.js|panel\.mjs|model\.mjs|panel\.css)$/.test(urlPath)) {
+        return await serveFile(req, res, path.join(here, 'bridge'), '/' + path.basename(urlPath));
+      }
       if (['/', '/index.html', '/en/', '/en/index.html', '/es/', '/fr/', '/pt/'].includes(urlPath)) {
         const lang = /^\/(es|fr|pt)\//.exec(urlPath)?.[1];
         const templatePath = path.join(root, 'templates/vanilla-media/play', lang ?? '', 'index.html.template');
         const original = await readFile(templatePath, 'utf8');
-        const html = renderTemplate(original, env).replace(/(<head\b[^>]*>)/i, `$1\n${injectRuffle}`);
+        const bridge = url.searchParams.get('bridge') === '1';
+        const injection = bridge ? injectRuffle.replace('<script src="/ruffle/ruffle.js">', '<script src="/bridge/bootstrap.js"></script>\n<link rel="stylesheet" href="/bridge/panel.css">\n<script type="module" src="/bridge/panel.mjs"></script>\n<script src="/ruffle/ruffle.js">') : injectRuffle;
+        const html = renderTemplate(original, env).replace(/(<head\b[^>]*>)/i, `$1\n${injection}`);
         return reply(res, 200, html, types['.html'], req.method);
       }
       if (['/servers.xml', '/play/servers.xml', '/media/servers.xml', '/media/play/servers.xml'].includes(urlPath)) {

@@ -1,6 +1,6 @@
 # Baseline validation — November 3, 2026
 
-**Core browser gameplay and backend verified; acceptance coverage is partial.** No agent integration has started.
+**Core browser gameplay and backend verified; acceptance coverage is partial.** At this baseline checkpoint, no agent integration had started. The later game-bridge experiment is recorded separately below.
 
 ## Passed
 
@@ -63,3 +63,52 @@ Only the English Blizzard world is running. Other languages, every room/item, ev
 - `.local/start-verification.log`
 
 Raw logs and reports are local ignored artifacts. The original Flash assets and server sources have not been modified; environment configuration and the browser/protocol compatibility wrapper live under `local/`.
+
+## Game bridge experiment — November 3, 2026, later pass
+
+The opt-in [bridge lab](GAME_BRIDGE.md) was exercised in Codex's in-app browser on
+macOS against the same running local stack and pinned Ruffle. This is game/client
+integration only; no Claude Code session or coding task ran.
+
+Passed interactively with the dedicated `bridgecheck` visitor:
+
+- Original login and Blizzard world entry, including the initial tour dialogs.
+- Browser-to-Flash callbacks register from the generated AVM1 engine overlay.
+- Bridge Alpha and Bridge Beta load as distinct rooms (2105 and 2106), with
+  owners 105 and 106. Their active layout mappings are 4 and 5, checked separately
+  through the game protocol.
+- Clicking actual Atlas and Comet puffles opens the panel with the corresponding
+  project, owner, and puffle IDs (4 and 5); no screen-coordinate proxy is used.
+- Working visibly makes Atlas play with a ball. Needs you produces its existing
+  gum animation; Interrupted visibly changes Comet to the resting frame. These
+  are simulated cues, not reported execution states.
+- Travel to Town succeeds and Work retains an explicitly simulated attention
+  count. The selected puffle remains inspectable there, with animation controls
+  disabled outside its mapped igloo.
+- A fresh browser reload/login reconnects, clears page-local simulated cues, and
+  retains the saved Bridge Beta/Comet mapping. Clicking Comet again identifies
+  owner 106 and puffle 5 correctly.
+
+Verification commands passed: four wrapper/model tests, four client contract
+tests, five binary-preservation tests, 95 live HTTP checks, four real socket
+handshakes, and the two-project protocol verification (including reconnect and
+frame delivery). Repeated fixture seeding reported all existing fixture accounts
+unchanged. A read-only query confirmed the interactive `player` still has 99,580
+coins and equipped Orange (6). No test logged into or mutated that account.
+
+The browser pass caught and corrected the modern igloo owner getter mismatch
+(`getIglooPlayerID()` is required) and a UI wait that treated a room-loading
+snapshot as failure. Both are covered by regressions. A header Work button keeps
+game controls unobstructed. Ordinary play pages retain their original client;
+submodule revisions and tracked content remain unchanged. The generated overlay
+preserves every original decompressed SWF tag.
+
+Remaining scope: a custom map neighborhood, real repository/session registration,
+terminal and permission handling, durable agent state, diff review, and worktree
+isolation. Ready/Failed frame commands have contract coverage but their complete
+animations were not separately accepted in this browser pass. No minigame was
+retested for this bridge change. The remembered cue is page-local and does not
+reapply an animation after travel or survive a reload.
+
+Raw evidence: `.local/bridge-verification.json`,
+`.local/client-bridge/build.json`, and `.local/bridge-evidence/` screenshots.
