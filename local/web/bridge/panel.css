@@ -1,0 +1,22 @@
+#cp-work, #cp-bridge-panel { font: 15px/1.45 system-ui, sans-serif; color: #173b50; box-sizing: border-box; }
+#section-header nav { visibility: hidden; }
+#cp-bridge-toolbar { position: fixed; top: 0; left: 0; right: 0; height: 48px; z-index: 10002; background: #08648e; color: white; display: flex; align-items: center; gap: 20px; padding: 0 20px; font: 14px system-ui, sans-serif; }
+#cp-bridge-toolbar a { color: white; text-decoration: underline; }
+#cp-work { position: fixed; right: 20px; top: 4px; z-index: 10003; background: #fff8dc; border: 2px solid #096d9b; border-radius: 30px; padding: 8px 18px; font-weight: 750; cursor: pointer; }
+#cp-bridge-panel { position: fixed; right: 18px; top: 58px; bottom: 12px; width: min(350px, calc(100vw - 36px)); z-index: 10001; background: #f8fdff; border: 3px solid #096d9b; border-radius: 16px; box-shadow: 0 8px 32px #00354f55; padding: 20px; overflow-y: auto; }
+#cp-bridge-panel[hidden] { display: none; }
+#cp-bridge-panel [hidden] { display: none; }
+#cp-bridge-panel h2 { color: #075580; font-size: 22px; margin: 0 0 4px; }
+#cp-bridge-panel h3 { font-size: 18px; margin: 0 0 6px; }
+#cp-bridge-panel p { margin: 8px 0; }
+#cp-bridge-panel small { color: #466272; }
+#cp-bridge-panel button { font: inherit; cursor: pointer; border: 1px solid #1878a2; border-radius: 8px; padding: 8px 10px; background: white; color: #075580; }
+#cp-bridge-panel button:disabled { opacity: .5; cursor: default; }
+#cp-bridge-panel .cp-close { float: right; border: 0; padding: 0 6px; font-size: 24px; }
+#cp-bridge-panel .cp-project { display: block; text-align: left; width: 100%; margin: 8px 0; background: #e9f5fc; }
+#cp-bridge-panel .cp-project span { display: block; font-size: 12px; }
+#cp-bridge-panel .cp-states { display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0; }
+#cp-bridge-panel .cp-states [aria-pressed=true] { color: white; background: #086b96; }
+#cp-bridge-panel .cp-location { border-block: 1px solid #c5dde9; padding: 10px 0; font-size: 13px; }
+#cp-bridge-panel .cp-notice { background: #fff4cc; border-radius: 8px; padding: 10px; font-size: 13px; }
+#cp-bridge-panel .cp-evidence { margin-top: 14px; font-size: 12px; overflow-wrap: anywhere; }

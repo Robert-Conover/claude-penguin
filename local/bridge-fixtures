@@ -1,0 +1,12 @@
+#!/bin/sh
+set -eu
+project_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+cd "$project_dir"
+mkdir -p .local
+export CLUB_PENGUIN_TEST_PASSWORD="${CLUB_PENGUIN_TEST_PASSWORD:-PenguinLocal2026!}"
+seed_report=$(mktemp .local/bridge-seed.XXXXXX)
+trap 'rm -f "$seed_report"' EXIT HUP INT TERM
+./local/compose run --rm --no-deps -e CLUB_PENGUIN_TEST_PASSWORD \
+  --entrypoint python seed /project/local/bridge_seed.py > "$seed_report"
+mv "$seed_report" .local/bridge-seed.json
+python3 local/verify_bridge.py --initialize
