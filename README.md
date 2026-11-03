@@ -48,15 +48,15 @@ Checked milestones are implemented within the scope shown. Unchecked rows track 
 
 | Status | Milestone | What it delivers |
 | :---: | :--- | :--- |
-| ☑ Built | **Local island** | Original client running locally, core exploration and shops, puffles, and persistent player state. |
-| ☑ Built | **Game bridge** | Two fixture igloos with explicit identities, real puffle clicks, and animation controls. |
-| ☑ Built | **Persistent puffle session** | One repository and named Claude terminal, lifecycle status, task history, reconnect/resume, and changes review. |
-| ☑ Built | **Native puffle menus** | In-game Work/Igloos buttons and task card, original puffle artwork, and drafts retained across secondary views. |
-| ☐ Next | **Complete the real agent loop** | Give a task, travel to Town, answer a real permission request, interrupt when needed, and return to review Claude-generated changes with accurate status cues. |
-| ☐ Planned | **Your Igloos neighborhood** | A map destination for multiple repositories, each with its own igloo, activity count, and separate project state. Work stays accessible across the island. |
-| ☐ Planned | **Multiple puffles per project** | Concurrent agents with isolated branches/worktrees and explicit review and integration actions. |
-| ☐ Planned | **Project coordination** | Task boards, useful furniture interactions, and temporary helper puffles for delegated work. |
-| ☐ Ongoing | **Gameplay acceptance** | Completed minigame rounds and rewards, browser furniture placement and puffle care, agent/minigame coexistence, and broader display checks. |
+| ☑&nbsp;Built | **Local island** | Original client running locally, core exploration and shops, puffles, and persistent player state. |
+| ☑&nbsp;Built | **Game bridge** | Two fixture igloos with explicit identities, real puffle clicks, and animation controls. |
+| ☑&nbsp;Built | **Persistent puffle session** | One repository and named Claude terminal, lifecycle status, task history, reconnect/resume, and changes review. |
+| ☑&nbsp;Built | **Native puffle menus** | In-game Work/Igloos buttons and task card, original puffle artwork, and drafts retained across secondary views. |
+| ☐&nbsp;Next | **Complete the real agent loop** | Give a task, travel to Town, answer a real permission request, interrupt when needed, and return to review Claude-generated changes with accurate status cues. |
+| ☐&nbsp;Planned | **Your Igloos neighborhood** | A map destination for multiple repositories, each with its own igloo, activity count, and separate project state. Work stays accessible across the island. |
+| ☐&nbsp;Planned | **Multiple puffles per project** | Concurrent agents with isolated branches/worktrees and explicit review and integration actions. |
+| ☐&nbsp;Planned | **Project coordination** | Task boards, useful furniture interactions, and temporary helper puffles for delegated work. |
+| ☐&nbsp;Ongoing | **Gameplay acceptance** | Completed minigame rounds and rewards, browser furniture placement and puffle care, agent/minigame coexistence, and broader display checks. |
 
 The next demo target: **give a puffle a real coding task, walk into Town, get notified when it needs you, and return to review an actual change.** Puffle colors stay cosmetic; labels and animations communicate work status.
 
