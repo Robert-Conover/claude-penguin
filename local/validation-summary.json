@@ -168,5 +168,142 @@
     "nx#bimp: map analytics",
     "p#bipa: puffle adoption analytics",
     "g#im: igloo editing start/stop notification"
-  ]
+  ],
+  "game_bridge_experiment": {
+    "date": "2026-11-03",
+    "status": "game_bridge_verified_no_agent_runtime",
+    "entrypoint": "http://localhost:8080/?bridge=1#/login",
+    "browser": "Codex in-app browser on macOS",
+    "visitor": "bridgecheck",
+    "browser_checks": [
+      "Fixture login and Blizzard world entry",
+      "ExternalInterface callbacks and real room snapshots",
+      "Distinct project igloos 2105 and 2106",
+      "Actual Atlas and Comet clicks open panel with owner and puffle identities",
+      "Working ball animation, Needs you gum cue, Interrupted rest cue",
+      "Town travel with page-local simulated attention and disabled remote animation controls",
+      "Fresh browser login retains Bridge Beta and Comet identity; simulated cues reset"
+    ],
+    "regression_tests": {
+      "wrapper_and_model": 4,
+      "client_contract": 4,
+      "binary_preservation": 5
+    },
+    "live_http_checks": 95,
+    "live_socket_handshakes": 4,
+    "protocol_verification": "passed_two_projects_travel_frame_delivery_reconnect",
+    "repeat_seeding": "existing_accounts_unchanged",
+    "player_read_only_check": {
+      "coins": 99580,
+      "color": 6
+    },
+    "original_submodules_modified": false,
+    "generated_overlay": "engine.swf_only_original_tags_preserved",
+    "agent_execution": false,
+    "cue_persistence": "current_page_only_no_animation_replay_after_travel",
+    "remaining": [
+      "Original map neighborhood",
+      "Real repository/session registration",
+      "Claude terminal permissions and interrupt",
+      "Diff review and persistent execution state",
+      "Worktree isolation",
+      "Full visual acceptance of Ready and Failed animations",
+      "Minigame interaction regression"
+    ]
+  },
+  "agent_engine": {
+    "date": "2026-11-03",
+    "status": "real_session_connected_task_execution_blocked_by_expired_auth",
+    "entrypoint": "http://localhost:8081/?bridge=1&agents=1#/login",
+    "browser": "Codex in-app browser on macOS",
+    "claude_version": "2.1.304",
+    "scope": "One disposable repository, bridge-alpha/Atlas, one persistent Claude session",
+    "browser_checks": [
+      "Register canonical repository and create named session",
+      "Actual Claude PTY, folder-trust prompt and SessionStart hook",
+      "Task form submits to Claude; UserPromptSubmit reports Working",
+      "Real expired-login failure maps to Failed and Work attention",
+      "Fixture game login and registered igloo navigation through host proxy",
+      "Actual Atlas click opens matching persistent session",
+      "Tracked and untracked diff rendering using explicitly Codex-authored fixture edits",
+      "Task history records failed prompt",
+      "Browser reload preserves worker ID, session UUID, live PID and terminal contents",
+      "Stop session terminates owned Claude process and retains identity",
+      "Runtime shutdown disables controls; restart reconnects fresh state",
+      "Exact --resume UUID confirmed in process arguments and SessionStart; previous prompt restored",
+      "Town travel while resumed PTY stays running; Work opens terminal without returning to igloo"
+    ],
+    "regression_tests": {
+      "engine_manager_state_http_websocket": 14,
+      "web_wrapper_bridge_and_engine_ui": 9,
+      "client_contract": 4,
+      "binary_preservation": 5
+    },
+    "live_http_checks": 95,
+    "live_socket_handshakes": 4,
+    "auth_observation": "Host initially reported logged in; first submitted prompt returned Login expired, StopFailure authentication_failed; subsequent auth status logged out. User chose to sign in later.",
+    "coding_task_success": false,
+    "claude_generated_changes": false,
+    "diff_fixture_author": "Codex, explicitly labeled; not produced by Claude",
+    "original_submodules_modified": false,
+    "remaining": [
+      "Successful real coding task after Claude sign-in",
+      "Actual permission request and approval",
+      "Active-turn interrupt and visual lifecycle animation acceptance",
+      "Multiple project provisioning and custom map neighborhood",
+      "Concurrent workers with isolated worktrees",
+      "Minigame interaction regression"
+    ],
+    "evidence_directory": ".local/engine-evidence/",
+    "demo_state_directory": ".local/agent-engine-demo/",
+    "handoff": "Demo engine remains on port 8081 with test Claude process stopped; saved session can resume after host sign-in."
+  },
+  "native_agent_menus": {
+    "date": "2026-11-03",
+    "status": "native_menu_and_secondary_views_verified",
+    "entrypoint": "http://localhost:8081/?bridge=1&agents=1#/login",
+    "browser": "Codex in-app browser on macOS",
+    "rendering": {
+      "native_avm1": [
+        "Work and Igloos HUD buttons",
+        "Puffle task/status card",
+        "Task text entry and session action buttons"
+      ],
+      "browser": [
+        "Repository setup and fallback card",
+        "Igloo chooser",
+        "Claude terminal",
+        "Changes and task journal"
+      ]
+    },
+    "browser_checks": [
+      "Native Work opens in-game card; external toolbar disappears",
+      "Actual Atlas click opens matching native card",
+      "Native Start resumes real Claude and lifecycle updates Waking up then Ready for a task",
+      "Typing an unsent native draft; Open Claude and Back preserve it",
+      "Open Claude hands off to actual terminal; stop process retains session",
+      "Native Changes opens read-only viewer; Back restores native card",
+      "Igloos HUD opens chooser and travels to mapped igloo",
+      "Closing native card restores penguin movement",
+      "Final terminal fit and expanded Changes layout"
+    ],
+    "regression_tests": {
+      "engine": 14,
+      "web_and_ui": 11,
+      "client_contract": 9,
+      "original_swf_preservation": 5
+    },
+    "live_http_checks": 95,
+    "live_socket_handshakes": 4,
+    "generated_overlay_sha256": "27f0f0f9bb74d22ce7cf9482708f66ceeb47b1f0f83d17858132a9c473935a79",
+    "art": "Original blue puffle sprite 13/frame 1 exported reproducibly from pinned archive",
+    "original_submodules_modified": false,
+    "new_model_prompts_submitted": 0,
+    "remaining": [
+      "Successful native task submission with model response after Claude sign-in",
+      "Actual tool permission approval and active-turn interruption",
+      "Minigame coexistence and other viewport/device acceptance"
+    ],
+    "evidence_directory": ".local/menu-evidence/"
+  }
 }

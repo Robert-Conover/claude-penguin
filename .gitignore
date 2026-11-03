@@ -5,3 +5,4 @@
 **/__pycache__/
 
 /local/web/node_modules/
+/local/engine/node_modules/

@@ -1,0 +1,40 @@
+#cp-work, #cp-bridge-panel { font: 15px/1.45 system-ui, sans-serif; color: #173b50; box-sizing: border-box; }
+#section-header nav { visibility: hidden; }
+#cp-bridge-toolbar { position: fixed; top: 0; left: 0; right: 0; height: 48px; z-index: 10002; background: #08648e; color: white; display: flex; align-items: center; gap: 20px; padding: 0 20px; font: 14px system-ui, sans-serif; }
+#cp-bridge-toolbar a { color: white; text-decoration: underline; }
+#cp-work { position: fixed; right: 20px; top: 4px; z-index: 10003; background: #fff8dc; border: 2px solid #096d9b; border-radius: 30px; padding: 8px 18px; font-weight: 750; cursor: pointer; }
+#cp-bridge-panel { position: fixed; right: 18px; top: 58px; bottom: 12px; width: min(350px, calc(100vw - 36px)); z-index: 10001; background: #f8fdff; border: 3px solid #096d9b; border-radius: 16px; box-shadow: 0 8px 32px #00354f55; padding: 20px; overflow-y: auto; }
+#cp-bridge-panel[hidden] { display: none; }
+#cp-bridge-panel [hidden] { display: none; }
+#cp-bridge-panel h2 { color: #075580; font-size: 22px; margin: 0 0 4px; }
+#cp-bridge-panel h3 { font-size: 18px; margin: 0 0 6px; }
+#cp-bridge-panel p { margin: 8px 0; }
+#cp-bridge-panel small { color: #466272; }
+#cp-bridge-panel button { font: inherit; cursor: pointer; border: 1px solid #1878a2; border-radius: 8px; padding: 8px 10px; background: white; color: #075580; }
+#cp-bridge-panel button:disabled { opacity: .5; cursor: default; }
+#cp-bridge-panel .cp-close { float: right; border: 0; padding: 0 6px; font-size: 24px; }
+#cp-bridge-panel .cp-project { display: block; text-align: left; width: 100%; margin: 8px 0; background: #e9f5fc; }
+#cp-bridge-panel .cp-project span { display: block; font-size: 12px; }
+#cp-bridge-panel .cp-states { display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0; }
+#cp-bridge-panel .cp-states [aria-pressed=true] { color: white; background: #086b96; }
+#cp-bridge-panel .cp-location { border-block: 1px solid #c5dde9; padding: 10px 0; font-size: 13px; }
+#cp-bridge-panel .cp-notice { background: #fff4cc; border-radius: 8px; padding: 10px; font-size: 13px; }
+#cp-bridge-panel .cp-evidence { margin-top: 14px; font-size: 12px; overflow-wrap: anywhere; }
+
+/* Agent mode uses game chrome; the bridge lab keeps its diagnostic controls. */
+.cp-agent-mode #cp-bridge-toolbar { top: 8px; left: 20px; right: auto; width: auto; height: auto; padding: 0; background: none; }
+.cp-agent-mode #cp-bridge-toolbar strong, .cp-agent-mode #cp-bridge-toolbar a { display: none; }
+.cp-agent-mode #cp-work, .cp-agent-mode #cp-igloos { font: bold 15px Arial, sans-serif; color: #fff; text-shadow: 0 1px #00406c; background: linear-gradient(#30bce8, #0087c8 50%, #0071b2 51%, #0099d6); border: 2px solid #00446e; border-radius: 18px; box-shadow: 0 0 0 2px white, inset 0 0 0 2px #71d9f2; padding: 9px 17px; cursor: pointer; }
+.cp-agent-mode #cp-work { top: 8px; right: 22px; }
+.cp-native-agent-menu #cp-bridge-toolbar, .cp-native-agent-menu #cp-work { display: none; }
+.cp-agent-mode #cp-bridge-panel { left: 50%; top: 50%; bottom: auto; right: auto; transform: translate(-50%, -50%); width: min(490px, calc(100vw - 32px)); max-height: calc(100vh - 48px); padding: 20px; border: 3px solid #004b7f; border-radius: 24px; background: #f5fbff; box-shadow: 0 0 0 3px white, inset 0 0 0 3px #67d1ed, 0 5px 0 3px #003d66, 0 10px 24px #00213d77; font-family: Arial, sans-serif; }
+.cp-agent-mode #cp-bridge-panel h2 { text-align: center; font: bold 26px Arial, sans-serif; color: #006ba6; margin: 4px 24px 16px; }
+.cp-agent-mode #cp-bridge-panel small, .cp-agent-mode #cp-connection, .cp-agent-mode #cp-evidence { display: none; }
+.cp-agent-mode #cp-bridge-panel .cp-notice { text-align: center; background: none; font-size: 15px; padding: 0; margin-bottom: 18px; }
+.cp-agent-mode #cp-bridge-panel .cp-close { position: absolute; right: 15px; top: 15px; width: 29px; height: 29px; color: #fff; font: bold 25px/22px Arial; border: 2px solid #00507f; border-radius: 50%; padding: 0; background: linear-gradient(#43c7e9, #007ab9); box-shadow: inset 0 0 0 2px #8ee7f9; }
+.cp-agent-mode #cp-bridge-panel .cp-project { position: relative; min-height: 90px; padding: 18px 16px 18px 100px; margin: 12px 0; border: 2px solid #0077ad; border-radius: 16px; background: linear-gradient(#e9faff, #c1e7f7); box-shadow: inset 0 0 0 3px #fff, 0 2px #0074a7; }
+.cp-agent-mode #cp-bridge-panel .cp-project:before { content: ''; position: absolute; left: 17px; top: 13px; width: 65px; height: 64px; background: url('/engine/art/puffle-blue.svg') center / contain no-repeat; }
+.cp-agent-mode #cp-bridge-panel .cp-project-name { display: block; font-size: 19px; margin-bottom: 5px; }
+.cp-agent-mode #cp-bridge-panel .cp-project span { font-size: 13px; }
+.cp-agent-mode #cp-town { display: block; margin: 20px auto 10px; min-width: 145px; color: #543600; font-weight: bold; background: linear-gradient(#ffe992, #ffc42f); border: 2px solid #9c6a10; box-shadow: inset 0 0 0 2px #fff4bf, 0 2px #916210; border-radius: 14px; }
+.cp-agent-mode #cp-bridge-panel .cp-location { text-align: center; font-size: 12px; border: 0; padding: 8px 0 0; color: #47718b; }

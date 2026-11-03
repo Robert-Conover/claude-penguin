@@ -1,6 +1,6 @@
 # Claude Penguin — local Club Penguin baseline
 
-This checkout runs the later AS3 generation of original Club Penguin with Houdini, Dash, Card-Jitsu Snow, and archived client/media files. It is a local-only baseline for gameplay verification before agent integration.
+This checkout runs the later AS3 generation of original Club Penguin with Houdini, Dash, Card-Jitsu Snow, and archived client/media files. The local game baseline also supports an optional host-side Claude Code experiment; see [the agent engine](local/AGENT_ENGINE.md) for its separate startup and current scope.
 
 The original client renders and runs in Safari through Ruffle. Login, room travel, the map, catalogs, purchases, inventory, puffle adoption/walking, and the introductory tour have passed interactive checks. Cart Surfer loaded into gameplay; a completed round and reward remain unverified. See [validation](local/VALIDATION.md) for the tested scope and remaining gaps.
 
@@ -32,6 +32,13 @@ From this repository:
 Use these local commands for this Mac. The upstream root `docker-compose.yml` and `.env` are preserved as reference; the local stack uses `local/compose.yml` and ignored `.local/env`.
 
 Homebrew dependencies installed during setup: `colima`, `docker`, `docker-compose` (and Colima's `lima` dependency). Python 3 is required by the launcher. Host-side web checks require Node 22 or newer and npm; Node is provided by the web container for ordinary gameplay. Ruffle is downloaded into ignored `.local/ruffle` and pinned by release and SHA256.
+
+To connect Atlas to one real Claude Code session, prepare the bridge fixtures and
+overlay, then run `./local/agent-start` in a separate foreground terminal. It
+serves the opt-in agent page on `http://localhost:8081/`; Node 22+, npm, and Claude
+Code must be available on the host. The [agent instructions](local/AGENT_ENGINE.md)
+cover repository registration, permissions, session resume, and stopping this
+separate runtime. Starting the ordinary game does not launch coding agents.
 
 ## Inspect and verify
 
@@ -69,7 +76,7 @@ The downloaded components are:
 - `vanilla-media/`: archived Flash client, rooms, games, graphics, audio, and web files (about 4.1 GB, approximately 86,000 files).
 - `local/`: Mac launch configuration, Ruffle/WebSocket compatibility wrapper, and verification helpers.
 
-The original game and server submodules are unchanged. Local code renders the upstream play-page/configuration templates at request time and bridges browser WebSockets to the original game protocol. A Snowflake launch wrapper preserves the local URL's port and media path. A Houdini launch wrapper corrects the pinned server's empty-igloo save exception in memory, with regression checks against the original handler. No AI/agent features have been added.
+The original game and server submodules are unchanged. Local code renders the upstream play-page/configuration templates at request time and bridges browser WebSockets to the original game protocol. A Snowflake launch wrapper preserves the local URL's port and media path. A Houdini launch wrapper corrects the pinned server's empty-igloo save exception in memory, with regression checks against the original handler. The opt-in [game bridge experiment](local/GAME_BRIDGE.md) adds two fixture destinations and puffle controls through a separately generated client overlay; normal gameplay still uses the original assets. The separate [host agent engine](local/AGENT_ENGINE.md) connects one of those fixtures to a real Claude terminal when explicitly started.
 
 `local/dependency-snapshots/` and `local/runtime-snapshot.json` capture the packages/images observed during setup. They are diagnostic records, not enforced dependency constraints; upstream Dockerfiles resolve requirements on a rebuild.
 
@@ -77,6 +84,6 @@ The legacy AS2 media submodule is intentionally not downloaded. Only the English
 
 ## Local boundaries and persistence
 
-The browser, login, world, and Snow ports bind only to `127.0.0.1` (8080, 6112, 9875, 7002). PostgreSQL, Redis, and Dash are private to the container network. The source repository is public on GitHub; the running game is hosted only on this Mac.
+The browser, login, world, and Snow ports bind only to `127.0.0.1` (8080, 6112, 9875, 7002). The optional host agent engine also binds to loopback (8081 by default). PostgreSQL, Redis, and Dash are private to the container network. The source repository is public on GitHub; the running game is hosted only on this Mac.
 
 On this Mac, `origin` points to `Robert-Conover/claude-penguin`. Development happens on `dev`, with promotion PRs from `dev` to `main`; there is no `qa` branch. See [CONTRIBUTING.md](CONTRIBUTING.md). The original Wand remote remains named `upstream`; its push URL, and the initialized submodule push URLs, are set to `DISABLED`. The inherited automatic submodule-update workflow has been removed to preserve the verified revisions. Upstream history and licenses are preserved. Credentials, Ruffle binaries, logs, and raw verification reports are ignored under `.local/`; database state lives in named Docker volumes in the dedicated VM.
