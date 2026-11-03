@@ -41,10 +41,44 @@
     "compiler": "JPEXS 26.4.0",
     "compiler_url": "https://github.com/jindrapetrik/jpexs-decompiler/releases/download/version26.4.0/ffdec_26.4.0.zip",
     "compiler_archive_sha256": "56ce960aeafc7caf034e2052ba49f878a883f7c7ca690da6eeffca9587b5e4b9",
-    "build": "python3 local/client-bridge/build.py"
+    "build": "python3 local/client-bridge/build.py",
+    "native_agent_menu": "Owned AVM1 menu inside the preserved interface; terminal and diff viewers use browser overlays",
+    "menu_art": {
+      "source": "vanilla-media/media/play/v2/content/global/puffle/icons/blue.swf",
+      "source_sha256": "5071c7a73abdecff0d331d508f34394688260f58dd8e4b6ad2fbddc2fb33e1bc",
+      "sprite": 13,
+      "frame": 1,
+      "export": "python3 local/client-bridge/export-menu-art.py",
+      "outputs": [
+        "local/web/engine/art/puffle-blue.svg",
+        "local/web/engine/art/puffle-blue.png"
+      ],
+      "provenance": "local/web/engine/art/README.md"
+    }
   },
   "ruffle": {
     "version": "nightly-2026-11-03",
     "archive_sha256": "b3762367e4cdc1313adbd756eba99c0660af63bb0d1e187dc3cd92644428a100"
+  },
+  "agent_engine": {
+    "implementation": "Project-owned host PTY adapter; no upstream submodule changes",
+    "node": "22 or newer",
+    "claude_cli_observed": "2.1.304",
+    "claude_cli_pinned": false,
+    "official_interfaces": [
+      "https://code.claude.com/docs/en/cli-reference",
+      "https://code.claude.com/docs/en/hooks",
+      "https://code.claude.com/docs/en/interactive-mode"
+    ],
+    "dependencies": {
+      "@lydell/node-pty": "1.2.0-beta.15",
+      "@xterm/addon-fit": "0.11.0",
+      "@xterm/addon-serialize": "0.14.0",
+      "@xterm/headless": "6.0.0",
+      "@xterm/xterm": "6.0.0",
+      "ws": "8.22.1"
+    },
+    "lockfile": "local/engine/package-lock.json",
+    "install": "npm ci --ignore-scripts --prefix local/engine"
   }
 }

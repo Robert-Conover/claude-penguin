@@ -1,8 +1,10 @@
 # Game bridge client experiment
 
-This is the small client-side part of the opt-in game bridge experiment. It does
-not run Claude Code, create agent sessions, or interpret an animation as completed
-work. Its five animation states are explicit simulations.
+This is the client-side part of the opt-in game bridge and agent engine. It
+provides game navigation, puffle clicks, animation requests, and a native Flash
+task menu. The host engine owns Claude processes and execution state. An animation
+or menu acknowledgement never establishes that work ran or completed. The bridge
+lab still offers explicitly simulated cues; agent mode uses host-reported state.
 
 The archived AS3 application loads an AVM1 `engine.swf`. We compile only the owned
 [`bridge.as`](bridge.as) file, then insert a separate `DoAction` tag immediately
@@ -40,14 +42,31 @@ Callbacks registered through Flash `ExternalInterface`:
 | Callback | Result / behavior |
 | --- | --- |
 | `cpBridgeConfigure(visitorId, projects)` | Validate a dedicated visitor and an array of `{projectId, ownerId, puffleId}` mappings. Returns `{ok:true, version:1}`. Owner IDs must differ from the visitor. |
-| `cpBridgeSnapshot()` | `{ok, version, configured, playerId, roomId, ownerId, puffles:[{id,x,y}]}`. Room transitions and a different logged-in player return `ok:false` and an `error`. Non-igloo owner is `0`. Coordinates use the game's room coordinate system. |
+| `cpBridgeSnapshot()` | `{ok, version, configured, playerId, roomId, ownerId, puffles:[{id,x,y}], nativeMenuReady}`. Room transitions and a different logged-in player return `ok:false` and an `error`. Non-igloo owner is `0`. Coordinates use the game's room coordinate system. `nativeMenuReady` reports whether the native HUD exists. |
 | `cpBridgeJoinIgloo(ownerId)` | Request a mapped owner's igloo via the existing shell navigator. A successful acknowledgement is not arrival; wait for a matching snapshot. |
 | `cpBridgeJoinRoom(100)` | Request Town via the existing shell navigator. Other room IDs are outside this experiment. |
 | `cpBridgeAnimate(puffleId, state)` | Play an existing visible puffle animation only for the configured visitor, current mapped igloo, and matching rendered puffle. State must be `working`, `needs-you`, `ready`, `interrupted`, or `failed`. Returns `simulated:true`. |
+| `cpBridgeSetAgentMenu(payload)` | Cache a bounded, public display summary and enable or disable the native HUD. Accepts only a configured fixture ID, or an empty ID for setup. See the payload below. |
+| `cpBridgeShowAgentMenu()` | Open the native task card for the cached fixture, or emit `work` to request setup if none is connected. Requires the verified visitor, a ready room, and no active game widget. |
+| `cpBridgeHideAgentMenu()` | Close the owned card and restore its modal state. Safe to call during connection or room changes. |
 
-All mutation callbacks fail closed before configuration, during loading, for a
-different logged-in player, for unknown IDs, and (for travel) inside a minigame.
-Normal client travel and minigame exit controls continue to work.
+Navigation, animation, and menu actions fail closed before configuration, during
+loading, for a different logged-in player, and for unknown IDs. Travel and menu
+actions also refuse execution inside a minigame. Caching a display summary does
+not authorize an action. Normal client travel and minigame exit controls remain.
+
+The native menu payload is:
+
+```js
+{ enabled, connected, fixtureId, name, projectName, status, activity,
+  canStart, canSubmit, running, attention }
+```
+
+Set/show/hide return `{ok:true, nativeMenu, hudReady, menuVisible}` on success.
+`nativeMenu` and `hudReady` are true only after the HUD exists in a verified game
+session; the browser retains setup access before that point. Disabling the menu
+removes its owned clips. Names and activity are plain, bounded text; no repository
+path, provider credential, Claude UUID, or terminal output is sent to Flash.
 
 The client calls `window.ClaudePenguinBridge.receive(event)` with:
 
@@ -57,11 +76,41 @@ The client calls `window.ClaudePenguinBridge.receive(event)` with:
   restores its original press handler when the mapping no longer applies.
 - `{type:"animation", ownerId, puffleId, state, simulated:true}` after selecting
   an animation. This is acknowledgement of an animation request, not agent work.
+- `{type:"agent-menu-action", fixtureId, action, text?}` for native menu actions.
+  Actions are `work`, `igloos`, `start`, `submit`, `interrupt`, `terminal`, or
+  `changes`. `submit` carries at most 20,000 characters; setup may omit the fixture
+  ID. The browser resolves the fixture to an explicit project/worker and applies
+  the engine's normal authentication and action rules.
 
 The five frames reuse the engine's original puffle art: play (27), bubblegum (29),
-super play (28), rest (25), and angry (33). No provider credential or filesystem
-path is sent to Flash. Fixture IDs are a local experiment boundary, not a security
-boundary for a future agent engine; that engine will need its own authorization.
+super play (28), rest (25), and angry (33). The retained `simulated:true` field
+describes the visual request, including when real host state selected it. It is
+not a lifecycle event. Fixture IDs do not authorize terminal control; the
+[host engine](../AGENT_ENGINE.md) has its own authenticated interface.
+
+## Native menu rendering
+
+The Work/Igloos HUD and puffle task card use owned AVM1 MovieClips, buttons, and
+TextFields inside the original game's display list. They scale with the game and
+accept task input in Flash. This is a new game menu styled to match the original
+client, not a relabeled stock puffle-care menu. The portrait is exported from the
+pinned original blue-puffle artwork; see its
+[provenance and reproducer](../web/engine/art/README.md).
+
+The card temporarily stops game keyboard shortcuts and balances the shell's
+trigger-hide count. Closing it, leaving the room, losing the verified visitor,
+or entering a minigame removes the card and restores the state it owned. It
+refuses to replace an already-open game widget. Connection loss disables runtime
+actions while retaining access to Open Claude. A submitted task cannot be sent
+again while awaiting a lifecycle change; sending alone does not mark it Working.
+Unsent drafts survive closing the card or opening Claude for the current page,
+remain separate per fixture, and clear only when the matching submission starts.
+
+Open Claude and Changes hand off to browser views, where terminal input and
+diffs remain practical. The browser owns repository setup and runtime commands;
+the native card is a presentation and input layer. The dated
+[validation record](../VALIDATION.md) distinguishes live checks from contract
+coverage.
 
 ## Observed client seams
 
@@ -79,6 +128,9 @@ decompilation is kept out of Git; no upstream source is copied into this adapter
 - Original puffle clicks are enabled only in the owner's igloo/backyard. The
   scoped hook makes a fixture visitor's mapped puffle clickable without enabling
   care controls for every other owner's puffle.
+- `interface.swf` root: `interface_mc` hosts the owned native clips;
+  `stopQuickKeys()`, `startQuickKeys()`, and `setWidgetsActive()` coordinate input.
+  The shell's `hideTriggers()`/`showTriggers()` maintain a reference count.
 
 These are findings from the pinned SWFs. Interactive verification must separately
 prove callback registration, navigation, puffle clicks, and rendering in Ruffle.

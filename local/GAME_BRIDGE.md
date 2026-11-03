@@ -3,6 +3,9 @@
 This is milestone 1: connect the preserved game to a browser task panel. It uses
 two disposable project destinations and named puffles. It does **not** register
 repositories, run Claude Code, persist conversations, or create worktrees.
+This document describes that bridge-only mode on port 8080. The separate
+[host agent engine](AGENT_ENGINE.md) builds on the same fixture mapping for the
+next milestone; its terminal and real execution states are enabled on port 8081.
 
 ## Run
 
@@ -96,11 +99,15 @@ click callback restoration, invalid mappings, opt-in routing, and preservation o
 the archived engine. HTTP/protocol checks do not prove visual interaction. See the
 dated [validation record](VALIDATION.md) for browser evidence and remaining gaps.
 
-## Next milestone
+## Agent milestone
 
-Connect one registered repository and one puffle to a real persistent Claude Code
-terminal session on the Mac. Use official current Claude Code interface guidance;
-keep runtime permissions and credentials outside the browser/game containers.
-Prove task submission, a real permission prompt, interrupt, diff review, and
-reconnect before adding concurrent workers or a custom map neighborhood. Turn end
-must remain distinct from verified task completion.
+The opt-in [agent engine](AGENT_ENGINE.md) now supplies the implementation for one
+registered repository and one persistent named Claude Code session on the Mac.
+It runs separately from this simulation page, binds Atlas to Bridge Alpha, and
+uses the actual terminal for permissions and questions. The dated validation
+record distinguishes tested live behavior from remaining checks.
+
+The required loop is task submission, a real permission prompt, interrupt, diff
+review, and reconnect with the same conversation. Turn end remains distinct from
+verified task completion. More repositories, a neighborhood scene, concurrent
+workers, and isolated worktrees remain later milestones.
