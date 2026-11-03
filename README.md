@@ -12,6 +12,7 @@
 <p align="center">
   <a href="#the-idea">The idea</a> ·
   <a href="#where-things-stand">Current status</a> ·
+  <a href="#product-roadmap">Roadmap</a> ·
   <a href="#play-locally">Play locally</a> ·
   <a href="CONTRIBUTING.md">Contribute</a>
 </p>
@@ -22,7 +23,7 @@
 
 What if your coding agents lived in Club Penguin?
 
-Give a puffle a task. Let Claude Code do the work. See that little creature become the face of a real coding session, with progress you can follow inside the world.
+**A repository is an igloo. A puffle is a persistent, named Claude Code session.** Give a puffle a task, explore the island, and open **Work** when it needs you. Sessions can keep running while you travel, as long as the local host runtime stays running.
 
 That's the idea behind Claude Penguin: the original game's rooms, penguins, and puffles, with a new reason to hang out on the island. The starting point is the full game client, including town, shops, rooms, and minigames. The first coding-agent connection is now available as an experiment.
 
@@ -34,9 +35,30 @@ That's the idea behind Claude Penguin: the original game's rooms, penguins, and 
 | 🛍️ **Make it yours** | Catalog browsing, purchases, equipped color, and puffle adoption and walking have been checked in Safari. |
 | 💾 **Keep your progress** | Local accounts and game state persist. Backend reconnect and stack-restart checks passed. |
 | 🎮 **Keep testing** | Cart Surfer reaches active gameplay. Completed rounds, rewards, browser furniture placement, and some other interactions still need verification. |
-| ✨ **Puffles as agents** | The opt-in [agent engine](local/AGENT_ENGINE.md) gives Atlas a native in-game task card, connected to one repository and a persistent Claude Code session. The real terminal and changes open from the card. Startup, failure reporting, reconnect, and exact-session resume have been checked; successful task execution and live permission/interrupt checks remain pending. |
+| ✨ **Work with a puffle** | The opt-in [agent engine](local/AGENT_ENGINE.md) connects Atlas to one repository and a named Claude Code session. Clicking Atlas or **Work** opens its native in-game task card. The real terminal and changes viewer open as secondary windows. |
+| 🔄 **Pick up where you left off** | Task history, terminal reconnect, exact-session resume, and failure/attention reporting have been checked. Traveling leaves the session running; stopping it preserves the conversation for later resume. |
 
-See the [validation record](local/VALIDATION.md) for the exact tested scope. Available game assets do not imply that every original feature works.
+**Current scope:** one registered repository and one puffle, using a dedicated fixture igloo. The worker edits that repository's checkout directly; isolated worktrees and multiple projects are still planned. The destination chooser uses matching browser styling; the puffle card and Work/Igloos controls render inside Flash.
+
+**Still to prove:** a successful coding task, actual tool permission approval, active-turn interruption, and full runtime animation acceptance. The first real task reached an expired Claude login; changes shown during verification were explicitly created as viewer fixtures, not by Claude. See the dated [validation record](local/VALIDATION.md) for the exact tested scope and remaining gameplay checks.
+
+## Product roadmap
+
+Checked milestones are implemented within the scope shown. Unchecked rows track the next product work and remaining acceptance checks.
+
+| Status | Milestone | What it delivers |
+| :---: | :--- | :--- |
+| ☑ Built | **Local island** | Original client running locally, core exploration and shops, puffles, and persistent player state. |
+| ☑ Built | **Game bridge** | Two fixture igloos with explicit identities, real puffle clicks, and animation controls. |
+| ☑ Built | **Persistent puffle session** | One repository and named Claude terminal, lifecycle status, task history, reconnect/resume, and changes review. |
+| ☑ Built | **Native puffle menus** | In-game Work/Igloos buttons and task card, original puffle artwork, and drafts retained across secondary views. |
+| ☐ Next | **Complete the real agent loop** | Give a task, travel to Town, answer a real permission request, interrupt when needed, and return to review Claude-generated changes with accurate status cues. |
+| ☐ Planned | **Your Igloos neighborhood** | A map destination for multiple repositories, each with its own igloo, activity count, and separate project state. Work stays accessible across the island. |
+| ☐ Planned | **Multiple puffles per project** | Concurrent agents with isolated branches/worktrees and explicit review and integration actions. |
+| ☐ Planned | **Project coordination** | Task boards, useful furniture interactions, and temporary helper puffles for delegated work. |
+| ☐ Ongoing | **Gameplay acceptance** | Completed minigame rounds and rewards, browser furniture placement and puffle care, agent/minigame coexistence, and broader display checks. |
+
+The next demo target: **give a puffle a real coding task, walk into Town, get notified when it needs you, and return to review an actual change.** Puffle colors stay cosmetic; labels and animations communicate work status.
 
 ## Play locally
 
@@ -72,21 +94,30 @@ The first launch downloads pinned submodules, about **4.1 GB of archived media**
 
 For logs, troubleshooting, and verification commands, see [LOCAL_SETUP.md](LOCAL_SETUP.md).
 
-## What comes next
+### Try the puffle engine
 
-- [x] Get the original game running locally.
-- [x] Verify core gameplay and persistent state.
-- [x] Connect a real Claude Code session to a puffle.
-- [ ] Complete a real coding task with permissions, progress cues, and diff review.
-- [ ] Build out the experience for multiple agents.
+For the optional coding experiment, you also need **Node 22+, npm, a JDK, and Claude Code signed in on the Mac**. With the baseline game running:
+
+```sh
+python3 local/client-bridge/build.py
+./local/bridge-fixtures
+./local/agent-start
+```
+
+Open **[the agent page on localhost:8081](http://localhost:8081/?bridge=1&agents=1#/login)**. Follow the [agent setup guide](local/AGENT_ENGINE.md) for the dedicated `bridgecheck` login, repository registration, permissions, and session controls. Keep the host runtime terminal open while agents work; starting the game alone does not start Claude.
 
 ## Under the snow
 
 The browser runs the original Flash client through **Ruffle**. A small Node.js wrapper serves the game and bridges its sockets to **Houdini**, with **Dash**, **Snowflake**, PostgreSQL, and Redis supporting the local world.
 
+The optional host engine runs Claude Code in a real terminal on the Mac, persists project/session identity, and streams terminal output and lifecycle events to the game wrapper. The native menu bridge adds controls through a generated client overlay while preserving the original engine tags and pinned submodules. Provider credentials stay on the host.
+
 | Path | What's there |
 | :--- | :--- |
-| [`local/`](local/) | Mac launcher, browser bridge, compatibility wrappers, and verification helpers |
+| [`local/`](local/) | Mac launcher, game wrapper, compatibility adapters, and verification helpers |
+| [`local/engine/`](local/engine/) | Host Claude sessions, persistence, lifecycle hooks, and terminal streaming |
+| [`local/client-bridge/`](local/client-bridge/) | Native menu and puffle-click bridge, overlay build, and artwork export |
+| [`local/web/engine/`](local/web/engine/) | Browser setup, terminal, changes viewer, and fallback puffle card |
 | [`local/sources.json`](local/sources.json) | Exact upstream revisions and the Ruffle release/checksum |
 | `houdini/`, `dash/`, `snowflake/` | Pinned community server submodules |
 | `vanilla-media/` | Pinned archived client and game media |
