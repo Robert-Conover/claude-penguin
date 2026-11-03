@@ -44,9 +44,11 @@ services:
   world:
     image: club-penguin-houdini:local
     build: ../houdini
+    entrypoint: [python, /local/houdini_bootstrap.py]
     volumes:
       - ../houdini:/usr/src/houdini:ro
       - ../.local/logs/world:/logs
+      - ./houdini_bootstrap.py:/local/houdini_bootstrap.py:ro
     command: [world, -id, '3100', --name, Blizzard, --port, '9875', --lang, en, --redis-address, redis, --database-address, db, --database-username, '${POSTGRES_USER}', --database-name, '${POSTGRES_DB}', --database-password, '${POSTGRES_PASSWORD}', --logging-general, /logs/general.log, --logging-error, /logs/errors.log]
     ports: ['127.0.0.1:9875:9875']
     depends_on:

@@ -13,9 +13,10 @@ Run with CLUB_PENGUIN_TEST_PASSWORD set, then:
     python3 local/verify_game.py
 
 The verifier buys green (item 2), adopts a blue puffle named Localcheck if absent,
-brushes/walks it, and creates the account's default igloo if necessary. These
-ordinary game actions persist only on the dedicated test account. Subsequent
-runs reuse those fixtures. No source files or gameplay code are modified.
+brushes/walks it, and creates the account's default igloo if necessary. It also
+clears the test igloo and places a free Table for Two to verify furniture saves.
+These ordinary game actions persist only on the dedicated test account.
+Subsequent runs reuse those fixtures. No gameplay source files are modified.
 """
 from __future__ import annotations
 
@@ -191,17 +192,38 @@ def puffles(world):
     return result
 
 
-def igloo(world, penguin_id):
+def igloo_layout(world, penguin_id):
     world.xt('g#gm', penguin_id)
     details = world.wait_xt('gm')
     require(details[0] == str(penguin_id), 'Igloo belongs to the wrong player')
-    igloo_id = int(details[1].split(':')[0])
+    layout = details[1].split(':', 9)
+    require(len(layout) == 10, 'Incomplete igloo layout')
+    return layout
+
+
+def igloo(world, penguin_id):
+    layout = igloo_layout(world, penguin_id)
     world.xt('j#jp', penguin_id, 'igloo')
     response = world.wait_xt('jp')
     require(response[-1] == 'igloo', 'Server did not enter an igloo')
     joined = world.wait_xt('jr')
     require(joined[0] == response[0], 'Joined room does not match the player igloo')
-    return igloo_id
+    return layout
+
+
+def save_igloo(world, penguin_id, layout, furniture):
+    # Wire order: id, type, flooring, location, music, furniture.
+    world.xt('g#uic', layout[0], layout[7], layout[5], layout[6], layout[4], furniture)
+    updated = world.wait_xt('uvi')
+    require(updated[0] == str(penguin_id), 'Furniture update identifies the wrong player')
+    saved = updated[1].split(':', 9)
+    require(saved[:9] == layout[:9] and saved[9] == furniture,
+            'Furniture save acknowledgement did not match the submitted layout')
+    # gm has a one-second per-player cooldown. The following request also
+    # proves the connection remains usable after the save handler completes.
+    time.sleep(1.1)
+    require(igloo_layout(world, penguin_id) == saved, 'Saved igloo layout could not be reloaded')
+    return saved
 
 
 def run(args, password):
@@ -245,7 +267,8 @@ def run(args, password):
             require(fields[1] == '0', 'Existing Localcheck puffle is not the blue test fixture')
         checks.append('Blue puffle adoption' if adopted else 'Existing blue puffle fixture loaded')
 
-        igloo_id = igloo(world, penguin_id)
+        layout = igloo(world, penguin_id)
+        igloo_id = int(layout[0])
         checks.append('Default igloo creation/load and entry')
         world.xt('p#pcid', puffle_id, 1)  # Brush: free basic care item.
         care = world.wait_xt('pcid')
@@ -262,6 +285,21 @@ def run(args, password):
             require(walked[0:2] == [str(penguin_id), str(puffle_id)] and walked[4] == str(walking),
                     'Puffle walking state did not match')
         checks.append('Puffle walking and returning to igloo')
+
+        furniture_id = 2166  # Table for Two: free and available in the preserved catalog.
+        world.xt('g#gii')
+        furnishings = world.wait_xt('gii')[0]
+        owned_furniture = {int(item.split('|')[0]) for item in furnishings.split(',') if item}
+        if furniture_id not in owned_furniture:
+            world.xt('g#af', furniture_id)
+            bought = world.wait_xt('af')
+            require(bought[0] == str(furniture_id), 'Furniture purchase did not match')
+        checks.append('Furniture inventory and Table for Two ownership')
+        layout = save_igloo(world, penguin_id, layout, '')
+        checks.append('Empty igloo furniture save and reload')
+        expected_furniture = f'{furniture_id}|400|280|0|1'
+        layout = save_igloo(world, penguin_id, layout, expected_furniture)
+        checks.append('Nonempty igloo furniture placement, save and reload')
         world.xt('r#gtc')
         expected_coins = int(world.wait_xt('gtc')[0])
 
@@ -278,12 +316,14 @@ def run(args, password):
         saved = saved_puffles[puffle_id]
         require(saved[3] == 'Localcheck' and saved[5:9] == expected_stats,
                 'Puffle name/care statistics did not persist across relogin')
-        require(igloo(world, penguin_id) == igloo_id, 'Igloo identity did not persist across relogin')
-        checks.append('Relogin persistence: identity, coins, inventory, puffle, care stats and igloo')
+        saved_layout = igloo(world, penguin_id)
+        require(int(saved_layout[0]) == igloo_id, 'Igloo identity did not persist across relogin')
+        require(saved_layout[9] == expected_furniture, 'Igloo furniture did not persist across relogin')
+        checks.append('Relogin persistence: identity, coins, inventory, puffle, care stats, igloo and furniture')
 
     return {'status': 'passed', 'scope': 'local Houdini AS3 protocol; no visual or minigame coverage',
             'username': args.username, 'penguin_id': penguin_id, 'puffle_id': puffle_id,
-            'igloo_id': igloo_id, 'coins': expected_coins, 'checks': checks}
+            'igloo_id': igloo_id, 'furniture_id': furniture_id, 'coins': expected_coins, 'checks': checks}
 
 
 def main():

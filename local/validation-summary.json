@@ -1,6 +1,6 @@
 {
   "date": "2026-11-03",
-  "status": "backend_verified_visual_pending",
+  "status": "core_browser_and_backend_verified_partial_acceptance",
   "origin": "http://localhost:8080",
   "fresh_account_protocol": {
     "status": "passed",
@@ -58,13 +58,114 @@
     "preserved_existing_accounts": true
   },
   "browser_gameplay": {
-    "status": "not_run",
-    "reason": "Mac locked; automatic unlock could not unlock it. User unlock requested."
+    "status": "partially_verified",
+    "browser": "Safari on macOS",
+    "runtime": "Ruffle nightly-2026-11-03",
+    "username": "player",
+    "checks": [
+      "Original client rendering, login and Blizzard world entry",
+      "Walking and map travel: Forest, Town, Clothes Shop, Plaza, Pet Shop, Igloo, Mine",
+      "Full introductory tour and clothing, puffle-hat, furniture rewards",
+      "February 2017 Penguin Style catalog",
+      "Orange purchase and equipped color rendered",
+      "Blue puffle Claude adoption, certificate and supplies",
+      "Puffle walking, following and return to igloo",
+      "Igloo editor and furniture inventory rendering"
+    ],
+    "remaining": [
+      "Browser furniture placement/save",
+      "Puffle care UI action",
+      "Browser logoff/relogin verification"
+    ],
+    "interruption": "Mac locked again during Cart Surfer; user unlock requested"
   },
   "minigame_gameplay": {
-    "status": "not_run",
-    "note": "Asset availability and server startup do not verify playable minigames."
+    "status": "partially_verified",
+    "game": "Cart Surfer",
+    "checks": [
+      "Title screen",
+      "Instructions",
+      "Active track and orange player rendering",
+      "Keyboard input changed riding stance"
+    ],
+    "remaining": [
+      "Completed round",
+      "Score and coin reward"
+    ],
+    "card_jitsu_snow": "Server startup verified; gameplay not tested"
   },
   "game_source_modifications": false,
-  "github_repository_created": false
+  "github_repository_created": false,
+  "player_database_persistence": {
+    "status": "passed_read_only_after_world_restart",
+    "penguin_id": 103,
+    "coins": 99580,
+    "color": {
+      "id": 6,
+      "name": "Orange"
+    },
+    "clothing_reward": {
+      "id": 24023,
+      "name": "The Insta-Hero"
+    },
+    "puffle": {
+      "id": 3,
+      "name": "Claude",
+      "type": 0,
+      "care_stats": [
+        100,
+        100,
+        100,
+        100
+      ]
+    },
+    "puffle_hat_inventory": {
+      "id": 142,
+      "name": "Polka Puffle Hat",
+      "quantity": 1
+    },
+    "igloo_id": 3,
+    "furniture_inventory": {
+      "id": 2166,
+      "name": "Table for Two",
+      "quantity": 1
+    },
+    "placed_furniture_rows": 0
+  },
+  "empty_igloo_compatibility": {
+    "status": "regression_and_live_protocol_checks_passed",
+    "regression_tests": 4,
+    "source_files_modified": false,
+    "mechanism": "Startup in-memory normalization of empty furniture list; original listener retained",
+    "real_protocol_regression": {
+      "status": "passed",
+      "scope": "local Houdini AS3 protocol; no visual or minigame coverage",
+      "username": "localcheck",
+      "penguin_id": 102,
+      "puffle_id": 1,
+      "igloo_id": 1,
+      "furniture_id": 2166,
+      "coins": 9580,
+      "checks": [
+        "AS3 login, world authentication, player load and spawn",
+        "Town Center and Pet Shop room transitions",
+        "Player movement broadcast",
+        "Inventory load (green color fixture already owned)",
+        "Existing blue puffle fixture loaded",
+        "Default igloo creation/load and entry",
+        "Puffle brushing and care statistics",
+        "Puffle walking and returning to igloo",
+        "Furniture inventory and Table for Two ownership",
+        "Empty igloo furniture save and reload",
+        "Nonempty igloo furniture placement, save and reload",
+        "Relogin persistence: identity, coins, inventory, puffle, care stats, igloo and furniture"
+      ]
+    },
+    "world_errors_during_live_check": 0
+  },
+  "observed_nonfatal_warnings": [
+    "nx#bimp: map analytics",
+    "p#bipa: puffle adoption analytics",
+    "g#im: igloo editing start/stop notification"
+  ]
 }

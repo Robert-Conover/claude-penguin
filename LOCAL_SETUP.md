@@ -1,8 +1,10 @@
-# Local Club Penguin
+# Claude Penguin — local Club Penguin baseline
 
 This checkout runs the later AS3 generation of original Club Penguin with Houdini, Dash, Card-Jitsu Snow, and archived client/media files. It is a local-only baseline for gameplay verification before agent integration.
 
-The backend protocol checks have passed. Visual browser gameplay and minigames still need acceptance testing; the Mac was locked during setup. See [validation](local/VALIDATION.md).
+The original client renders and runs in Safari through Ruffle. Login, room travel, the map, catalogs, purchases, inventory, puffle adoption/walking, and the introductory tour have passed interactive checks. Cart Surfer loaded into gameplay; a completed round and reward remain unverified. See [validation](local/VALIDATION.md) for the tested scope and remaining gaps.
+
+The intended project name is `claude-penguin`; this local folder remains `club-penguin`.
 
 ## Play
 
@@ -45,9 +47,10 @@ To run the wrapper's integration checks after a fresh checkout:
 ```sh
 npm ci --ignore-scripts --prefix local/web
 npm test --prefix local/web
+./local/compose run --rm --no-deps -v "$PWD/local:/local:ro" --entrypoint python world /local/test_houdini_compat.py
 ```
 
-`local/verify` performs real TCP login/world requests. It changes only its dedicated test account: buys a color, adopts a puffle if missing, brushes and walks it, enters its igloo, then checks persistence after reconnect. It does not test visual rendering or minigame gameplay.
+`local/verify` performs real TCP login/world requests. It changes only its dedicated test account: buys a color, adopts a puffle if missing, brushes and walks it, enters its igloo, clears the fixture's layout, places a Table for Two, then checks persistence after reconnect. It does not test visual rendering or minigame gameplay.
 
 ## Sources and local files
 
@@ -61,7 +64,7 @@ The downloaded components are:
 - `vanilla-media/`: archived Flash client, rooms, games, graphics, audio, and web files (about 4.1 GB, approximately 86,000 files).
 - `local/`: Mac launch configuration, Ruffle/WebSocket compatibility wrapper, and verification helpers.
 
-The original game and server submodules are unchanged. Local code renders the upstream play-page/configuration templates at request time and bridges browser WebSockets to the original game protocol. A Snowflake launch wrapper preserves the local URL's port and media path. No AI/agent features have been added.
+The original game and server submodules are unchanged. Local code renders the upstream play-page/configuration templates at request time and bridges browser WebSockets to the original game protocol. A Snowflake launch wrapper preserves the local URL's port and media path. A Houdini launch wrapper corrects the pinned server's empty-igloo save exception in memory, with regression checks against the original handler. No AI/agent features have been added.
 
 `local/dependency-snapshots/` and `local/runtime-snapshot.json` capture the packages/images observed during setup. They are diagnostic records, not enforced dependency constraints; upstream Dockerfiles resolve requirements on a rebuild.
 
