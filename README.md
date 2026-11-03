@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/claude-penguin-banner.svg" alt="Claude Penguin — a snowy island for your coding agents. Concept illustration; agent integration is planned." width="100%">
+  <img src="docs/assets/claude-penguin-banner.svg" alt="Claude Penguin — a snowy island for your coding agents. Concept illustration." width="100%">
 </p>
 
 <h1 align="center">Claude Penguin</h1>
@@ -16,7 +16,7 @@
   <a href="CONTRIBUTING.md">Contribute</a>
 </p>
 
-> **Early development:** the original game runs locally. Connecting puffles to real Claude Code agents is the next step. The banner is concept art, not a screenshot of an implemented integration.
+> **Early development:** the original game runs locally, and an opt-in engine connects one puffle to a real Claude Code terminal. A successful coding task and live permission handling still need verification after Claude sign-in. The banner is concept art.
 
 ## The idea
 
@@ -24,7 +24,7 @@ What if your coding agents lived in Club Penguin?
 
 Give a puffle a task. Let Claude Code do the work. See that little creature become the face of a real coding session, with progress you can follow inside the world.
 
-That's the idea behind Claude Penguin: the original game's rooms, penguins, and puffles, with a new reason to hang out on the island. The starting point is the full game client, including town, shops, rooms, and minigames. The coding-agent layer comes next.
+That's the idea behind Claude Penguin: the original game's rooms, penguins, and puffles, with a new reason to hang out on the island. The starting point is the full game client, including town, shops, rooms, and minigames. The first coding-agent connection is now available as an experiment.
 
 ## Where things stand
 
@@ -34,7 +34,7 @@ That's the idea behind Claude Penguin: the original game's rooms, penguins, and 
 | 🛍️ **Make it yours** | Catalog browsing, purchases, equipped color, and puffle adoption and walking have been checked in Safari. |
 | 💾 **Keep your progress** | Local accounts and game state persist. Backend reconnect and stack-restart checks passed. |
 | 🎮 **Keep testing** | Cart Surfer reaches active gameplay. Completed rounds, rewards, browser furniture placement, and some other interactions still need verification. |
-| ✨ **Puffles as agents** | An opt-in [game bridge experiment](local/GAME_BRIDGE.md) connects fixture igloos and puffle clicks to a panel with simulated animation cues. Real Claude Code sessions and task execution are still planned. |
+| ✨ **Puffles as agents** | The opt-in [agent engine](local/AGENT_ENGINE.md) connects Atlas to one repository and a persistent Claude Code terminal. Real startup, task submission, failure reporting, browser reconnect, and exact-session resume have been checked. Successful task execution and live permission/interrupt checks remain pending. |
 
 See the [validation record](local/VALIDATION.md) for the exact tested scope. Available game assets do not imply that every original feature works.
 
@@ -76,8 +76,8 @@ For logs, troubleshooting, and verification commands, see [LOCAL_SETUP.md](LOCAL
 
 - [x] Get the original game running locally.
 - [x] Verify core gameplay and persistent state.
-- [ ] Connect a real Claude Code session to a puffle.
-- [ ] Reflect the agent's actual task progress in the game.
+- [x] Connect a real Claude Code session to a puffle.
+- [ ] Complete a real coding task with permissions, progress cues, and diff review.
 - [ ] Build out the experience for multiple agents.
 
 ## Under the snow

@@ -210,5 +210,52 @@
       "Full visual acceptance of Ready and Failed animations",
       "Minigame interaction regression"
     ]
+  },
+  "agent_engine": {
+    "date": "2026-11-03",
+    "status": "real_session_connected_task_execution_blocked_by_expired_auth",
+    "entrypoint": "http://localhost:8081/?bridge=1&agents=1#/login",
+    "browser": "Codex in-app browser on macOS",
+    "claude_version": "2.1.304",
+    "scope": "One disposable repository, bridge-alpha/Atlas, one persistent Claude session",
+    "browser_checks": [
+      "Register canonical repository and create named session",
+      "Actual Claude PTY, folder-trust prompt and SessionStart hook",
+      "Task form submits to Claude; UserPromptSubmit reports Working",
+      "Real expired-login failure maps to Failed and Work attention",
+      "Fixture game login and registered igloo navigation through host proxy",
+      "Actual Atlas click opens matching persistent session",
+      "Tracked and untracked diff rendering using explicitly Codex-authored fixture edits",
+      "Task history records failed prompt",
+      "Browser reload preserves worker ID, session UUID, live PID and terminal contents",
+      "Stop session terminates owned Claude process and retains identity",
+      "Runtime shutdown disables controls; restart reconnects fresh state",
+      "Exact --resume UUID confirmed in process arguments and SessionStart; previous prompt restored",
+      "Town travel while resumed PTY stays running; Work opens terminal without returning to igloo"
+    ],
+    "regression_tests": {
+      "engine_manager_state_http_websocket": 14,
+      "web_wrapper_bridge_and_engine_ui": 9,
+      "client_contract": 4,
+      "binary_preservation": 5
+    },
+    "live_http_checks": 95,
+    "live_socket_handshakes": 4,
+    "auth_observation": "Host initially reported logged in; first submitted prompt returned Login expired, StopFailure authentication_failed; subsequent auth status logged out. User chose to sign in later.",
+    "coding_task_success": false,
+    "claude_generated_changes": false,
+    "diff_fixture_author": "Codex, explicitly labeled; not produced by Claude",
+    "original_submodules_modified": false,
+    "remaining": [
+      "Successful real coding task after Claude sign-in",
+      "Actual permission request and approval",
+      "Active-turn interrupt and visual lifecycle animation acceptance",
+      "Multiple project provisioning and custom map neighborhood",
+      "Concurrent workers with isolated worktrees",
+      "Minigame interaction regression"
+    ],
+    "evidence_directory": ".local/engine-evidence/",
+    "demo_state_directory": ".local/agent-engine-demo/",
+    "handoff": "Demo engine remains on port 8081 with test Claude process stopped; saved session can resume after host sign-in."
   }
 }

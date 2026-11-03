@@ -7,6 +7,7 @@ These instructions supplement the root `AGENTS.md` for changes under `local/`.
 - `start`, `stop`, and `compose`: dedicated Colima profile/context and Compose lifecycle.
 - `compose.yml`: local services, loopback bindings, mounts, health checks, and persistent volumes.
 - `web/server.mjs`: serves the preserved client, renders local addresses, proxies Dash, and bridges WebSocket traffic to TCP game servers. Node ESM; host development requires Node 22 or newer.
+- `agent-start`, `engine/`, and `web/engine/`: optional host Claude PTY runtime, explicit project/session state, and browser terminal. See `AGENT_ENGINE.md` for supported scope and recovery.
 - `houdini_bootstrap.py` and `snowflake_bootstrap.py`: narrow launch-time compatibility adapters around pinned upstream code.
 - `verify_seed.py`: idempotent local account creation. `verify_game.py`: mutating checks against dedicated fixture accounts.
 
@@ -23,6 +24,7 @@ npm ci --ignore-scripts --prefix local/web
 | Change | Relevant checks |
 | --- | --- |
 | Browser wrapper, routing, templates, socket bridge | `npm test --prefix local/web` |
+| Agent engine, persistence, hooks, terminal control | `npm ci --ignore-scripts --prefix local/engine` when needed; `npm test --prefix local/engine`; web tests for browser changes; a disposable repository for real-Claude checks |
 | Launcher or Compose configuration | Shell syntax checks below; validate Compose and exercise the affected startup/stop path when the local runtime is available |
 | Houdini compatibility adapter | Container regression command below; `./local/verify` when the stack is running |
 | Client/config serving, Ruffle version, game socket endpoints | `npm run verify:http --prefix local/web` against the running stack; browser checks for affected rendering/interaction |
@@ -32,7 +34,7 @@ npm ci --ignore-scripts --prefix local/web
 Check each launcher script with its matching shell:
 
 ```sh
-for file in local/start local/stop local/compose local/verify; do
+for file in local/start local/stop local/compose local/verify local/agent-start; do
   sh -n "$file" || exit
 done
 bash -n local/web/setup-ruffle.sh
@@ -56,6 +58,7 @@ For Compose validation, use `./local/compose config --quiet` after local configu
 - Serve archived source/media through adapters; do not rewrite thousands of downloaded files as a configuration shortcut.
 - `start` must preserve existing accounts and progress. `stop` keeps named data volumes. Do not add destructive reset behavior to either command.
 - Bind published game ports to `127.0.0.1`; keep database, Redis, and Dash inside the container network.
+- Keep agent/provider credentials on the host, preserve exact project and session identities, and keep Stop/turn end distinct from successful completion. Browser reconnect must not spawn a second PTY. Do not bypass manual permissions or edit the interactive checkout merely to obtain a passing agent demo.
 - Keep Ruffle's release and checksum consistent with `sources.json`, `web/setup-ruffle.sh`, and the version guard in `start`. Runtime/dependency snapshots are observations, not lockfiles; do not claim they make container builds fully reproducible.
 
 ## Evidence

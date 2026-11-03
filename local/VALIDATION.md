@@ -112,3 +112,57 @@ reapply an animation after travel or survive a reload.
 
 Raw evidence: `.local/bridge-verification.json`,
 `.local/client-bridge/build.json`, and `.local/bridge-evidence/` screenshots.
+
+
+## Host Claude session engine — November 3, 2026, subsequent pass
+
+The [single-puffle engine](AGENT_ENGINE.md) was exercised through the Codex in-app
+browser on macOS at port 8081, using Claude Code 2.1.304 and the existing game
+containers. This pass used a disposable Git repository under `/private/tmp/` and
+separate ignored `.local/agent-engine-demo/` state. No user project was given to
+Claude and no interactive `player` account was changed.
+
+Passed with real Claude and browser interaction:
+
+- Repository registration, named Atlas session creation, real PTY startup, folder
+  trust input, and authenticated SessionStart lifecycle reporting.
+- Submission of a small coding instruction through the task form; the real
+  UserPromptSubmit hook reported Working. Claude then returned **Login expired**,
+  and StopFailure reported `authentication_failed`; the panel and Work button
+  showed Failed/attention. Initial host authentication had reported logged in,
+  but a subsequent check reported logged out. The user chose to sign in later.
+- Game login and Blizzard entry through the host wrapper, travel to the registered
+  fixture igloo, and clicking actual Atlas to open the correct live session.
+  After resume, Town travel kept the PTY running and Work opened its terminal
+  without returning to the igloo.
+- Tracked diff and untracked text preview rendering, including HTML displayed as
+  plain text. These changes were explicitly created by Codex as viewer fixtures;
+  they are **not Claude-generated work**. The coding source stayed unchanged.
+- Task history retained the submitted prompt with failed status. Browser reload
+  retained the same worker ID, Claude UUID, live PID, and replayed terminal screen.
+- Stop session terminated the owned process while retaining its conversation.
+  Engine shutdown disabled controls; foreground launcher restart reconnected to
+  saved state. Resume used the exact UUID, confirmed in process arguments and the
+  real SessionStart hook, and restored the prior prompt. No new session fallback
+  was used. This proves conversation restoration, not a successful model response.
+
+Verification passed: 14 engine/HTTP/WebSocket tests, nine wrapper/bridge/UI-model
+checks, four client contract tests, five binary-preservation tests, shell syntax,
+and `git diff --check`. The engine/HTTP tests needed host execution because the
+sandbox denies loopback listeners; those were environment restrictions rather
+than assertion failures. The host page passed 95 HTTP asset checks and four real
+socket handshakes. Review caught a stale ownership-lock race and mismatched
+terminal dimensions. Live checking caught double translation of a Dash URL when
+proxying through port 8080; the corrected route has a focused regression.
+
+Still pending: a successful real coding task, a real tool permission/approval,
+active-turn interruption, and full visual acceptance of runtime-driven animations.
+Hook/state regressions cover those paths but do not replace a live acceptance
+pass. No minigame was retested. One repository/worker edits its registered checkout
+directly; multiple project provisioning, the map neighborhood, and worktree
+isolation remain later milestones. All upstream submodule revisions are unchanged.
+
+Raw evidence remains ignored under `.local/engine-evidence/`, with session state
+in `.local/agent-engine-demo/`. Default `.local/agent-engine/` state was not used.
+The demo engine remains on port 8081; its test Claude process was explicitly
+stopped after verification, retaining the saved conversation for later sign-in.

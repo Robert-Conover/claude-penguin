@@ -144,11 +144,13 @@ export function createLocalServer(options = {}) {
 
   const server = http.createServer(async (req, res) => {
     try {
+      if (options.validateRequest && !options.validateRequest(req)) return reply(res, 403, 'Forbidden');
       const url = new URL(req.url, publicOrigin);
       const urlPath = decodeURIComponent(url.pathname);
       if (urlPath.includes('\0')) return reply(res, 400, 'Invalid path');
+      if (options.onRequest && await options.onRequest(req, res, url)) return;
       const upstreamPath = dashPath(urlPath);
-      if (upstreamPath) return proxyDash(req, res, upstreamPath, url.search);
+      if (upstreamPath) return proxyDash(req, res, options.dashViaWeb ? url.pathname : upstreamPath, url.search);
       if (!['GET', 'HEAD'].includes(req.method)) return reply(res, 405, 'Method not allowed');
       if (urlPath === '/healthz') {
         const present = async file => stat(file).then(s => s.isFile()).catch(() => false);
@@ -180,7 +182,9 @@ export function createLocalServer(options = {}) {
         const templatePath = path.join(root, 'templates/vanilla-media/play', lang ?? '', 'index.html.template');
         const original = await readFile(templatePath, 'utf8');
         const bridge = url.searchParams.get('bridge') === '1';
-        const injection = bridge ? injectRuffle.replace('<script src="/ruffle/ruffle.js">', '<script src="/bridge/bootstrap.js"></script>\n<link rel="stylesheet" href="/bridge/panel.css">\n<script type="module" src="/bridge/panel.mjs"></script>\n<script src="/ruffle/ruffle.js">') : injectRuffle;
+        const agentMode = bridge && options.agentMode === true && url.searchParams.get('agents') === '1';
+        const agentAssets = agentMode ? '<script>window.CP_AGENT_MODE=true;</script>\n<link rel="stylesheet" href="/engine/vendor/xterm.css">\n<link rel="stylesheet" href="/engine/client.css">\n<script src="/engine/vendor/xterm.js"></script>\n<script src="/engine/vendor/addon-fit.js"></script>\n<script type="module" src="/engine/client.mjs"></script>\n' : '';
+        const injection = bridge ? injectRuffle.replace('<script src="/ruffle/ruffle.js">', `${agentAssets}<script src="/bridge/bootstrap.js"></script>\n<link rel="stylesheet" href="/bridge/panel.css">\n<script type="module" src="/bridge/panel.mjs"></script>\n<script src="/ruffle/ruffle.js">`) : injectRuffle;
         const html = renderTemplate(original, env).replace(/(<head\b[^>]*>)/i, `$1\n${injection}`);
         return reply(res, 200, html, types['.html'], req.method);
       }
@@ -205,6 +209,11 @@ export function createLocalServer(options = {}) {
   });
 
   server.on('upgrade', (req, socket, head) => {
+    if (options.validateRequest && !options.validateRequest(req)) {
+      socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');
+      return;
+    }
+    if (options.onUpgrade && options.onUpgrade(req, socket, head)) return;
     const target = socketTargets.get(new URL(req.url, publicOrigin).pathname);
     if (!target || (req.headers.origin && req.headers.origin !== publicOrigin)) {
       socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');
@@ -226,7 +235,8 @@ export function createLocalServer(options = {}) {
       pipeline(upstream, stream, () => {});
     });
   });
-  server.on('close', () => { for (const socket of sockets) socket.destroy(); for (const ws of wsServer.clients) ws.terminate(); wsServer.close(); });
+  server.closeGameConnections = () => { for (const socket of sockets) socket.destroy(); for (const ws of wsServer.clients) ws.terminate(); };
+  server.on('close', () => { server.closeGameConnections(); wsServer.close(); });
   return server;
 }
 

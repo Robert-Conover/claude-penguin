@@ -1,0 +1,59 @@
+#cp-agent-panel { position: fixed; top: 58px; right: 18px; bottom: 12px; width: min(960px, calc(100vw - 36px)); z-index: 10004; box-sizing: border-box; display: flex; flex-direction: column; gap: 8px; overflow: auto; padding: 16px; color: #173b50; background: #f8fdff; border: 3px solid #096d9b; border-radius: 16px; box-shadow: 0 8px 32px #00354f66; font: 14px/1.4 system-ui, sans-serif; }
+#cp-agent-panel[hidden], #cp-agent-panel [hidden] { display: none !important; }
+#cp-agent-panel * { box-sizing: border-box; }
+#cp-agent-panel h2, #cp-agent-panel h3, #cp-agent-panel h4, #cp-agent-panel p { margin: 0; }
+#cp-agent-panel h2 { font-size: 21px; color: #075580; }
+#cp-agent-panel h3 { font-size: 17px; }
+#cp-agent-panel button { border: 1px solid #1878a2; background: #fff; color: #075580; border-radius: 7px; padding: 6px 10px; font: inherit; cursor: pointer; }
+#cp-agent-panel button:disabled { opacity: .48; cursor: default; }
+#cp-agent-panel input, #cp-agent-panel textarea { display: block; width: 100%; font: inherit; color: #173b50; background: white; border: 1px solid #8eafbf; border-radius: 6px; padding: 8px; margin: 4px 0 0; }
+#cp-agent-panel label { display: block; font-weight: 600; }
+#cp-agent-panel button:focus-visible, #cp-agent-panel input:focus-visible, #cp-agent-panel textarea:focus-visible { outline: 3px solid #e7aa25; outline-offset: 2px; }
+/* The archived page gives every header auto side margins, which prevents flex stretching. */
+#cp-agent-panel .cp-agent-header { display: flex; justify-content: space-between; align-items: start; flex: none; width: 100%; margin: 0; }
+#cp-agent-connection { font-size: 12px; color: #476578; }
+#cp-agent-close { font-size: 24px !important; border: 0 !important; padding: 0 6px !important; }
+#cp-agent-error, #cp-agent-missing { flex: none; padding: 9px 12px; background: #fff0d5; border-radius: 7px; color: #734b13; }
+#cp-agent-list { display: flex; flex-wrap: wrap; gap: 6px; flex: none; }
+#cp-agent-list .cp-agent-select { padding: 4px 8px; font-size: 12px; }
+#cp-agent-list [aria-pressed=true] { background: #e3f2fb; border-color: #08648e; }
+#cp-agent-panel .cp-agent-form { display: grid; gap: 14px; padding: 16px 0; max-width: 640px; }
+#cp-agent-panel .cp-agent-form button { justify-self: start; background: #08648e; color: white; }
+#cp-session { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 5px; }
+#cp-agent-panel .cp-session-summary { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+#cp-agent-status { font-size: 13px; background: #e3eef3; padding: 2px 8px; border-radius: 12px; }
+#cp-agent-status[data-state=working] { background: #d8efdf; color: #215935; }
+#cp-agent-status[data-state=needs-you], #cp-agent-status[data-state=review] { background: #ffedbb; color: #775412; }
+#cp-agent-status[data-state=failed] { background: #f9dce0; color: #8b3344; }
+#cp-agent-activity { font-size: 12px; color: #476578; }
+#cp-agent-project, #cp-agent-session-id { font-size: 12px; overflow-wrap: anywhere; }
+#cp-agent-session-id { color: #5b7280; font-family: ui-monospace, Menlo, monospace; }
+#cp-agent-panel .cp-agent-actions { display: flex; gap: 6px; flex-wrap: wrap; margin: 3px 0; }
+#cp-agent-panel .cp-agent-tabs { display: flex; gap: 5px; border-bottom: 1px solid #c5dde9; padding-bottom: 5px; flex: none; }
+#cp-agent-panel .cp-agent-tabs [aria-selected=true] { background: #08648e; color: white; }
+#cp-view-terminal { display: flex; flex: 1; min-height: 230px; flex-direction: column; gap: 5px; }
+#cp-agent-panel .cp-agent-help, #cp-terminal-status { font-size: 12px; color: #476578; flex: none; }
+#cp-terminal-host { flex: 1; min-height: 160px; padding: 8px; background: #102637; border-radius: 7px; overflow: auto; }
+#cp-terminal-host .xterm { height: 100%; }
+#cp-task-form { flex: none; display: grid; grid-template-columns: 1fr auto; gap: 3px 8px; }
+#cp-task-form label { grid-column: 1 / -1; font-size: 12px; }
+#cp-task-form textarea { margin: 0; resize: vertical; min-height: 40px; max-height: 140px; }
+#cp-task-form button { align-self: stretch; background: #08648e; color: white; }
+#cp-view-changes, #cp-view-history { flex: 1; min-height: 180px; overflow: auto; }
+#cp-agent-panel .cp-changes-heading { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+#cp-diff-summary, #cp-view-history > p { font-size: 12px; margin-bottom: 10px; }
+#cp-agent-panel pre { white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.45 ui-monospace, Menlo, monospace; background: #edf3f7; color: #173b50; padding: 12px; border-radius: 6px; }
+#cp-agent-panel #cp-untracked section { display: block; margin-top: 10px; }
+#cp-history { padding-left: 22px; margin: 10px 0; }
+#cp-history li { margin: 8px 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+#cp-igloos { font: 14px system-ui, sans-serif; border: 1px solid #b4deed; border-radius: 18px; color: white; background: #197fa4; padding: 6px 12px; cursor: pointer; }
+@media (max-width: 680px) {
+  #cp-agent-panel { left: 8px; right: 8px; width: auto; padding: 10px; }
+  #cp-agent-panel h2 { font-size: 18px; }
+  #cp-bridge-toolbar { gap: 8px; padding-left: 10px; }
+  #cp-bridge-toolbar strong { max-width: 130px; font-size: 11px; }
+  #cp-bridge-toolbar a { display: none; }
+  #cp-work { right: 8px; padding-inline: 10px; font-size: 12px; }
+  #cp-agent-panel .cp-agent-actions button { font-size: 12px; }
+  #cp-agent-activity { display: none; }
+}

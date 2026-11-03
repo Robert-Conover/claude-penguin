@@ -46,5 +46,26 @@
   "ruffle": {
     "version": "nightly-2026-11-03",
     "archive_sha256": "b3762367e4cdc1313adbd756eba99c0660af63bb0d1e187dc3cd92644428a100"
+  },
+  "agent_engine": {
+    "implementation": "Project-owned host PTY adapter; no upstream submodule changes",
+    "node": "22 or newer",
+    "claude_cli_observed": "2.1.304",
+    "claude_cli_pinned": false,
+    "official_interfaces": [
+      "https://code.claude.com/docs/en/cli-reference",
+      "https://code.claude.com/docs/en/hooks",
+      "https://code.claude.com/docs/en/interactive-mode"
+    ],
+    "dependencies": {
+      "@lydell/node-pty": "1.2.0-beta.15",
+      "@xterm/addon-fit": "0.11.0",
+      "@xterm/addon-serialize": "0.14.0",
+      "@xterm/headless": "6.0.0",
+      "@xterm/xterm": "6.0.0",
+      "ws": "8.22.1"
+    },
+    "lockfile": "local/engine/package-lock.json",
+    "install": "npm ci --ignore-scripts --prefix local/engine"
   }
 }
