@@ -21,6 +21,8 @@ Read only what the task needs:
 | --- | --- |
 | Running or troubleshooting the local game | `LOCAL_SETUP.md` |
 | Editing anything under `local/` | `local/AGENTS.md`, then the affected code |
+| Agent engine (host Claude PTY, project/session state) | `local/AGENT_ENGINE.md` |
+| In-game bridge, Flash overlay, bridge fixtures | `local/GAME_BRIDGE.md` and `local/client-bridge/README.md` |
 | Checking gameplay claims or known gaps | `local/VALIDATION.md` and `local/validation-summary.json` |
 | Changing an upstream revision or runtime dependency | `local/sources.json`, `.gitmodules`, and the affected manifest |
 | Contributor workflow and instruction-file maintenance | `CONTRIBUTING.md` |

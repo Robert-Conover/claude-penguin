@@ -10,6 +10,7 @@ These instructions supplement the root `AGENTS.md` for changes under `local/`.
 - `agent-start`, `engine/`, and `web/engine/`: optional host Claude PTY runtime, explicit project/session state, and browser terminal. See `AGENT_ENGINE.md` for supported scope and recovery.
 - `houdini_bootstrap.py` and `snowflake_bootstrap.py`: narrow launch-time compatibility adapters around pinned upstream code.
 - `verify_seed.py`: idempotent local account creation. `verify_game.py`: mutating checks against dedicated fixture accounts.
+- `client-bridge/`: JPEXS-built `engine.swf` overlay (output in ignored `.local/client-bridge/`) and its browser contract. `bridge-fixtures`, `bridge_seed.py`, and `verify_bridge.py` create the disposable `bridgecheck` visitor and project-igloo fixtures.
 
 Use `./local/compose` for this stack. It selects `colima-club-penguin` explicitly. The root `docker-compose.yml` and `.env` belong to the inherited Wand setup and are not the local launch configuration. Avoid changing the user's global Docker context or unrelated VMs.
 
@@ -26,6 +27,7 @@ npm ci --ignore-scripts --prefix local/web
 | Browser wrapper, routing, templates, socket bridge | `npm test --prefix local/web` |
 | Agent engine, persistence, hooks, terminal control | `npm ci --ignore-scripts --prefix local/engine` when needed; `npm test --prefix local/engine`; web tests for browser changes; a disposable repository for real-Claude checks |
 | Launcher or Compose configuration | Shell syntax checks below; validate Compose and exercise the affected startup/stop path when the local runtime is available |
+| Flash overlay or bridge contract (`client-bridge/`) | `node --test local/client-bridge/bridge.test.mjs`; `python3 -m unittest discover -s local/client-bridge -p 'test_*.py'` (the generated-overlay test skips until `python3 local/client-bridge/build.py` has run) |
 | Houdini compatibility adapter | Container regression command below; `./local/verify` when the stack is running |
 | Client/config serving, Ruffle version, game socket endpoints | `npm run verify:http --prefix local/web` against the running stack; browser checks for affected rendering/interaction |
 | Database seeding, game protocol, persistence | `./local/verify`; confirm existing player progress survives the affected lifecycle operation |
@@ -34,7 +36,7 @@ npm ci --ignore-scripts --prefix local/web
 Check each launcher script with its matching shell:
 
 ```sh
-for file in local/start local/stop local/compose local/verify local/agent-start; do
+for file in local/start local/stop local/compose local/verify local/agent-start local/bridge-fixtures; do
   sh -n "$file" || exit
 done
 bash -n local/web/setup-ruffle.sh
