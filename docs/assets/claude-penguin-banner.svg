@@ -1,0 +1,192 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="480" viewBox="0 0 1280 480" role="img" aria-labelledby="banner-title banner-description">
+  <title id="banner-title">Claude Penguin — Your agents. A little more alive.</title>
+  <desc id="banner-description">Original concept art of a penguin with a golden laptop and three colorful, fluffy companions on a snowy island at twilight. A quiet constellation, warm cabin windows, and a winding trail illuminate the scene. Agent integration is planned.</desc>
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#10273c"/>
+      <stop offset=".58" stop-color="#19384d"/>
+      <stop offset="1" stop-color="#3d5361"/>
+    </linearGradient>
+    <radialGradient id="horizon" cx=".75" cy=".6" r=".7">
+      <stop stop-color="#dfb486" stop-opacity=".27"/>
+      <stop offset=".62" stop-color="#86c5c5" stop-opacity=".07"/>
+      <stop offset="1" stop-color="#86c5c5" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="snow" x1="0" y1="0" x2="0" y2="1">
+      <stop stop-color="#f1f4e9"/>
+      <stop offset="1" stop-color="#c6dede"/>
+    </linearGradient>
+    <linearGradient id="ice" x1="0" y1="0" x2="0" y2="1">
+      <stop stop-color="#94bdc8"/>
+      <stop offset="1" stop-color="#466d83"/>
+    </linearGradient>
+    <linearGradient id="penguin" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#315162"/>
+      <stop offset="1" stop-color="#132b3b"/>
+    </linearGradient>
+    <linearGradient id="belly" x1="0" y1="0" x2=".8" y2="1">
+      <stop stop-color="#fff9e9"/>
+      <stop offset="1" stop-color="#dce7df"/>
+    </linearGradient>
+    <linearGradient id="laptop" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#f4c687"/>
+      <stop offset="1" stop-color="#cf9159"/>
+    </linearGradient>
+    <linearGradient id="mint" x1="0" y1="0" x2="0" y2="1">
+      <stop stop-color="#a9e0c8"/>
+      <stop offset="1" stop-color="#5da89f"/>
+    </linearGradient>
+    <linearGradient id="lilac" x1="0" y1="0" x2="0" y2="1">
+      <stop stop-color="#c0b3e5"/>
+      <stop offset="1" stop-color="#8b83b9"/>
+    </linearGradient>
+    <linearGradient id="coral" x1="0" y1="0" x2="0" y2="1">
+      <stop stop-color="#f3b397"/>
+      <stop offset="1" stop-color="#d78379"/>
+    </linearGradient>
+    <mask id="crescent" maskUnits="userSpaceOnUse" x="1095" y="129" width="76" height="76">
+      <circle cx="1133" cy="167" r="38" fill="#fff"/>
+      <circle cx="1145" cy="156" r="35" fill="#000"/>
+    </mask>
+  </defs>
+
+  <!-- The island at blue hour. -->
+  <path fill="url(#sky)" d="M0 0h1280v480H0z"/>
+  <path fill="url(#horizon)" d="M0 0h1280v480H0z"/>
+  <path d="M654 147c136-70 252-73 395-19 88 33 160 25 231 1v34c-83 23-155 28-244-4-141-51-252-48-382-12Z" fill="#a9c9c8" opacity=".06"/>
+  <path d="M765 186c115-36 220-33 326-2 60 18 127 20 189 1v14c-66 17-132 16-196 0-109-28-213-33-319-13Z" fill="#e6b88a" opacity=".09"/>
+
+  <g fill="#efebd7">
+    <circle cx="77" cy="52" r="1.5" opacity=".42"/>
+    <circle cx="383" cy="44" r="1.3" opacity=".5"/>
+    <circle cx="564" cy="83" r="1.6" opacity=".5"/>
+    <circle cx="634" cy="38" r="1.3" opacity=".42"/>
+    <circle cx="799" cy="48" r="1.5" opacity=".58"/>
+    <circle cx="938" cy="86" r="1.4" opacity=".42"/>
+    <circle cx="1075" cy="40" r="1.2" opacity=".62"/>
+    <circle cx="1191" cy="94" r="1.7" opacity=".55"/>
+    <circle cx="1240" cy="35" r="1.2" opacity=".45"/>
+  </g>
+  <g fill="none" stroke="#eac18c" stroke-linecap="round">
+    <path d="M702 61v12m-6-6h12" opacity=".8"/>
+    <path d="M1024 111v8m-4-4h8" opacity=".7"/>
+    <path d="M1138 66v10m-5-5h10" opacity=".9"/>
+  </g>
+  <g fill="none" stroke="#a6c9ca" stroke-width="1" opacity=".24">
+    <path d="m743 107 55 22 44-42 47 30"/>
+    <circle cx="743" cy="107" r="3"/>
+    <circle cx="798" cy="129" r="3"/>
+    <circle cx="842" cy="87" r="3"/>
+    <circle cx="889" cy="117" r="3"/>
+  </g>
+  <circle cx="1133" cy="167" r="38" fill="#f2d1a3" mask="url(#crescent)"/>
+
+  <!-- Distant slopes and a tiny, welcoming cabin. -->
+  <path d="m601 290 95-80 43 33 79-86 99 97 66-54 111 81 70-60 116 77v98H601Z" fill="#567786" opacity=".42"/>
+  <path d="m739 243 79-86 62 61-35-13-21 7-20-22-33 47-12-7Z" fill="#a7c5c9" opacity=".5"/>
+  <path d="m934 240 49-40 47 35-31-7-16-11-16 16-14-4Z" fill="#b6ced0" opacity=".38"/>
+  <path d="M562 320c134-74 211-29 308-45 144-25 229-38 410 22v137H562Z" fill="#6c919d"/>
+  <g fill="#305465">
+    <path d="m1055 225-18 37h9l-16 29h17v20h15v-20h17l-16-29h9Z"/>
+    <path d="m1090 251-12 25h6l-11 20h12v13h10v-13h12l-11-20h6Z"/>
+    <path d="m1234 229-17 35h8l-15 28h17v19h14v-19h16l-15-28h8Z"/>
+  </g>
+  <g stroke-linejoin="round">
+    <path d="M1135 257h66v49h-66Z" fill="#59616a"/>
+    <path d="m1125 258 43-33 43 33Z" fill="#eeeadd"/>
+    <path d="m1135 258 33-25 33 25Z" fill="#7a8083"/>
+    <path d="M1160 275h16v31h-16Z" fill="#ebbd82"/>
+    <path d="M1143 273h10v12h-10Zm40 0h10v12h-10Z" fill="#f8d79c"/>
+    <path d="M1186 229v-13h9v20" fill="#6f7780"/>
+    <path d="M1191 209c-9-8 9-13 1-22" fill="none" stroke="#c4d2d0" stroke-width="4" stroke-linecap="round" opacity=".28"/>
+    <path d="m1162 306-24 26h67l-32-26Z" fill="#ebc895" opacity=".22"/>
+  </g>
+
+  <!-- Open water and the layered edge of the snow. -->
+  <path d="M0 398c164-17 343 30 511 1s324-49 501-27 210 6 268-2v110H0Z" fill="#234a60"/>
+  <g fill="none" stroke="#6d97a4" stroke-linecap="round" opacity=".3">
+    <path d="M54 438h126m-70 15h52m381 0h126m-47 15h46m475-20h95"/>
+  </g>
+  <path d="M599 367c52-38 121-65 192-59 77 6 101-23 180-24 107-2 172 32 240 62 30 13 48 24 69 36v49c-83 6-128 1-194-10-125-21-216 5-333-5-72-6-126-22-154-49Z" fill="url(#ice)"/>
+  <path d="M589 357c76-56 146-51 211-50 65 2 101-29 178-24 118 8 174 30 235 54 30 12 51 21 67 32v35c-54 11-132-10-195-12-101-4-169 23-272 11-106-12-182-12-224-46Z" fill="url(#snow)"/>
+  <path d="M591 357c78 37 152 30 221 42 105 18 202-11 278-9 68 2 138 23 190 13" fill="none" stroke="#e9f1e9" stroke-width="4"/>
+  <path d="M1170 313c-49 2-58 27-110 29-52 3-72-5-109 11" fill="none" stroke="#c3d8d7" stroke-width="10" stroke-linecap="round"/>
+  <g fill="#a9c6ca" opacity=".6" transform="rotate(-12 682 373)">
+    <ellipse cx="654" cy="371" rx="7" ry="3"/>
+    <ellipse cx="675" cy="378" rx="7" ry="3"/>
+    <ellipse cx="694" cy="369" rx="7" ry="3"/>
+  </g>
+
+  <!-- An original penguin, bundled up and building something. -->
+  <ellipse cx="908" cy="384" rx="80" ry="14" fill="#88aeb8" opacity=".4"/>
+  <path d="M846 370c-16 1-28 12-26 18 3 8 42 7 55-2l-3-17Z" fill="#e9ad68"/>
+  <path d="M934 370c17-1 33 9 32 15-1 9-41 11-56 3l1-17Z" fill="#e9ad68"/>
+  <path d="M890 181c-39 0-62 34-62 78 0 21-16 43-14 76 2 34 27 50 73 50 49 0 79-15 79-53 0-30-16-49-17-73-2-47-23-78-59-78Z" fill="url(#penguin)"/>
+  <path d="M856 231c1-23 19-29 34-15 15-14 32-7 34 15 2 28 18 54 21 84 4 42-15 57-54 57-41 0-59-16-53-54 5-30 18-59 18-87Z" fill="url(#belly)"/>
+  <path d="M842 280c-24 9-38 27-38 52 0 11 8 16 16 6l28-39Z" fill="#254657"/>
+  <path d="M944 278c24 8 39 24 40 46 1 12-7 17-17 8l-29-37Z" fill="#254657"/>
+  <g fill="#193646">
+    <ellipse cx="873" cy="244" rx="4.2" ry="6"/>
+    <ellipse cx="907" cy="244" rx="4.2" ry="6"/>
+  </g>
+  <g fill="#fffdf3">
+    <circle cx="874" cy="242" r="1.3"/>
+    <circle cx="908" cy="242" r="1.3"/>
+  </g>
+  <path d="M879 257q11-7 23 0l-11 11Z" fill="#e6a45e"/>
+  <ellipse cx="861" cy="260" rx="7" ry="3.5" fill="#e6b7a5" opacity=".55"/>
+  <ellipse cx="920" cy="260" rx="7" ry="3.5" fill="#e6b7a5" opacity=".55"/>
+  <path d="M837 273c31 16 73 17 107 1l-1 19c-35 14-75 10-106-2Z" fill="#dd8c73"/>
+  <path d="m924 286 19-4 11 43-20 4Z" fill="#e5a083"/>
+  <path d="m934 322 19-4m-20-3 18-4" fill="none" stroke="#f1bd93" stroke-width="3"/>
+
+  <!-- A golden laptop; small code marks provide the only interface motif. -->
+  <path d="m837 324 115-6c5 0 8 3 8 7l-7 58-115 6-9-56c-1-5 2-8 8-9Z" fill="#aa754b"/>
+  <path d="m834 322 114-6c5 0 8 3 8 7l-7 58-114 6-9-56c-1-5 2-8 8-9Z" fill="url(#laptop)"/>
+  <path d="m821 386 138-7 11 7c2 2 1 5-3 5l-139 7c-5 0-10-3-7-7Z" fill="#f3cc93"/>
+  <path d="m831 394 127-6" fill="none" stroke="#ad8055" stroke-width="2" stroke-linecap="round" opacity=".55"/>
+  <g fill="none" stroke="#835d40" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" opacity=".85">
+    <path d="m874 345-9 9 10 7m32-18 9 7-9 10m-12-20-7 24"/>
+  </g>
+  <circle cx="938" cy="329" r="2.3" fill="#fff1c5"/>
+
+  <!-- Fluffy companions, with their own curious personalities. -->
+  <ellipse cx="746" cy="377" rx="42" ry="9" fill="#88aeb8" opacity=".4"/>
+  <path d="m711 346-7-12 14 1-2-13 13 6 3-15 11 12 11-14 4 17 14-7-2 16 14-1-6 13c12 20 2 34-27 35-33 2-50-12-40-38Z" fill="url(#mint)"/>
+  <path d="m724 337 8 3m23-4 8-4" fill="none" stroke="#4b8f8c" stroke-width="2.5" stroke-linecap="round"/>
+  <ellipse cx="732" cy="353" rx="6" ry="9" fill="#f2f5e8"/>
+  <ellipse cx="755" cy="352" rx="6" ry="9" fill="#f2f5e8"/>
+  <ellipse cx="734" cy="354" rx="2.6" ry="4.6" fill="#254b50"/>
+  <ellipse cx="757" cy="353" rx="2.6" ry="4.6" fill="#254b50"/>
+  <path d="M741 366q5 4 10-1" fill="none" stroke="#326765" stroke-width="2" stroke-linecap="round"/>
+
+  <ellipse cx="1062" cy="378" rx="51" ry="10" fill="#88aeb8" opacity=".4"/>
+  <path d="m1017 337-9-13 16 1-4-17 17 8 3-19 14 15 11-20 8 20 17-12-2 20 20-3-9 17c13 26 6 47-40 49-41 2-58-17-42-46Z" fill="url(#lilac)"/>
+  <path d="M1034 330q7-5 12 0m28-1q7-6 12-1" fill="none" stroke="#746796" stroke-width="2.5" stroke-linecap="round"/>
+  <ellipse cx="1042" cy="346" rx="7" ry="10" fill="#f5f1e9"/>
+  <ellipse cx="1076" cy="344" rx="7" ry="10" fill="#f5f1e9"/>
+  <ellipse cx="1040" cy="347" rx="3" ry="5" fill="#4e4665"/>
+  <ellipse cx="1074" cy="345" rx="3" ry="5" fill="#4e4665"/>
+  <path d="M1054 361q7 7 15-1" fill="none" stroke="#66567e" stroke-width="2.5" stroke-linecap="round"/>
+  <path d="m1096 360 18 11-12 8" fill="none" stroke="#9b8fc1" stroke-width="5" stroke-linecap="round"/>
+
+  <ellipse cx="1176" cy="397" rx="31" ry="7" fill="#88aeb8" opacity=".38"/>
+  <path d="m1150 372-6-8 11 1-2-12 11 5 6-12 7 11 11-8 1 12 12-2-5 12c9 16 2 29-24 29-23 0-33-12-22-28Z" fill="url(#coral)"/>
+  <path d="M1159 378q4-6 8 0m13 0q4-6 8 0" fill="none" stroke="#785552" stroke-width="2.5" stroke-linecap="round"/>
+  <path d="M1171 385q4 4 8 0" fill="none" stroke="#a96561" stroke-width="2" stroke-linecap="round"/>
+  <path d="m1147 397 8 4m41-4 8-2" fill="none" stroke="#d8e7e3" stroke-width="3" stroke-linecap="round"/>
+
+  <!-- Editorial title, deliberately separate from the concept illustration. -->
+  <g font-family="'Avenir Next', Avenir, 'Segoe UI', Arial, sans-serif">
+    <path d="M72 115h33" stroke="#e9b582" stroke-width="3" stroke-linecap="round"/>
+    <circle cx="116" cy="115" r="2.5" fill="#e9b582"/>
+    <text x="68" y="192" fill="#f2ce9f" font-size="62" font-weight="700" letter-spacing="5">CLAUDE</text>
+    <text x="68" y="264" fill="#f3f2e7" font-size="62" font-weight="700" letter-spacing="5">PENGUIN</text>
+    <text x="72" y="312" fill="#bdd1d4" font-size="23" font-weight="400" letter-spacing=".15">Your agents. A little more alive.</text>
+    <g fill="#acc3cb" font-size="13" font-weight="500" letter-spacing=".8">
+      <circle cx="76" cy="380" r="3" fill="#e8b783"/>
+      <text x="89" y="384">CONCEPT ART · AGENT INTEGRATION PLANNED</text>
+    </g>
+  </g>
+  <path d="M0 479.5h1280" stroke="#8db0bc" stroke-opacity=".15"/>
+</svg>
