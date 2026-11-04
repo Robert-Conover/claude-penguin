@@ -1,0 +1,15 @@
+python-Levenshtein
+fast-autocomplete[levenshtein]
+aiohttp
+redis
+sanic==21.12.2
+sanic_session
+sendgrid
+bcrypt
+gino
+Jinja2
+pillow
+PyYAML
+python-i18n[YAML]
+stegano==0.9.9
+websockets==10.2

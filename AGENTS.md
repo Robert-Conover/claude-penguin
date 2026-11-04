@@ -4,7 +4,7 @@
 
 Claude Penguin runs the original Club Penguin AS3 client locally and connects one puffle to a persistent Claude Code session through an opt-in host engine. Multiple projects and concurrent puffles remain planned. Keep implemented behavior, proposed behavior, and validation gaps distinct in code, docs, and demos.
 
-Most project-owned runtime code is in `local/`. `houdini/`, `dash/`, `snowflake/`, `vanilla-media/`, and `legacy-media/` are upstream Git submodules, not ordinary source directories. The AS2 `legacy-media` module is intentionally uninitialized by our launcher.
+Most project-owned runtime code is in `local/`. `houdini/`, `dash/`, and `snowflake/` are vendored upstream server sources (MIT; revisions in `local/sources.json`). `vanilla-media/` is a pinned Git submodule of archived game media; never commit its contents to this public repository.
 
 ## Git workflow
 
@@ -31,7 +31,7 @@ Search owned code first. Avoid recursively searching the multi-gigabyte media ar
 
 ## Change boundaries
 
-- Preserve pinned upstream revisions for unrelated work. Prefer project-owned adapters over incidental edits inside submodules. When a task requires an upstream change, make the change reproducible, update provenance, and include it explicitly in the diff.
+- Preserve pinned upstream revisions for unrelated work. Prefer project-owned adapters over incidental edits to vendored sources or the media submodule. When a task requires an upstream change, make the change reproducible, update provenance, and include it explicitly in the diff.
 - Keep the game on loopback by default. The public GitHub repository does not make the running game a public service.
 - Preserve player progress. Use the dedicated verification accounts for mutating checks; do not clear Docker volumes or overwrite the interactive `player` account to make tests pass.
 - Keep real credentials, logs, Ruffle binaries, and raw local reports out of Git. `.local/` is ignored; the published player password is a disposable fixture, not an API credential.
@@ -48,6 +48,6 @@ Search owned code first. Avoid recursively searching the multi-gigabyte media ar
 
 - Flag changes that expose local services or real agent credentials to the browser/network unintentionally. Preserve loopback bindings and keep provider credentials in the trusted execution layer.
 - Flag changes that erase player data or make verification mutate a person's normal account. Use dedicated fixtures and preserve existing accounts on startup.
-- Flag untracked submodule edits or silent revision drift that make a checkout unreproducible. Prefer an owned adapter or an explicit, documented dependency update.
+- Flag unrecorded edits to vendored server sources or silent media-submodule drift that make a checkout unreproducible. Prefer an owned adapter or an explicit, documented dependency update.
 
 Keep this file short and durable. Put specialized runtime guidance in `local/AGENTS.md`; do not turn instructions into a session log or a list of speculative features.

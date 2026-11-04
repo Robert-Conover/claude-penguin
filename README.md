@@ -86,7 +86,7 @@ Open **[localhost:8080](http://localhost:8080/)**.
 
 This disposable development account starts with membership and 100,000 coins. No Claude Code account or API key is needed to try the current game baseline.
 
-The first launch downloads pinned submodules, about **4.1 GB of archived media**, and Ruffle, then builds the services. The dedicated VM is configured with 4 CPUs, 4 GB RAM, and a 30 GB disk. Published service ports bind to localhost.
+The first launch downloads the pinned media submodule (about **4.1 GB of archived media**) and Ruffle, then builds the services. The dedicated VM is configured with 4 CPUs, 4 GB RAM, and a 30 GB disk. Published service ports bind to localhost.
 
 ```sh
 ./local/stop    # Stop the containers and dedicated VM; keep player progress.
@@ -110,7 +110,7 @@ Open **[the agent page on localhost:8081](http://localhost:8081/?bridge=1&agents
 
 The browser runs the original Flash client through **Ruffle**. A small Node.js wrapper serves the game and bridges its sockets to **Houdini**, with **Dash**, **Snowflake**, PostgreSQL, and Redis supporting the local world.
 
-The optional host engine runs Claude Code in a real terminal on the Mac, persists project/session identity, and streams terminal output and lifecycle events to the game wrapper. The native menu bridge adds controls through a generated client overlay while preserving the original engine tags and pinned submodules. Provider credentials stay on the host.
+The optional host engine runs Claude Code in a real terminal on the Mac, persists project/session identity, and streams terminal output and lifecycle events to the game wrapper. The native menu bridge adds controls through a generated client overlay while preserving the original engine tags and upstream sources. Provider credentials stay on the host.
 
 | Path | What's there |
 | :--- | :--- |
@@ -119,8 +119,8 @@ The optional host engine runs Claude Code in a real terminal on the Mac, persist
 | [`local/client-bridge/`](local/client-bridge/) | Native menu and puffle-click bridge, overlay build, and artwork export |
 | [`local/web/engine/`](local/web/engine/) | Browser setup, terminal, changes viewer, and fallback puffle card |
 | [`local/sources.json`](local/sources.json) | Exact upstream revisions and the Ruffle release/checksum |
-| `houdini/`, `dash/`, `snowflake/` | Pinned community server submodules |
-| `vanilla-media/` | Pinned archived client and game media |
+| `houdini/`, `dash/`, `snowflake/` | Vendored community server sources (MIT; revisions in `local/sources.json`) |
+| `vanilla-media/` | Pinned archived client and game media (Git submodule) |
 
 The client archive is the later AS3 generation of original Club Penguin. It is not a claim of an exact, complete final-day snapshot. The legacy AS2 media is not downloaded by the local launcher.
 

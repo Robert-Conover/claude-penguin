@@ -13,25 +13,32 @@
       "name": "houdini",
       "url": "https://github.com/solero/houdini",
       "commit": "36eaa5cbd342d743c40a8c47fe140abc710eb069",
-      "commit_date": "2026-10-16T14:55:05+07:00"
+      "commit_date": "2026-10-16T14:55:05+07:00",
+      "vendored_path": "houdini/"
     },
     {
       "name": "dash",
       "url": "https://github.com/solero/dash",
       "commit": "89ccac34883088f176c594ae55e0e93a29dac265",
-      "commit_date": "2025-11-16T09:55:05+07:00"
+      "commit_date": "2025-11-16T09:55:05+07:00",
+      "vendored_path": "dash/"
     },
     {
       "name": "snowflake",
       "url": "https://github.com/Lekuruu/snowflake.git",
       "commit": "b8cf1e2a2b87bcdef814a693fca8fede742f11ad",
-      "commit_date": "2026-10-29T20:31:58+01:00"
+      "commit_date": "2026-10-29T20:31:58+01:00",
+      "vendored_path": "snowflake/",
+      "vendored_excludes": [
+        ".github/"
+      ]
     },
     {
       "name": "vanilla-media",
       "url": "https://git.solero.me/solero/vanilla-media",
       "commit": "e8666de19835faf61782358d52a3b41c9226a00a",
-      "commit_date": "2024-03-09T12:35:46Z"
+      "commit_date": "2024-03-09T12:35:46Z",
+      "submodule_path": "vanilla-media/"
     }
   ],
   "client_bridge_experiment": {
@@ -61,7 +68,7 @@
     "archive_sha256": "b3762367e4cdc1313adbd756eba99c0660af63bb0d1e187dc3cd92644428a100"
   },
   "agent_engine": {
-    "implementation": "Project-owned host PTY adapter; no upstream submodule changes",
+    "implementation": "Project-owned host PTY adapter; no upstream source changes",
     "node": "22 or newer",
     "claude_cli_observed": "2.1.304",
     "claude_cli_pinned": false,

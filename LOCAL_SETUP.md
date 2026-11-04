@@ -25,7 +25,7 @@ From this repository:
 ./local/stop
 ```
 
-`start` uses the dedicated `club-penguin` Colima profile, 4 CPUs, 4 GB RAM, and a 30 GB data disk. It restores the pinned submodules, creates local configuration if missing, starts the services, and creates the initial accounts only if they do not exist. It does not overwrite existing player progress.
+`start` uses the dedicated `club-penguin` Colima profile, 4 CPUs, 4 GB RAM, and a 30 GB data disk. It restores the pinned media submodule, creates local configuration if missing, starts the services, and creates the initial accounts only if they do not exist. It does not overwrite existing player progress.
 
 `stop` stops this project's containers and dedicated VM. PostgreSQL and Redis volumes remain intact. The VM is not configured to start at login.
 
@@ -68,7 +68,7 @@ npm run verify:http --prefix local/web
 
 [Source revisions](local/sources.json) record the exact upstream commits. Wand was current on October 30, 2026, with Houdini updated October 16, 2026. The preserved vanilla-media revision is from March 2024; this is the later original AS3 game generation, not proof of an exact complete final-day March 2017 snapshot.
 
-The downloaded components are:
+The upstream components are below. The server sources are vendored in this repository; the media is fetched as a submodule.
 
 - `houdini/`: community Python game server source.
 - `dash/`: registration, avatar, and other web services.
@@ -76,14 +76,14 @@ The downloaded components are:
 - `vanilla-media/`: archived Flash client, rooms, games, graphics, audio, and web files (about 4.1 GB, approximately 86,000 files).
 - `local/`: Mac launch configuration, Ruffle/WebSocket compatibility wrapper, and verification helpers.
 
-The original game and server submodules are unchanged. Local code renders the upstream play-page/configuration templates at request time and bridges browser WebSockets to the original game protocol. A Snowflake launch wrapper preserves the local URL's port and media path. A Houdini launch wrapper corrects the pinned server's empty-igloo save exception in memory, with regression checks against the original handler. The opt-in [game bridge experiment](local/GAME_BRIDGE.md) adds two fixture destinations and puffle controls through a separately generated client overlay; normal gameplay still uses the original assets. The separate [host agent engine](local/AGENT_ENGINE.md) connects one of those fixtures to a real Claude terminal when explicitly started.
+The vendored server sources and the media submodule match their recorded upstream revisions, except that Snowflake's `.github/` folder (README screenshots and game asset patches for manual setup) is omitted. Local code renders the upstream play-page/configuration templates at request time and bridges browser WebSockets to the original game protocol. A Snowflake launch wrapper preserves the local URL's port and media path. A Houdini launch wrapper corrects the pinned server's empty-igloo save exception in memory, with regression checks against the original handler. The opt-in [game bridge experiment](local/GAME_BRIDGE.md) adds two fixture destinations and puffle controls through a separately generated client overlay; normal gameplay still uses the original assets. The separate [host agent engine](local/AGENT_ENGINE.md) connects one of those fixtures to a real Claude terminal when explicitly started.
 
 `local/dependency-snapshots/` and `local/runtime-snapshot.json` capture the packages/images observed during setup. They are diagnostic records, not enforced dependency constraints; upstream Dockerfiles resolve requirements on a rebuild.
 
-The legacy AS2 media submodule is intentionally not downloaded. Only the English Blizzard world is started. Other languages, minigames, parties, and every original feature have not been comprehensively verified.
+The legacy AS2 media is not included. Only the English Blizzard world is started. Other languages, minigames, parties, and every original feature have not been comprehensively verified.
 
 ## Local boundaries and persistence
 
 The browser, login, world, and Snow ports bind only to `127.0.0.1` (8080, 6112, 9875, 7002). The optional host agent engine also binds to loopback (8081 by default). PostgreSQL, Redis, and Dash are private to the container network. The source repository is public on GitHub; the running game is hosted only on this Mac.
 
-On this Mac, `origin` points to `Robert-Conover/claude-penguin`. Development happens on `dev`, with promotion PRs from `dev` to `main`; there is no `qa` branch. See [CONTRIBUTING.md](CONTRIBUTING.md). The original Wand remote remains named `upstream`; its push URL, and the initialized submodule push URLs, are set to `DISABLED`. The inherited automatic submodule-update workflow has been removed to preserve the verified revisions. Upstream history and licenses are preserved. Credentials, Ruffle binaries, logs, and raw verification reports are ignored under `.local/`; database state lives in named Docker volumes in the dedicated VM.
+On this Mac, `origin` points to `Robert-Conover/claude-penguin`. Development happens on `dev`, with promotion PRs from `dev` to `main`; there is no `qa` branch. See [CONTRIBUTING.md](CONTRIBUTING.md). The original Wand remote remains named `upstream`; its push URL, and the media submodule's push URL, are set to `DISABLED`. The inherited automatic submodule-update workflow has been removed to preserve the verified revisions. Upstream history and licenses are preserved. Credentials, Ruffle binaries, logs, and raw verification reports are ignored under `.local/`; database state lives in named Docker volumes in the dedicated VM.
