@@ -19,7 +19,7 @@ Read only what the task needs:
 
 | Task | Reference |
 | --- | --- |
-| Running or troubleshooting the local game | `LOCAL_SETUP.md` |
+| Running or troubleshooting the local game (`./local/start`, `./local/stop`) | `LOCAL_SETUP.md` |
 | Editing anything under `local/` | `local/AGENTS.md`, then the affected code |
 | Agent engine (host Claude PTY, project/session state) | `local/AGENT_ENGINE.md` |
 | In-game bridge, Flash overlay, bridge fixtures | `local/GAME_BRIDGE.md` and `local/client-bridge/README.md` |

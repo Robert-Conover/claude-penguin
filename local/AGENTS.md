@@ -5,14 +5,14 @@ These instructions supplement the root `AGENTS.md` for changes under `local/`.
 ## Runtime map
 
 - `start`, `stop`, and `compose`: dedicated Colima profile/context and Compose lifecycle.
-- `compose.yml`: local services, loopback bindings, mounts, health checks, and persistent volumes.
+- `compose.yml`: local services, loopback bindings, mounts, health checks, and persistent volumes. The game page is `http://localhost:8080`.
 - `web/server.mjs`: serves the preserved client, renders local addresses, proxies Dash, and bridges WebSocket traffic to TCP game servers. Node ESM; host development requires Node 22 or newer.
-- `agent-start`, `engine/`, and `web/engine/`: optional host Claude PTY runtime, explicit project/session state, and browser terminal. See `AGENT_ENGINE.md` for supported scope and recovery.
+- `agent-start`, `engine/`, and `web/engine/`: optional host Claude PTY runtime, explicit project/session state, and browser terminal (`http://localhost:8081`). See `AGENT_ENGINE.md` for supported scope and recovery. `agent-start` refuses to run until `./local/start`, `./local/bridge-fixtures`, and `python3 local/client-bridge/build.py` have succeeded.
 - `houdini_bootstrap.py` and `snowflake_bootstrap.py`: narrow launch-time compatibility adapters around vendored upstream code.
 - `verify_seed.py`: idempotent local account creation. `verify_game.py`: mutating checks against dedicated fixture accounts.
-- `client-bridge/`: JPEXS-built `engine.swf` overlay (output in ignored `.local/client-bridge/`) and its browser contract. `bridge-fixtures`, `bridge_seed.py`, and `verify_bridge.py` create the disposable `bridgecheck` visitor and project-igloo fixtures.
+- `client-bridge/`: JPEXS-built `engine.swf` overlay (output in ignored `.local/client-bridge/`) and its browser contract. `build.py` needs a JDK and downloads pinned JPEXS on first use; rebuild after editing `bridge.as`. `bridge-fixtures`, `bridge_seed.py`, and `verify_bridge.py` create the disposable `bridgecheck` visitor and project-igloo fixtures.
 
-Use `./local/compose` for this stack. It selects `colima-club-penguin` explicitly. The root `docker-compose.yml` and `.env` belong to the inherited Wand setup and are not the local launch configuration. Avoid changing the user's global Docker context or unrelated VMs.
+Use `./local/compose` for this stack. It selects `colima-club-penguin` explicitly. The root `docker-compose.yml` and `.env` belong to the inherited Wand setup and are not the local launch configuration; that file still mounts the removed `legacy-media/` checkout. Avoid changing the user's global Docker context or unrelated VMs.
 
 ## Validation by change
 
@@ -66,3 +66,5 @@ For Compose validation, use `./local/compose config --quiet` after local configu
 ## Evidence
 
 Protocol success establishes backend behavior; HTTP success establishes serving/transport behavior. Neither proves interactive gameplay. Verify affected UI paths in the browser before claiming they work. Update the dated validation record with the command/environment and remaining gaps when adding evidence. Keep raw reports and logs under ignored `.local/`.
+
+CI (`.github/workflows/regression.yml`) runs only the offline checks: launcher syntax, the engine, web, bridge-contract, and synthetic SWF suites, and `git diff --check`. A passing run does not cover the Houdini container, the built overlay, the running stack, or real Claude.
