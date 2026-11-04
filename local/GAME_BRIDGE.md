@@ -70,7 +70,7 @@ credentials, terminal execution, or arbitrary filesystem endpoints are exposed.
 
 - [Client extension](client-bridge/bridge.as): a separate compiled AVM1 action tag
   appended to a generated copy of the pinned `engine.swf`. Existing decompressed
-  SWF tags remain byte-for-byte identical. Submodule source is untouched.
+  SWF tags remain byte-for-byte identical. The media submodule is untouched.
 - [Browser bootstrap](web/bridge/bootstrap.js): Ruffle URL rewriting applies only
   on the opt-in page. Only the generated engine is substituted.
 - [Panel](web/bridge/panel.mjs) and [identity model](web/bridge/model.mjs): real
