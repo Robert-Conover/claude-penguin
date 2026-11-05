@@ -534,5 +534,108 @@
       "Stage 3 experience, migration, and container mounts",
       "GitHub-hosted CI run for this branch"
     ]
+  },
+  "multi_project_experience_stage_3_2026_11_05": {
+    "date": "2026-11-05",
+    "base": "3596d57",
+    "branch": "multi-project-igloos",
+    "status": "local_browser_and_real_claude_acceptance_with_recorded_gaps",
+    "environment": {
+      "macOS": "27.2",
+      "node": "26.13.0",
+      "git": "2.54.0",
+      "git_lfs": "3.8.1",
+      "python": "3.9.6",
+      "claude_code": "2.1.317",
+      "colima": "club-penguin",
+      "overlay_contract": 4
+    },
+    "passed": {
+      "engine": 100,
+      "web": 37,
+      "bridge": 18,
+      "swf": 7,
+      "python_host": 16,
+      "houdini_container": 12,
+      "http": 95,
+      "socket": 4
+    },
+    "live_commands": [
+      "./local/start",
+      "python3 local/client-bridge/build.py",
+      "./local/agent-start (dedicated CP_ENGINE_STATE_DIR)",
+      "./local/compose config --quiet",
+      "./local/verify",
+      "./local/bridge-fixtures",
+      "npm run verify:http --prefix local/web",
+      "node local/engine/migrate.mjs --state-dir .local/agent-engine-demo",
+      "./local/stop"
+    ],
+    "managed_projects": [
+      {
+        "project": "Snowcap",
+        "ownerId": 110,
+        "iglooId": 8,
+        "roomId": 2110,
+        "puffleId": 8,
+        "puffleName": "Comet"
+      },
+      {
+        "project": "Lighthouse",
+        "ownerId": 111,
+        "iglooId": 9,
+        "roomId": 2111,
+        "puffleId": 9,
+        "puffleName": "Nova"
+      },
+      {
+        "project": "Iceberg",
+        "ownerId": 112,
+        "iglooId": 10,
+        "roomId": 2112,
+        "puffleId": 10,
+        "puffleName": "Badword"
+      }
+    ],
+    "browser": [
+      "native map lists published offline owners",
+      "native player-card Visit",
+      "three correctly routed puffle clicks",
+      "live retry on prepared failed setup keeps identity and visitor login",
+      "two independent concurrent manual Claude sessions",
+      "worktree folder trust and one-time Write approvals",
+      "Town travel and aggregate attention",
+      "native interrupt, inspected terminal and successful retry",
+      "changes review and journal",
+      "browser reconnect and terminal replay",
+      "engine restart and exact Comet conversation resume",
+      "bridge lab fixture click and simulated cue"
+    ],
+    "safety": {
+      "source_HEAD_index_tracked_files_match": true,
+      "outputs_exclusive_to_correct_worktree": true,
+      "player_progress_and_owned_igloos_match": true,
+      "scripted_bridgecheck_logins": 0,
+      "nonvisitor_gr_pio": "upstream",
+      "private_mount_probes": "passed",
+      "state_default": ".local/agent-engine",
+      "engine_and_stack_stopped": true
+    },
+    "migration": {
+      "real_state": ".local/agent-engine-demo",
+      "previous_revision": 79,
+      "backup": "state.v1-backup-2026-11-05T12-42-57-097Z.json",
+      "sha256": "9d7a93683ae9f2af15952796107936dd85cbdc65530192c117b12030ff7f8a5e",
+      "archive_tasks": 7,
+      "replacement_created_on_copy": true,
+      "replacement_created_on_real_state": false
+    },
+    "remaining": [
+      "Live name rejection unavailable with zero eligible filter words",
+      "Persistent Claude approval location unobserved; no rule saved",
+      "Individual real-agent animation frames not visually verified",
+      "GitHub-hosted CI not run on this unpushed branch"
+    ],
+    "evidence": ".local/stage3-evidence/"
   }
 }

@@ -136,6 +136,31 @@ class ProvisionTests(unittest.TestCase):
         self.assertTrue(any('locked' in problem for problem in problems['problems']))
         self.assertTrue(any('exactly one' in problem for problem in problems['problems']))
 
+    def test_protocol_verifiers_refuse_interactive_accounts_before_connecting(self):
+        from types import SimpleNamespace
+        import verify_bridge
+        import verify_game
+        for username in ('player', 'bridgecheck'):
+            with self.assertRaises(verify_game.VerificationError):
+                verify_game.world_session(SimpleNamespace(username=username), 'unused')
+            with self.assertRaises(verify_game.VerificationError):
+                verify_bridge.session(SimpleNamespace(), username, 'unused')
+
+    def test_legacy_mapping_is_read_only_and_uses_the_fixture_marker(self):
+        db = FakeConnection()
+        mapping = {'key': 'atlas', 'fixtureId': 'bridge-alpha', 'ownerId': 105, 'iglooId': 4,
+                   'puffleId': 4, 'puffleName': 'Atlas'}
+        def check():
+            return run(game_provision.verify_mapping(db, mapping))['ok']
+        self.assertFalse(check())
+        self.assertEqual(db.penguins, [])
+        db.penguins.append({'id': 105, 'username': 'bridgealpha', 'email': 'bridgealpha@bridge.example.invalid', 'igloo': 4})
+        db.rooms[4] = {'penguin_id': 105, 'locked': True}
+        db.pets.append({'id': 4, 'penguin_id': 105, 'puffle_id': 0, 'name': 'Atlas', 'backyard': False})
+        self.assertTrue(check())
+        db.penguins[0]['email'] = 'unmarked@example.invalid'
+        self.assertFalse(check())
+
     def test_a_recorded_owner_is_only_verified_and_never_recreated(self):
         db = FakeConnection()
         missing = run(game_provision.handle(owner_request(ownerId=201), db))

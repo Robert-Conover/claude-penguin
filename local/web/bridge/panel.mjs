@@ -55,7 +55,13 @@ function showPanel(show) {
 work.onclick = () => agentMode ? openWork() : showPanel(panel.hidden);
 panel.querySelector('.cp-close').onclick = () => showPanel(false);
 if (agentMode) {
-  el('cp-igloos').onclick = () => showPanel(panel.hidden);
+  const engine = window.ClaudePenguinEngine;
+  for (const id of ['cp-town', 'cp-location', 'cp-connection', 'cp-empty', 'cp-evidence']) el('cp-travel').append(el(id));
+  el('cp-evidence').textContent = '';
+  el('cp-igloos').onclick = () => engine.openIgloos();
+  window.addEventListener('cp-open-work', openWork);
+  window.addEventListener('cp-visit', event => navigate(event.detail));
+  window.addEventListener('cp-engine-selection', event => { selection = event.detail; syncNativeMenu(); });
   window.addEventListener('cp-engine-state', ({ detail }) => {
     engineState = detail;
     // Reconfiguration happens in the next poll; until then everything is stale.
@@ -76,7 +82,7 @@ if (agentMode) {
 // Returns true when the mapping set changed and the overlay needs reconfiguring.
 function updateMappings() {
   if (!agentMode) return false;
-  const next = agentMappings(engineState.snapshot);
+  const next = engineState.connected ? agentMappings(engineState.snapshot) : null;
   const key = mappingKey(next);
   // The key is empty only without a verified visitor. Equal keys keep the
   // overlay configuration; only the rejected-mapping note may change.
@@ -84,14 +90,12 @@ function updateMappings() {
   mappings = next;
   desiredKey = key;
   invalidate();
-  buildProjects();
   return true;
 }
 // Mapping changes discard every room-derived decision until a fresh snapshot.
 function invalidate() {
   snapshot = null;
   lastAnimation = '';
-  if (selection && !mappings?.projects.some(project => project.projectId === selection.projectId)) selection = null;
 }
 function schedulePoll() {
   if (pollQueued) return;
@@ -162,7 +166,7 @@ function buildProjects() {
     name.textContent = project.name;
     button.append(name);
     const caption = document.createElement('span');
-    caption.textContent = agentMode ? project.puffleName : `${project.puffleName} · 1 fixture puffle`;
+    caption.textContent = `${project.puffleName} · 1 fixture puffle`;
     button.append(caption);
     button.onclick = () => navigate(project.projectId);
     list.append(button);
@@ -181,6 +185,8 @@ function render() {
     button.setAttribute('aria-pressed', String(statusByProject.get(selected?.projectId) === button.dataset.state));
   });
   if (agentMode) {
+    el('cp-town').disabled = !live || navigating;
+    window.ClaudePenguinEngine.setDestinations(live && !navigating ? active.projects.map(item => item.projectId) : []);
     const engineSnapshot = engineState.snapshot;
     el('cp-location').textContent = navigating ? 'On our way…' : live ? (current ? `You are in ${current.name}.` : 'You are exploring the island.') : 'Log in as bridgecheck to visit your igloos.';
     const attention = attentionTotal(engineSnapshot);
@@ -189,13 +195,6 @@ function render() {
     el('cp-empty').hidden = !mappings || (mappings.projects.length > 0 && !rejected);
     el('cp-empty').textContent = [mappings && !mappings.projects.length ? 'No project igloos yet. You can still explore the island.' : '',
       rejected ? `${rejected} project igloo${rejected === 1 ? '' : 's'} could not be mapped and stay hidden.` : ''].filter(Boolean).join(' ');
-    panel.querySelectorAll('.cp-project').forEach(button => {
-      const project = engineSnapshot?.projects?.find(item => item.id === button.dataset.projectId);
-      const mapping = mappings?.projects.find(item => item.projectId === button.dataset.projectId);
-      const worker = project?.activeWorkerId && engineSnapshot.workers?.find(item => item.id === project.activeWorkerId && item.projectId === project.id);
-      button.querySelector('.cp-project-name').textContent = mapping?.name ?? 'Project igloo';
-      button.querySelector('span').textContent = worker ? `${worker.name} · ${engineState.connected ? (states[worker.status] ?? ({idle:'Ready',offline:'Resting',starting:'Starting',review:'Ready for review'})[worker.status] ?? worker.status) : 'offline'}` : `${mapping?.puffleName ?? 'Puffle'} · no session yet`;
-    });
   } else {
     const attention = [...statusByProject.values()].filter(state => state === 'needs-you').length;
     work.textContent = attention ? `Work · ${attention} simulated alert` : 'Work · bridge lab';
@@ -240,6 +239,7 @@ async function navigate(projectId) {
     snapshot = await waitForArrival(() => call('cpBridgeSnapshot'), active, project, { generation, current: () => desiredKey === key });
     el('cp-evidence').textContent = `Game confirmed ${project?.name ?? 'Town'} (room ${snapshot.roomId}).`;
     showPanel(false);
+    if (agentMode) window.ClaudePenguinEngine.close();
   } catch (error) {
     if (error.code === 'mapping-changed') snapshot = null;
     report(error);
@@ -276,12 +276,12 @@ function nativeAction(event) {
     allowed = !navigating && allowedNativeAction(context, event);
   } catch (error) { report(error); }
   if (!allowed) {
-    try { call('cpBridgeRejectAgentAction', String(event.action), typeof event.projectId === 'string' ? event.projectId : ''); }
+    try { call('cpBridgeRejectAgentAction', String(event.action), typeof event.projectId === 'string' ? event.projectId : '', event.draftSlot ?? 0); }
     catch { /* The overlay is not ready; closing the card also releases the task. */ }
     return;
   }
   if (event.action === 'work') openWork();
-  else if (event.action === 'igloos') showPanel(panel.hidden);
+  else if (event.action === 'igloos') window.ClaudePenguinEngine.openIgloos();
   else window.ClaudePenguinEngine?.handleNativeAction({ projectId: selection.projectId, workerId: selection.workerId, action: event.action, text: event.text });
 }
 window.addEventListener('claude-penguin-bridge', ({ detail }) => {
@@ -297,7 +297,7 @@ window.addEventListener('claude-penguin-bridge', ({ detail }) => {
     if (agentMode) {
       const target = selectionForClick(active, snapshot, generation, event, engineState.snapshot);
       if (!target) return;
-      selection = target;
+      window.ClaudePenguinEngine.select(target);
       showPanel(false);
       openWork();
       return;
@@ -319,7 +319,6 @@ function forgetSession() {
   snapshot = null;
   statusByProject.clear();
   selected = null;
-  selection = null;
   el('cp-puffle').hidden = true;
 }
 // Applies the browser's mappings to the overlay when the overlay reports a
@@ -363,6 +362,7 @@ async function poll() {
   try {
     snapshot = call('cpBridgeSnapshot');
     if (snapshot.playerId !== mappings.visitor.penguinId) {
+      if (selection) window.ClaudePenguinEngine.select(null);
       forgetSession();
       connection(`Log in as ${mappings.visitor.username}. This experiment is restricted to its ${agentMode ? 'verified visitor' : 'fixture session'}.`);
     } else {
@@ -376,6 +376,7 @@ async function poll() {
   } catch (error) {
     snapshot = null;
     if (error.code === 'visitor-mismatch') {
+      if (selection) window.ClaudePenguinEngine.select(null);
       forgetSession();
       // The overlay still holds an earlier visitor; apply the newly verified one.
       // The next poll checks the logged-in player against it before routing.

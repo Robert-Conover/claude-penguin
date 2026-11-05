@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { defaultProjectName, projectNameProblem } from './workspace.mjs';
+import { defaultProjectName, projectNameProblem, shellQuote } from './workspace.mjs';
 
 export const STATE_VERSION = 2;
 export const LEGACY_STATE_VERSION = 1;
@@ -22,7 +22,7 @@ export function readState(stateDir) {
   let state;
   try { state = JSON.parse(raw); } catch { throw refuse('Agent state is invalid JSON; preserve it and repair it before restarting.', 'STATE_INVALID'); }
   if (state?.version === LEGACY_STATE_VERSION) {
-    throw refuse(`Agent state in ${stateDir} uses the single-project format (version 1). Stop the old engine and its Claude process, then migrate it explicitly with \`node local/engine/migrate.mjs\`; the engine does not migrate saved sessions implicitly.`, 'STATE_V1');
+    throw refuse(`Agent state in ${stateDir} uses the single-project format (version 1). Stop the old engine and its Claude process, then migrate it explicitly with \`node local/engine/migrate.mjs --state-dir ${shellQuote(stateDir)}\`; the engine does not migrate saved sessions implicitly.`, 'STATE_V1');
   }
   if (state?.version !== STATE_VERSION || !Array.isArray(state.projects) || !Array.isArray(state.workers)) throw refuse('Unsupported agent state; refusing to replace saved sessions.', 'STATE_UNSUPPORTED');
   state.revision ??= 0;

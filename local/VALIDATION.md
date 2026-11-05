@@ -541,3 +541,115 @@ Not fixed in this review, with the reason:
 
 Still unverified: everything in Ruffle, a live puffle-name rejection, real
 Claude tasks in worktrees, and GitHub-hosted CI on this branch.
+
+## Multi-project experience, Stage 3 — November 5, 2026
+
+Tested the uncommitted Stage 3 diff on `multi-project-igloos`, based on
+`3596d57`, on macOS 27.2 with Node 26.13.0, Git 2.54.0, git-lfs 3.8.1,
+Python 3.9.6, the dedicated Colima profile, the pinned Ruffle build and Claude
+Code 2.1.317 in manual mode. The default engine state folder is still
+`.local/agent-engine`. Acceptance used separate state and durable disposable
+repositories under ignored `.local/stage3-evidence/`.
+
+| Check | Result |
+| --- | --- |
+| `npm test --prefix local/engine` | 100 passed, including normal startup, explicit migration, mount boundaries and legacy mapping verification |
+| `npm test --prefix local/web` | 37 passed, including Add, correction, archive, lifecycle, drafts, selection and late responses |
+| `node --test local/client-bridge/bridge.test.mjs` | 18 passed |
+| `python3 local/client-bridge/build.py` and the client-bridge Python discovery suite | Version 4 built, all original tags preserved, 7 tests passed including generated-overlay preservation |
+| `python3 -m unittest local/test_game_provision.py local/test_native_igloos.py` | 16 passed |
+| Houdini compatibility suite in the world image | 12 passed |
+| `./local/start`, `./local/compose config --quiet`, `./local/verify`, `./local/bridge-fixtures` | Passed. Scripted game visits used fixture owners and localcheck. Only the interactive browser logged in as bridgecheck. |
+| `npm run verify:http --prefix local/web` | 95 HTTP checks, 4 socket checks, zero failures |
+| Launcher shell syntax, local document links and `git diff --check` | Passed |
+
+The shell sandbox initially refused the launcher's submodule config write and
+the loopback-socket test. The authorized host runs passed. An initial UI
+regression lost selection invalidation on visitor mismatch; the corrected
+browser suite and the updated version-4 event shape passed. Hosted CI requires
+a pushed branch and is outside this handoff.
+
+### Interactive and persistence evidence
+
+- Added three repositories through **Igloos → Add project**. The original map
+  listed all three owners and Bridge Alpha. The table gives the permanent game
+  identities created by acceptance. The legacy fixture remained 105/4/2105/4.
+
+  | Project | Puffle | Owner | Igloo | Room | Puffle ID |
+  | --- | --- | ---: | ---: | ---: | ---: |
+  | Snowcap | Comet | 110 | 8 | 2110 | 8 |
+  | Lighthouse | Nova | 111 | 9 | 2111 | 9 |
+  | Iceberg | Badword | 112 | 10 | 2112 | 10 |
+
+- Visited Snowcap through the original map, Lighthouse through the chooser
+  and Iceberg through its native player card. The player-card check briefly
+  brought the disposable Iceberg owner into Town. Clicking each igloo's puffle
+  opened the matching project card. A separate private copy started with
+  Iceberg marked failed to rehearse interrupted setup. The real **Retry**
+  reverified owner 112; Visit enabled and its puffle click worked in the same
+  Ruffle page without reloading or logging the visitor out.
+- Comet and Nova each showed a first-launch folder-trust prompt naming its
+  own external worktree. Each received a task through Flash and a one-time
+  Write approval in its own terminal. Comet wrote `comet.txt` and Nova wrote
+  `nova.txt`. Checked contents and hashes on disk, absence in the opposite
+  worktree and source checkouts, and the file preview in Nova's Changes tab.
+  All three managed projects’ source HEADs, index bytes and tracked-file hashes
+  matched the pre-registration fingerprints. No acceptance source gained a
+  `.claude/settings.local.json` during these checks.
+- The visitor traveled between igloos and to Town during concurrent work.
+  **Work (2)** reflected both requests for attention. Interrupting Nova from
+  the native card left **Needs your help** pending confirmation. Claude's
+  terminal showed the interrupted response and accepted a retry, returning
+  `LIGHTHOUSE RETRY OK`.
+- A fresh browser connection retained both original worker/session/PID pairs.
+  A clean engine restart reverified all four igloos, and starting Comet explicitly
+  resumed its original conversation with its earlier Write and reply visible.
+  A full browser reload reattached to the running terminal and replayed that
+  conversation.
+- The live web and seed containers could read their required files and could
+  not see the engine state, game secrets or the private environment file at
+  their former mount paths. In the rebuilt lab on 8080, a real click reported
+  owner 105 and puffle 4, and a simulated cue produced **1 simulated alert**.
+- Read-only database fingerprints of the normal player's progress, owned
+  igloo rows, inventory and puffles matched before and after. The publication
+  selected visitor 107, while player is 103. Localcheck (102) received upstream
+  `gr` and `pio` results with no published owner available. The player's
+  personal game session was never opened during acceptance.
+
+### Real Atlas migration
+
+First tested the archive and isolated replacement in the browser on a private
+state copy pointing to a disposable clone of the original checkout. After
+explicit confirmation, checked PID 9967 had exited, the saved worker had no
+PID, and removed only that stale runtime lock. Ran:
+
+```sh
+node local/engine/migrate.mjs --state-dir .local/agent-engine-demo
+```
+
+The mode-0600 backup `state.v1-backup-2026-11-05T12-42-57-097Z.json`
+matches the original v1 file byte-for-byte (SHA-256
+`9d7a93683ae9f2af15952796107936dd85cbdc65530192c117b12030ff7f8a5e`).
+The real archive displayed its original folder, session, resume command and
+seven task records. Its active worker ID is null. The real replacement remains
+available through **Create isolated Atlas**.
+
+### Limits and raw evidence
+
+- The local database contained zero filter words matching a valid ASCII
+  puffle name. Houdini accepted the candidate `Badword`. Name rejection,
+  adoption error 441 and name correction were exercised with doubles.
+- The live terminals used one-time approvals. Claude offered a persistent
+  `openssl dgst *` rule in Lighthouse. It was left unset; where this version
+  actually writes a saved rule was not observed.
+- Room-specific cue routing and the overlay's animation calls passed the
+  contract tests. The live run verified attention, card state and travel;
+  individual real-agent animation frames were not visually identified.
+
+Private evidence is under `.local/stage3-evidence/`, including the suite
+logs, `native-igloo-list.jpg`, `live-projects.jpg`, `comet-permission.jpg`,
+`town-attention.jpg`, `nova-changes.jpg`, `interrupted-terminal.jpg`,
+`resumed-comet.jpg`, `after-live-retry.jpg`, `real-atlas-archive.jpg`,
+`worktree-files.json`, before/after source, process, player and migration
+fingerprints, and the stack shutdown log. The test engines were stopped
+cleanly, the publication emptied, and `./local/stop` preserved the volumes.

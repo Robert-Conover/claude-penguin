@@ -99,7 +99,13 @@ services:
       RUFFLE_ROOT: /project/.local/ruffle
       PUBLIC_ORIGIN: http://localhost:8080
     volumes:
-      - ..:/project:ro
+      - ../vanilla-media/play:/project/vanilla-media/play:ro
+      - ../vanilla-media/media:/project/vanilla-media/media:ro
+      - ../templates:/project/templates:ro
+      - ../servers.xml:/project/servers.xml:ro
+      - ../.local/ruffle:/project/.local/ruffle:ro
+      - ../.local/client-bridge:/project/.local/client-bridge:ro
+      - ../.local/bridge-public:/project/.local/bridge-public:ro
     ports: ['127.0.0.1:8080:8080']
     depends_on:
       login: {condition: service_healthy}
@@ -119,7 +125,7 @@ services:
     environment:
       POSTGRES_HOST: db
     volumes:
-      - ..:/project:ro
+      - ./:/project/local:ro
     entrypoint: [python, /project/local/verify_seed.py]
     depends_on:
       db: {condition: service_healthy}

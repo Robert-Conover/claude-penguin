@@ -2,7 +2,7 @@
 
 ## Project and scope
 
-Claude Penguin runs the original Club Penguin AS3 client locally and connects one puffle to a persistent Claude Code session through an opt-in host engine. Multiple projects and concurrent puffles remain planned. Keep implemented behavior, proposed behavior, and validation gaps distinct in code, docs, and demos.
+Claude Penguin runs the original Club Penguin AS3 client locally and connects each registered project’s puffle to a persistent Claude Code session in an isolated worktree. The opt-in host engine supports concurrent sessions across projects. Keep implemented behavior, proposed behavior, and validation gaps distinct in code, docs, and demos.
 
 Most project-owned runtime code is in `local/`. `houdini/`, `dash/`, and `snowflake/` are vendored upstream server sources (MIT; revisions in `local/sources.json`). `vanilla-media/` is a pinned Git submodule of archived game media; never commit its contents to this public repository.
 

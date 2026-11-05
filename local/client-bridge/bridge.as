@@ -1,12 +1,12 @@
 // Opt-in game bridge. Native menus display host-reported state; animation alone is not execution.
 // Added as a separate DoAction; none of the original client's actions are changed.
 if (_global.__claudePenguinBridge == undefined) {
-    _global.__claudePenguinBridge = {version:3, visitorId:0, projects:[], configured:false, generation:0};
+    _global.__claudePenguinBridge = {version:4, visitorId:0, projects:[], configured:false, generation:0};
 }
 var cpBridge = _global.__claudePenguinBridge;
-// Contract version 3: every callback result carries `version`, refusals included.
+// Contract version 4: every callback result carries `version`, refusals included.
 // The browser mirrors the version and both bounds (web/bridge/model.mjs).
-cpBridge.version = 3;
+cpBridge.version = 4;
 cpBridge.maxGameId = 999999999;
 cpBridge.maxProjects = 32;
 if (typeof cpBridge.generation != "number") cpBridge.generation = 0;
@@ -212,9 +212,10 @@ cpBridge.setAgentMenu = function(payload) {
         return this.menuResult();
     }
     var projectId = this.menuText(payload.projectId, "", 100);
-    if (projectId != "" && !this.menuMapping(projectId)) return this.fail("unknown-project");
-    if (this.agentData.projectId != projectId) this.hideAgentMenu();
-    this.agentData = {enabled:true, connected:payload.connected == true, projectId:projectId,
+    if (projectId != "" && payload.readOnly != true && !this.menuMapping(projectId)) return this.fail("unknown-project");
+    var slot = typeof payload.draftSlot == "number" ? payload.draftSlot : 0;
+    if (this.agentData.projectId != projectId || this.agentData.draftSlot != slot) this.hideAgentMenu();
+    this.agentData = {enabled:true, connected:payload.connected == true, projectId:projectId, draftSlot:slot, readOnly:payload.readOnly == true,
         name:this.menuText(payload.name, "Your puffle", 80), projectName:this.menuText(payload.projectName, "Your igloo", 80),
         status:this.menuText(payload.status, "offline", 30), activity:this.menuText(payload.activity, "", 160),
         canStart:payload.canStart == true, canSubmit:payload.canSubmit == true, running:payload.running == true,
@@ -226,7 +227,7 @@ cpBridge.hideAgentMenu = function() {
     this.agentSubmitPending = false;
     this.agentNotice = undefined;
     if (this.agentMenu != undefined) {
-        this.agentDrafts["project:" + this.agentMenuProject] = this.agentMenu.card.taskInput.text;
+        this.agentDrafts["worker:" + this.agentMenuSlot] = this.agentMenu.card.taskInput.text;
         Selection.setFocus(null);
         this.agentMenu.removeMovieClip();
         this.agentMenu = undefined;
@@ -251,7 +252,7 @@ cpBridge.showAgentMenu = function() {
     var ui = _global.getCurrentInterface();
     if (shell.getCurrentGameRoomId() != undefined) return this.fail("leave-minigame-first");
     if (ui == undefined || ui.interface_mc == undefined) return this.fail("interface-not-ready");
-    if (!this.menuMapping(this.agentData.projectId)) {
+    if (this.agentData.projectId == "" || (this.agentData.readOnly != true && !this.menuMapping(this.agentData.projectId))) {
         this.emit({type:"agent-menu-action", action:"work", generation:this.generation});
         return this.menuResult();
     }
@@ -270,6 +271,7 @@ cpBridge.showAgentMenu = function() {
     this.agentMenu = menu;
     this.agentMenuRoom = current.roomId;
     this.agentMenuProject = this.agentData.projectId;
+    this.agentMenuSlot = this.agentData.draftSlot;
     var shield = menu.createEmptyMovieClip("shield", menu.getNextHighestDepth());
     this.roundBox(shield, 0, 0, 760, 480, 0, 0x002849, 0x002849, 0, 18);
     shield.onPress = function() {};
@@ -301,7 +303,7 @@ cpBridge.showAgentMenu = function() {
     this.textField(card, "activity", "", 105, 104, 305, 31, 11, 0x254356, false);
     this.textField(card, "taskLabel", "Give your puffle a task", 22, 146, 395, 25, 16, 0xFFFFFF, true);
     this.roundBox(card, 20, 175, 400, 62, 9, 0xFFFFFF, 0x00497C, 2);
-    var draft = this.agentDrafts["project:" + this.agentMenuProject];
+    var draft = this.agentDrafts["worker:" + this.agentMenuSlot];
     var input = this.textField(card, "taskInput", typeof draft == "string" ? draft : "", 28, 181, 384, 50, 14, 0x183950, false);
     input.type = "input";
     input.selectable = true;
@@ -328,7 +330,7 @@ cpBridge.menuAction = function(action) {
         this.emit({type:"agent-menu-action", projectId:data.projectId, action:action, generation:this.generation});
         return this.menuResult();
     }
-    if (this.agentMenu == undefined || this.agentMenuProject != data.projectId || !this.menuMapping(data.projectId)) return this.fail("unknown-project");
+    if (this.agentMenu == undefined || data.readOnly == true || this.agentMenuSlot != data.draftSlot || this.agentMenuProject != data.projectId || !this.menuMapping(data.projectId)) return this.fail("unknown-project");
     if (current.roomId != this.agentMenuRoom) { this.hideAgentMenu(); return this.fail("room-changed"); }
     if (action != "terminal" && !data.connected) return this.fail("runtime-disconnected");
     if (action == "start" && !data.canStart) return this.fail("session-not-startable");
@@ -336,13 +338,14 @@ cpBridge.menuAction = function(action) {
     if (action == "submit" && !data.canSubmit) return this.fail("session-not-ready");
     if (action == "submit" && this.agentSubmitPending == true) return this.fail("awaiting-task-event");
     if (action != "start" && action != "interrupt" && action != "submit" && action != "terminal" && action != "changes") return this.fail("unknown-menu-action");
-    var event = {type:"agent-menu-action", projectId:data.projectId, action:action, generation:this.generation};
+    var event = {type:"agent-menu-action", projectId:data.projectId, draftSlot:data.draftSlot, action:action, generation:this.generation};
     this.agentNotice = undefined;
     if (action == "submit") {
         var text = this.agentMenu.card.taskInput.text;
         if (typeof text != "string" || text.length < 1 || text.length > 20000) return this.fail("invalid-task");
         event.text = text;
         this.agentSubmittedText = text;
+        this.agentSubmittedSlot = data.draftSlot;
         this.agentSubmittedProject = data.projectId;
         this.agentSubmitPending = true;
         this.enableMenuButton(this.agentMenu.card.sendButton, false);
@@ -354,14 +357,14 @@ cpBridge.menuAction = function(action) {
 // The browser refused a card action, for example one prepared against an older
 // configuration generation. Nothing was sent: release the matching pending task
 // so Send follows the host-reported state again, keep the draft, and say so.
-cpBridge.rejectAgentAction = function(action, projectId) {
+cpBridge.rejectAgentAction = function(action, projectId, slot) {
     if (typeof action != "string" || typeof projectId != "string") return this.fail("invalid-rejection");
-    if (action == "submit" && this.agentSubmittedProject == projectId) {
+    if (action == "submit" && this.agentSubmittedProject == projectId && this.agentSubmittedSlot == slot) {
         this.agentSubmitPending = false;
         this.agentSubmittedText = undefined;
         this.agentSubmittedProject = undefined;
     }
-    if (this.agentMenu != undefined && projectId != "" && this.agentMenuProject == projectId) {
+    if (this.agentMenu != undefined && projectId != "" && this.agentMenuProject == projectId && this.agentMenuSlot == slot) {
         this.agentNotice = action == "submit" ? "Task not sent. Try again." : "That did not go through. Try again.";
         this.syncAgentMenu();
     }
@@ -388,8 +391,8 @@ cpBridge.syncAgentMenu = function() {
     }
     var data = this.agentData;
     if (!data.canSubmit || !data.connected) this.agentSubmitPending = false;
-    if (data.status == "working" && this.agentSubmittedProject == data.projectId) {
-        if (this.agentDrafts["project:" + data.projectId] == this.agentSubmittedText) this.agentDrafts["project:" + data.projectId] = "";
+    if (data.status == "working" && this.agentSubmittedSlot == data.draftSlot && this.agentSubmittedProject == data.projectId) {
+        if (this.agentDrafts["worker:" + data.draftSlot] == this.agentSubmittedText) this.agentDrafts["worker:" + data.draftSlot] = "";
         if (this.agentMenu != undefined && this.agentMenuProject == data.projectId && this.agentMenu.card.taskInput.text == this.agentSubmittedText) this.agentMenu.card.taskInput.text = "";
         this.agentSubmittedText = undefined;
         this.agentSubmittedProject = undefined;
@@ -399,12 +402,25 @@ cpBridge.syncAgentMenu = function() {
     if (current.roomId != this.agentMenuRoom || data.projectId != this.agentMenuProject) { this.hideAgentMenu(); return; }
     var card = this.agentMenu.card;
     var labels = {starting:"Waking up...", idle:"Ready for a task", working:"Working", review:"Ready for review", interrupted:"Taking a break", failed:"Something went wrong", offline:"Taking a break"};
+    labels.setup = "Setting up";
+    labels.archived = "Archived";
+    labels["setup-failed"] = "Setup failed";
+    labels["needs-repair"] = "Needs repair";
+    labels["source-unavailable"] = "Source unavailable";
     labels["needs-you"] = "Needs your help";
     card.title.text = data.name;
     card.project.text = data.projectName;
     card.status.text = !data.connected ? "Connection lost" : typeof labels[data.status] != "string" ? "Waiting" : labels[data.status];
     card.activity.text = !data.connected ? "Open Claude to reconnect." : data.activity;
     card.taskLabel.text = this.agentNotice != undefined ? this.agentNotice : "Give " + data.name + " a task";
+    var editable = data.readOnly != true;
+    card.startButton._visible = editable;
+    card.interruptButton._visible = editable;
+    card.sendButton._visible = editable;
+    card.terminalButton._visible = editable;
+    card.changesButton._visible = editable;
+    card.taskLabel._visible = editable;
+    card.taskInput._visible = editable;
     this.enableMenuButton(card.startButton, data.connected && data.canStart);
     this.enableMenuButton(card.interruptButton, data.connected && data.running);
     this.enableMenuButton(card.sendButton, data.connected && data.canSubmit && this.agentSubmitPending != true);

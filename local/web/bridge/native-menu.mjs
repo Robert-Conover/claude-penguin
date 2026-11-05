@@ -3,7 +3,7 @@ import { freshSnapshot } from './model.mjs';
 // Flash receives only display state and the mapped project UUID. Host paths,
 // session IDs, worker IDs, terminal contents, and tokens stay in the browser.
 export const nativeMenuFields = Object.freeze(['enabled', 'connected', 'projectId', 'name', 'projectName', 'status',
-  'activity', 'canStart', 'canSubmit', 'running', 'attention']);
+  'activity', 'draftSlot', 'readOnly', 'canStart', 'canSubmit', 'running', 'attention']);
 const attentionStates = ['needs-you', 'review', 'failed'];
 
 // Resolves an explicit selection. The project must be mapped in the overlay's
@@ -20,14 +20,30 @@ export function attentionTotal(engineSnapshot) {
   return (engineSnapshot?.workers ?? []).filter(item => attentionStates.includes(item.status)).length;
 }
 
+// Page-local display handles keep drafts keyed to workers without exposing host identities to Flash.
+const slots = new Map();
+function slotForWorker(id) {
+  if (!slots.has(id)) slots.set(id, slots.size + 1);
+  return slots.get(id);
+}
+
 export function nativeMenuState(engineState, mappings, target) {
   const state = engineState?.snapshot;
   const resolved = resolveSelection(state, mappings, target);
-  const worker = resolved?.worker;
-  const project = resolved?.project;
+  const project = state?.projects?.find(item => item.id === target?.projectId);
+  const worker = state?.workers?.find(item => item.projectId === project?.id && item.id === target?.workerId && item.id === project.activeWorkerId);
+  const archive = state?.archivedWorkers?.find(item => item.projectId === project?.id &&
+    (item.id === target?.workerId || (!target?.workerId && !project.activeWorkerId)));
+  const known = Boolean(worker || archive || (project && !target.workerId && !project.activeWorkerId));
   const connected = engineState?.connected === true;
-  const status = typeof worker?.status === 'string' ? worker.status : 'offline';
-  const activity = !connected ? 'Your puffle is waiting for the local runtime.' : !worker ? 'Choose a puffle to see what it is doing.' : ({
+  const status = archive ? 'archived' : worker?.inspection?.repair || project?.game?.status === 'repair' ? 'needs-repair'
+    : project?.sourceAvailable === false ? 'source-unavailable' : project?.setup?.phase === 'failed' ? 'setup-failed'
+    : project && project.setup?.phase !== 'ready' ? 'setup' : worker?.status ?? 'offline';
+  const readOnly = !resolved || Boolean(archive);
+  const activity = !connected ? 'Your puffle is waiting for the local runtime.' : ({
+    archived: 'Open Your Igloos to read the archived conversation.', setup: 'Open Your Igloos for setup progress.',
+    'setup-failed': 'Open Your Igloos to check setup and retry.', 'needs-repair': 'Open Your Igloos for the failed check and recovery steps.',
+    'source-unavailable': 'Restore the original checkout. See Your Igloos for its location.',
     starting: 'Waking up…', idle: 'Ready for a new task!', working: 'Working on your task…',
     'needs-you': 'Open Claude to check what your puffle needs.',
     review: 'The turn ended. Take a look at the changes.',
@@ -36,11 +52,12 @@ export function nativeMenuState(engineState, mappings, target) {
     offline: 'Start your puffle when you are ready.',
   })[status] ?? 'Open Claude to check on your puffle.';
   const workspaceReady = (worker?.workspace?.state ?? 'ready') === 'ready';
-  return { enabled: true, connected, projectId: project?.id ?? '',
-    name: worker?.name ?? 'Your Puffles', projectName: project?.name ?? '', status, activity,
-    canStart: Boolean(connected && worker && workspaceReady && !worker.running && !worker.recoveryBlocked),
-    canSubmit: Boolean(connected && worker && worker.running && worker.established && ['idle', 'review', 'interrupted'].includes(status)),
-    running: worker?.running === true,
+  return { enabled: true, connected, projectId: known ? project.id : '',
+    name: archive?.name ?? worker?.name ?? project?.game?.puffleName ?? 'Your Puffles', projectName: project?.name ?? '', status, activity,
+    draftSlot: worker ? slotForWorker(worker.id) : 0, readOnly,
+    canStart: Boolean(connected && !readOnly && worker && workspaceReady && !worker.running && !worker.recoveryBlocked),
+    canSubmit: Boolean(connected && !readOnly && worker && worker.running && worker.established && ['idle', 'review', 'interrupted'].includes(status)),
+    running: !readOnly && worker?.running === true,
     // Attention is aggregated across every active worker, not only the selection.
     attention: attentionTotal(state) };
 }
@@ -53,7 +70,7 @@ export function allowedNativeAction({ mappings, game, generation, engineState, t
   // Project actions require the current overlay generation and an explicit match.
   if (!freshSnapshot(mappings, game, generation) || event.generation !== generation) return false;
   const state = nativeMenuState(engineState, mappings, target);
-  if (!state.projectId || event.projectId !== state.projectId) return false;
+  if (state.readOnly || !state.projectId || event.projectId !== state.projectId || event.draftSlot !== state.draftSlot) return false;
   if (['terminal', 'changes'].includes(event.action)) return true;
   if (!state.connected) return false;
   if (event.action === 'start') return state.canStart;

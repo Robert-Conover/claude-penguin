@@ -224,6 +224,15 @@ test('the legacy Atlas fixture mapping is published and needs no provisioning; c
   migrateStateDir(e.stateDir);
   await e.open();
   assert.deepEqual(e.published(), { version: 1, visitorId: null, igloos: [] }, 'nothing is published before the visitor is verified');
+  let matches = true;
+  e.game.verifyOwners = async ([mapping]) => {
+    assert.deepEqual(mapping, { key: e.view().projects[0].id, fixtureId: 'bridge-alpha', ownerId: 105, iglooId: 4, puffleId: 4, puffleName: 'Atlas' });
+    return [{ key: mapping.key, ok: matches, problems: matches ? [] : ['Layout changed.'] }];
+  };
+  matches = false;
+  assert.equal((await e.manager.verifyGameMappings()).repair, 1);
+  assert.deepEqual(e.published().igloos, []);
+  matches = true;
   await e.manager.verifyGameMappings();
   assert.deepEqual(e.published(), { version: 1, visitorId: 107, igloos: [{ ownerId: 105, iglooId: 4 }] });
   const project = e.view().projects[0];

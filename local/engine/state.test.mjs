@@ -98,17 +98,16 @@ test('migration refuses a running worker, invalid identities, and multi-worker v
   assert.equal(converted.projects[0].legacy.originalName, 'Bridge: Alpha!');
 });
 
-test('the migration command requires a stopped runtime and rehearses only outside the checkout', async t => {
+test('the migration command requires a stopped runtime and explicitly migrates a missing source', async t => {
   const dir = tempDir(t);
   fs.writeFileSync(path.join(dir, 'state.json'), JSON.stringify(legacyState('/missing')));
-  await assert.rejects(migrate({ stateDir: dir }), /rehearsal/);
   fs.writeFileSync(path.join(dir, 'runtime.lock'), JSON.stringify({ pid: 2147483647, nonce: 'stale' }));
-  await assert.rejects(migrate({ stateDir: dir, rehearsal: true }), /stale engine lock/);
+  await assert.rejects(migrate({ stateDir: dir }), /stale engine lock/);
   assert.equal(JSON.parse(fs.readFileSync(path.join(dir, 'state.json'), 'utf8')).version, 1);
   fs.writeFileSync(path.join(dir, 'runtime.lock'), JSON.stringify({ pid: process.pid, nonce: 'live' }));
-  await assert.rejects(migrate({ stateDir: dir, rehearsal: true }), /already be running/);
+  await assert.rejects(migrate({ stateDir: dir }), /already be running/);
   fs.rmSync(path.join(dir, 'runtime.lock'));
-  const result = await migrate({ stateDir: dir, rehearsal: true });
+  const result = await migrate({ stateDir: dir });
   assert.equal(result.migrated, true);
   assert.equal(fs.existsSync(path.join(dir, 'runtime.lock')), false, 'the migration releases its lock');
 });

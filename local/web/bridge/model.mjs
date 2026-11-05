@@ -6,7 +6,7 @@ export const states = Object.freeze({
 // The overlay contract this browser speaks, and the identity bounds bridge.as
 // enforces (`version`, `maxGameId`, `maxProjects`). bridge.test.mjs checks that
 // both sides agree; change them together and rebuild the overlay.
-export const BRIDGE_CONTRACT_VERSION = 3;
+export const BRIDGE_CONTRACT_VERSION = 4;
 export const MAX_GAME_ID = 999999999;
 export const MAX_MAPPINGS = 32;
 

@@ -1,5 +1,5 @@
+import { engineStateDir, stateDirProblem } from './state-dir.mjs';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
-import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readFile } from 'node:fs/promises';
@@ -57,6 +57,8 @@ export function createEngineServer({ manager, publicOrigin = 'http://localhost:8
     ['/engine/client.mjs', [path.join(root, 'local/web/engine/client.mjs'), 'text/javascript; charset=utf-8']],
     ['/engine/client.css', [path.join(root, 'local/web/engine/client.css'), 'text/css; charset=utf-8']],
     ['/engine/ui-model.mjs', [path.join(root, 'local/web/engine/ui-model.mjs'), 'text/javascript; charset=utf-8']],
+    ['/engine/names.mjs', [path.join(root, 'local/web/engine/names.mjs'), 'text/javascript; charset=utf-8']],
+    ['/engine/chooser.mjs', [path.join(root, 'local/web/engine/chooser.mjs'), 'text/javascript; charset=utf-8']],
     ['/engine/art/puffle-blue.svg', [path.join(root, 'local/web/engine/art/puffle-blue.svg'), 'image/svg+xml']],
     ['/engine/art/puffle-blue.png', [path.join(root, 'local/web/engine/art/puffle-blue.png'), 'image/png']],
     ['/engine/vendor/xterm.js', [path.join(here, 'node_modules/@xterm/xterm/lib/xterm.js'), 'text/javascript; charset=utf-8']],
@@ -84,7 +86,7 @@ export function createEngineServer({ manager, publicOrigin = 'http://localhost:8
           if (client.pendingBytes > MAX_BUFFERED) client.ws.close(1013, 'Reconnect to refresh the terminal.');
           else client.pending.push(event);
         }
-        else send(client, event);
+        else send(client, { ...event, attachment: client.attachment });
       }
     }
   }
@@ -145,10 +147,14 @@ export function createEngineServer({ manager, publicOrigin = 'http://localhost:8
         let queue = Promise.resolve();
         ws.on('message', (data, binary) => {
           if (++client.queued > 256) { ws.close(1008, 'Too many pending messages.'); return; }
+          let target = {};
           queue = queue.then(async () => {
             if (binary) throw error('Expected JSON text.');
             const message = JSON.parse(data.toString());
             if (!message || typeof message !== 'object' || Array.isArray(message)) throw error('Invalid message.');
+            if (typeof message.workerId === 'string' && typeof message.projectId === 'string') {
+              target = { projectId: message.projectId, workerId: message.workerId, attachment: message.attachment };
+            }
             if (!client.authenticated) {
               if (message.type !== 'auth' || !equalSecret(message.token, uiToken)) { ws.close(1008, 'Authentication failed.'); return; }
               client.authenticated = true;
@@ -156,6 +162,7 @@ export function createEngineServer({ manager, publicOrigin = 'http://localhost:8
               send(client, { type: 'snapshot', snapshot: manager.snapshot() });
             } else if (message.type === 'attach') {
               const generation = ++client.generation;
+              client.attachment = Number.isSafeInteger(message.attachment) ? message.attachment : undefined;
               client.projectId = message.projectId;
               client.workerId = message.workerId;
               client.attaching = true;
@@ -164,10 +171,10 @@ export function createEngineServer({ manager, publicOrigin = 'http://localhost:8
               try {
                 const snapshot = await manager.terminal(message);
                 if (generation !== client.generation) return;
-                send(client, { type: 'terminal.snapshot', projectId: message.projectId, workerId: message.workerId, ...snapshot });
+                send(client, { type: 'terminal.snapshot', projectId: message.projectId, workerId: message.workerId, attachment: client.attachment, ...snapshot });
                 // The serialized screen includes all data flushed before the snapshot.
                 // Events queued during serialization are replayed by the manager's sequence marker when available.
-                for (const event of client.pending) if (snapshot.sequence === undefined || event.sequence > snapshot.sequence) send(client, event);
+                for (const event of client.pending) if (snapshot.sequence === undefined || event.sequence > snapshot.sequence) send(client, { ...event, attachment: client.attachment });
               } finally { client.attaching = false; client.pending = []; client.pendingBytes = 0; }
             } else if (message.type === 'detach') {
               client.generation++;
@@ -176,7 +183,7 @@ export function createEngineServer({ manager, publicOrigin = 'http://localhost:8
               if (!client.workerId || client.projectId !== message.projectId || client.workerId !== message.workerId) throw error('Attach this exact worker before controlling its terminal.', 403);
               await manager[message.type](message);
             } else throw error('Unknown terminal message.');
-          }).catch(failure => send(client, { type: 'error', error: failure.statusCode ? failure.message : 'Invalid terminal request.' })).finally(() => client.queued--);
+          }).catch(failure => send(client, { type: 'error', ...target, error: failure.statusCode ? failure.message : 'Invalid terminal request.' })).finally(() => client.queued--);
         });
       });
       return true;
@@ -195,62 +202,11 @@ export function createEngineServer({ manager, publicOrigin = 'http://localhost:8
 import { acquireLock } from './lock.mjs';
 import { acquirePublication } from './publication.mjs';
 import { createGameProvisioner } from './game.mjs';
-export { acquireLock };
+export { acquireLock, stateDirProblem };
 
 /** The native igloo publication directory, mounted read-only into the world container. */
 export function publicationDir(env = process.env, root = projectRoot) {
   return path.resolve(root, env.CP_NATIVE_IGLOOS_DIR || '.local/native-igloos');
-}
-
-// Folders served over HTTP (local/web/server.mjs) or mounted into containers (compose.yml).
-const EXPOSED_DIRS = ['vanilla-media', 'templates', '.local/ruffle', '.local/client-bridge', '.local/native-igloos', '.local/logs', 'local/web/bridge'];
-// The released single-puffle engine's state. Refused while the preview gate exists (until Stage 3).
-const DEFAULT_STATE_DIR = '.local/agent-engine';
-
-/** Realpath of the nearest existing ancestor plus the missing rest; a dangling link is refused. */
-function canonicalPath(target) {
-  const rest = [];
-  for (let probe = path.resolve(target); ; probe = path.dirname(probe)) {
-    try { return path.join(fs.realpathSync.native(probe), ...rest); }
-    catch (failure) {
-      if (failure.code !== 'ENOENT' || path.dirname(probe) === probe) throw failure;
-      if (fs.lstatSync(probe, { throwIfNoEntry: false })) throw error(`${probe} is a dangling link.`);
-      rest.unshift(path.basename(probe));
-    }
-  }
-}
-
-/**
- * Private state (sessions, hook settings, game-secrets.json) must never live
- * where the game serves or mounts files. Compares canonical paths, and on
- * macOS case-insensitively. main() always runs this, with or without the gate.
- */
-export function stateDirProblem(dir, { root = projectRoot, platform = process.platform } = {}) {
-  const fold = value => platform === 'darwin' ? value.toLowerCase() : value;
-  const within = (parent, child) => {
-    const relative = path.relative(fold(parent), fold(child));
-    return relative === '' || (relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
-  };
-  const resolved = relative => { try { return canonicalPath(path.join(root, relative)); } catch { return path.resolve(root, relative); } };
-  let chosen;
-  try { chosen = canonicalPath(dir); } catch (failure) { return `CP_ENGINE_STATE_DIR cannot be resolved safely: ${failure.message}`; }
-  if (within(resolved(DEFAULT_STATE_DIR), chosen)) return `Choose a CP_ENGINE_STATE_DIR other than the default ${DEFAULT_STATE_DIR} for the preview engine.`;
-  const exposed = EXPOSED_DIRS.find(relative => within(resolved(relative), chosen));
-  if (exposed) return `CP_ENGINE_STATE_DIR must not be inside ${exposed}/: that folder is served over HTTP or mounted into the game containers, which would expose private engine state.`;
-  return null;
-}
-
-/**
- * Stage 1 of the multi-project milestone changes the engine only. The game
- * mappings and browser surfaces that consume it arrive in later stages, so the
- * real agent page stays disabled unless a developer opts in with dedicated state.
- */
-export function previewGate(env = process.env, root = projectRoot) {
-  if (env.CP_ENGINE_PREVIEW !== 'engine-v2') {
-    throw error('This checkout contains the in-progress multi-project engine (state v2, isolated worktrees). Its game and browser integration are incomplete, so the agent page is disabled here. Use the dev branch for the playable single-puffle milestone, or set CP_ENGINE_PREVIEW=engine-v2 with a dedicated CP_ENGINE_STATE_DIR for engine-only development.');
-  }
-  if (!env.CP_ENGINE_STATE_DIR) throw error('CP_ENGINE_PREVIEW requires a dedicated CP_ENGINE_STATE_DIR so existing agent state is never opened by the preview engine.');
-  return path.resolve(root, env.CP_ENGINE_STATE_DIR);
 }
 
 async function main() {
@@ -258,7 +214,7 @@ async function main() {
   const port = Number(process.env.CP_ENGINE_PORT ?? 8081);
   if (!Number.isInteger(port) || port < 1024 || port > 65535) throw error('Invalid CP_ENGINE_PORT.');
   const publicOrigin = `http://localhost:${port}`;
-  const stateDir = previewGate();
+  const stateDir = engineStateDir();
   const problem = stateDirProblem(stateDir);
   if (problem) throw error(problem);
   const unlock = await acquireLock(stateDir);

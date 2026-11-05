@@ -35,7 +35,13 @@ on every build. Generated tooling and output stay in ignored `.local/`:
 An upstream engine change fails the build until its shape and compatibility have
 been reviewed. This tool does not update upstream revisions automatically.
 
-## Browser contract, version 3
+## Browser contract, version 4
+
+Version 4 adds read-only lifecycle cards and a per-page numeric draft slot.
+The browser assigns a slot to each worker and checks it on project actions.
+A replacement worker gets a new slot and an empty draft. An unmapped project
+can show a read-only status card. Travel and execution still require a verified
+mapping. Archived conversations are available in the chooser.
 
 Version 2 (multi-project Stage 2) allowed an empty project list, rejected
 duplicate mapping IDs, and added a configuration `generation` to configure
@@ -55,7 +61,7 @@ Callbacks registered through Flash `ExternalInterface`:
 
 | Callback | Result / behavior |
 | --- | --- |
-| `cpBridgeConfigure(visitorId, projects)` | Validate a dedicated visitor and an array of 0–32 `{projectId, ownerId, puffleId}` mappings, then replace every mapping and advance the generation. Returns `{ok:true, version:3, generation}`. Owner IDs must differ from the visitor; project, owner, and puffle IDs must be unique. An empty array is a valid empty neighborhood. A rejected call keeps the previous mapping and generation. Every existing click hook is removed; the next tick hooks only currently mapped puffles. A native card whose project is no longer mapped closes. |
+| `cpBridgeConfigure(visitorId, projects)` | Validate a dedicated visitor and an array of 0–32 `{projectId, ownerId, puffleId}` mappings, then replace every mapping and advance the generation. Returns `{ok:true, version:4, generation}`. Owner IDs must differ from the visitor; project, owner, and puffle IDs must be unique. An empty array is a valid empty neighborhood. A rejected call keeps the previous mapping and generation. Every existing click hook is removed; the next tick hooks only currently mapped puffles. A native card whose project is no longer mapped closes. |
 | `cpBridgeSnapshot()` | `{ok, version, configured, generation, playerId, roomId, ownerId, puffles:[{id,x,y}], nativeMenuReady}`. Room transitions and a different logged-in player return `ok:false` and an `error`. Non-igloo owner is `0`. Coordinates use the game's room coordinate system. `nativeMenuReady` reports whether the native HUD exists. |
 | `cpBridgeJoinIgloo(ownerId)` | Request a mapped owner's igloo via the existing shell navigator. A successful acknowledgement is not arrival; wait for a matching snapshot. |
 | `cpBridgeJoinRoom(100)` | Request Town via the existing shell navigator. Other room IDs are outside this experiment. |
@@ -63,7 +69,7 @@ Callbacks registered through Flash `ExternalInterface`:
 | `cpBridgeSetAgentMenu(payload)` | Cache a bounded, public display summary and enable or disable the native HUD. Accepts only a currently configured project ID, or an empty ID when no puffle is selected. See the payload below. |
 | `cpBridgeShowAgentMenu()` | Open the native task card for the cached project, or emit `work` without a project ID if none is selected. Requires the verified visitor, a ready room, and no active game widget. |
 | `cpBridgeHideAgentMenu()` | Close the owned card and restore its modal state. Safe to call during connection or room changes. |
-| `cpBridgeRejectAgentAction(action, projectId)` | The browser refused a native card action, for example one prepared against an older generation or sent during travel, so nothing reached the engine. A refused `submit` for the same project releases the pending task so Send follows the host-reported state again, and the draft stays in the input. An open card for that project shows "Task not sent. Try again." (or a general notice for other actions) until the next action or until it closes. |
+| `cpBridgeRejectAgentAction(action, projectId, draftSlot)` | The browser refused a native card action, for example one prepared against an older generation or sent during travel, so nothing reached the engine. A refused `submit` for the same project releases the pending task so Send follows the host-reported state again, and the draft stays in the input. An open card for that project shows "Task not sent. Try again." (or a general notice for other actions) until the next action or until it closes. |
 
 Navigation, animation, and menu actions fail closed before configuration, during
 loading, for a different logged-in player, and for unknown IDs. Travel and menu
@@ -74,10 +80,10 @@ The native menu payload is:
 
 ```js
 { enabled, connected, projectId, name, projectName, status, activity,
-  canStart, canSubmit, running, attention }
+  draftSlot, readOnly, canStart, canSubmit, running, attention }
 ```
 
-Set/show/hide/reject return `{ok:true, version:3, nativeMenu, hudReady, menuVisible}` on success.
+Set/show/hide/reject return `{ok:true, version:4, nativeMenu, hudReady, menuVisible}` on success.
 `nativeMenu` and `hudReady` are true only after the HUD exists in a verified game
 session; the browser retains setup access before that point. Disabling the menu
 removes its owned clips. Names and activity are plain, bounded text. `attention`
@@ -87,14 +93,14 @@ or terminal output is sent to Flash.
 
 The client calls `window.ClaudePenguinBridge.receive(event)` with:
 
-- `{type:"ready", version:3}` when the extension registers callbacks.
+- `{type:"ready", version:4}` when the extension registers callbacks.
 - `{type:"puffle-click", ownerId, puffleId, projectId, generation}` when the actual
   mapped puffle is clicked. A polling hook attaches only to the mapped puffle's clip
   and restores its original press handler when the mapping no longer applies or
   the overlay is reconfigured.
 - `{type:"animation", ownerId, puffleId, state, simulated:true}` after selecting
   an animation. This is acknowledgement of an animation request, not agent work.
-- `{type:"agent-menu-action", projectId?, action, generation, text?}` for native
+- `{type:"agent-menu-action", projectId?, action, generation, draftSlot?, text?}` for native
   menu actions. Actions are `work`, `igloos`, `start`, `submit`, `interrupt`,
   `terminal`, or `changes`. `submit` carries at most 20,000 characters; `work`
   may omit the project ID. The browser accepts project actions only for its own
@@ -129,7 +135,7 @@ refuses to replace an already-open game widget. Connection loss disables runtime
 actions while retaining access to Open Claude. A submitted task cannot be sent
 again while awaiting a lifecycle change; sending alone does not mark it Working.
 Unsent drafts survive closing the card or opening Claude for the current page,
-remain separate per mapped project, and clear only when the matching submission starts.
+remain separate per worker, and clear only when the matching submission starts.
 
 Open Claude and Changes hand off to browser views, where terminal input and
 diffs remain practical. The browser owns repository setup and runtime commands;

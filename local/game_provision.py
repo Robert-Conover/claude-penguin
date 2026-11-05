@@ -154,13 +154,19 @@ async def verify_mapping(connection, mapping):
     problems = []
     if not isinstance(mapping, dict) or not isinstance(mapping.get('key'), str) or len(mapping['key']) > 64:
         raise RequestError('Each mapping needs a short key')
-    try:
-        marker = managed_marker(mapping.get('marker'))
-    except ValueError as error:
-        raise RequestError(str(error)) from None
-    username = mapping.get('username')
-    if not isinstance(username, str) or not MANAGED_USERNAME.match(username):
-        raise RequestError('Only managed owners can be verified')
+    if 'fixtureId' in mapping:
+        username = {'bridge-alpha': 'bridgealpha', 'bridge-beta': 'bridgebeta'}.get(mapping['fixtureId'])
+        if username is None or not PUFFLE_NAME.fullmatch(mapping.get('puffleName') or ''):
+            return {'key': mapping['key'], 'ok': False, 'problems': ['Legacy fixture identity or puffle name is unknown.']}
+        marker = game_accounts.fixture_marker(username)
+    else:
+        try:
+            marker = managed_marker(mapping.get('marker'))
+        except ValueError as error:
+            raise RequestError(str(error)) from None
+        username = mapping.get('username')
+        if not isinstance(username, str) or not MANAGED_USERNAME.match(username):
+            raise RequestError('Only managed owners can be verified')
     ids = {key: mapping.get(key) for key in ('ownerId', 'iglooId', 'puffleId')}
     if not all(positive(value) for value in ids.values()) or not isinstance(mapping.get('puffleName'), str) \
             or not PUFFLE_NAME.match(mapping['puffleName']):

@@ -17,7 +17,7 @@
   <a href="CONTRIBUTING.md">Contribute</a>
 </p>
 
-> **Early development:** the original game runs locally, and an opt-in engine connects one puffle to a real Claude Code terminal. A real coding task and manual permission handling have passed through the host engine; full in-game acceptance remains in progress. The banner is concept art.
+> **Early development:** the original game runs locally, and an opt-in engine connects project puffles to independent Claude Code terminals in isolated worktrees. The banner is concept art.
 
 ## The idea
 
@@ -35,12 +35,17 @@ That's the idea behind Claude Penguin: the original game's rooms, penguins, and 
 | 🛍️ **Make it yours** | Catalog browsing, purchases, equipped color, and puffle adoption and walking have been checked in Safari. |
 | 💾 **Keep your progress** | Local accounts and game state persist. Backend reconnect and stack-restart checks passed. |
 | 🎮 **Keep testing** | Cart Surfer reaches active gameplay. Completed rounds, rewards, browser furniture placement, and some other interactions still need verification. |
-| ✨ **Work with a puffle** | The opt-in [agent engine](local/AGENT_ENGINE.md) connects Atlas to one repository and a named Claude Code session. Clicking Atlas or **Work** opens its native in-game task card. The real terminal and changes viewer open as secondary windows. |
+| ✨ **Work with a puffle** | The opt-in [agent engine](local/AGENT_ENGINE.md) connects each project puffle to its own worktree and named Claude Code session. Clicking the puffle or **Work** opens its native in-game task card. The real terminal and changes viewer open as secondary windows. |
 | 🔄 **Pick up where you left off** | Task history, terminal reconnect, exact-session resume, and failure/attention reporting have been checked. Traveling leaves the session running; stopping it preserves the conversation for later resume. |
 
-**Current scope:** one registered repository and one puffle, using a dedicated fixture igloo. The worker edits that repository's checkout directly; isolated worktrees and multiple projects are still planned. The destination chooser uses matching browser styling; the puffle card and Work/Igloos controls render inside Flash.
+**Your Igloos** supports up to 32 repositories with one active puffle per project.
+Add a repository in the chooser, visit its igloo from the original map, and click
+the puffle to start work. The task card and Work badge live in Flash. Permissions,
+task history and changes review use the host browser panel.
 
-**Latest agent evidence:** after sign-in, Claude produced a real greeting fix and two passing tests in a disposable repository, with one-time manual approvals. These checks used the host API and real terminal. **Still to prove:** native task submission with successful model output, travel and notifications during real work, and runtime animation acceptance. Browser access was unavailable during the latest pass. Cancellation without a confirming terminal signal now requests attention; it is not reported as confirmed interruption. See the dated [validation record](local/VALIDATION.md) for the exact tested scope and remaining gameplay checks.
+Two real Claude sessions created files in separate worktrees during the November 5
+browser checks. The visitor traveled to Town while both stayed running. See the
+[validation record](local/VALIDATION.md) for the checks and remaining gaps.
 
 ## Product roadmap
 
@@ -52,8 +57,8 @@ Checked milestones are implemented within the scope shown. Unchecked rows track 
 | ☑&nbsp;Built | **Game bridge** | Two fixture igloos with explicit identities, real puffle clicks, and animation controls. |
 | ☑&nbsp;Built | **Persistent puffle session** | One repository and named Claude terminal, lifecycle status, task history, reconnect/resume, and changes review. |
 | ☑&nbsp;Built | **Native puffle menus** | In-game Work/Igloos buttons and task card, original puffle artwork, and drafts retained across secondary views. |
-| ☐&nbsp;Next | **Complete the in-game agent loop** | Submit through the native card, travel to Town during real work, handle attention, and return to review Claude-generated changes with accurate status cues. |
-| ☐&nbsp;Planned | **Your Igloos neighborhood** | A map destination for multiple repositories, each with its own igloo, activity count, and separate project state. Work stays accessible across the island. |
+| ☑&nbsp;Built | **In-game agent loop** | Submit through the native card, travel to Town during real work, handle attention, and return to review Claude-generated changes with accurate status cues. |
+| ☑&nbsp;Built | **Project igloos** | A map destination for multiple repositories, each with its own igloo, activity count, and separate project state. Work stays accessible across the island. |
 | ☐&nbsp;Planned | **Multiple puffles per project** | Concurrent agents with isolated branches/worktrees and explicit review and integration actions. |
 | ☐&nbsp;Planned | **Project coordination** | Task boards, useful furniture interactions, and temporary helper puffles for delegated work. |
 | ☐&nbsp;Ongoing | **Gameplay acceptance** | Completed minigame rounds and rewards, browser furniture placement and puffle care, agent/minigame coexistence, and broader display checks. |
@@ -96,11 +101,10 @@ For logs, troubleshooting, and verification commands, see [LOCAL_SETUP.md](LOCAL
 
 ### Try the puffle engine
 
-For the optional coding experiment, you also need **Node 22+, npm, a JDK, and Claude Code signed in on the Mac**. With the baseline game running:
+For the optional coding experiment, you also need **Git 2.48+, Node 22+, npm, a JDK, and Claude Code signed in on the Mac**. With the baseline game running:
 
 ```sh
 python3 local/client-bridge/build.py
-./local/bridge-fixtures
 ./local/agent-start
 ```
 

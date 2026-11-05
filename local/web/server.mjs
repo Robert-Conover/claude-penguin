@@ -164,7 +164,7 @@ export function createLocalServer(options = {}) {
       // The experiment is opt-in per page. Never replace archived assets globally.
       if (urlPath === '/bridge/fixtures.json') {
         try {
-          const manifest = await readFile(path.join(root, '.local/bridge-fixtures.json'), 'utf8');
+          const manifest = await readFile(path.join(root, '.local/bridge-public/fixtures.json'), 'utf8');
           return reply(res, 200, JSON.stringify(validateFixtures(JSON.parse(manifest))), types['.json'], req.method);
         } catch (error) {
           if (error.code !== 'ENOENT') throw error;

@@ -57,5 +57,6 @@ if [ "$engine_dependencies_missing" = true ]; then
   npm ci --ignore-scripts --prefix local/engine
 fi
 
+# Defaults to .local/agent-engine. The engine explains explicit migration for v1 state.
 # Keep this process in the foreground. Claude starts only from the puffle panel.
 exec node local/engine/server.mjs

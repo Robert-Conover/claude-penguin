@@ -176,7 +176,7 @@ async function openPage({ agentMode = true, snapshot = engineSnapshot(), transfo
   globalThis.setInterval = callback => { intervals.push(callback); return 0; };
   try { await import(`./panel.mjs?page=${page}`); } finally { globalThis.setInterval = setInterval; }
   return {
-    window, document, overlay, calls, actions, publish,
+    window, document, overlay, calls, actions, publish, socket:sockets[0],
     el: id => document.getElementById(id),
     poll: () => intervals[0](),
     clickPuffle: () => overlay.run('cpBridge.tick(); puffle.clip.onPress()'),
@@ -226,7 +226,7 @@ test('Work with no puffle selected asks the browser card for its list and drops 
   page.el('cp-work').onclick();
   assert.equal(page.el('cp-agent-panel').hidden, false);
   assert.equal(page.el('cp-session').hidden, true, 'no puffle session is preselected');
-  assert.equal(page.el('cp-agent-title').textContent, 'Your puffle');
+  assert.equal(page.el('cp-agent-title').textContent, 'Your Igloos');
   assert.equal(page.el('cp-agent-list').hidden, false, 'the puffle list is shown for an explicit choice');
   await page.flush();
 });
@@ -315,4 +315,143 @@ test('bridge lab still configures fixture IDs, accepts real clicks, and labels c
   assert.match(page.el('cp-animation').textContent, /^Last simulated cue: Needs you\./);
   assert.equal(page.el('cp-work').textContent, 'Work · 1 simulated alert');
   assert.equal(page.overlay.read('events[events.length-1].simulated'), true);
+});
+
+test('Add project validates both names and creates only on the newly registered project', async () => {
+  const page = await openPage();
+  page.el('cp-igloos').onclick();
+  page.el('cp-add-project').onclick();
+  assert.equal(page.el('cp-worker-name').value, 'Pixel');
+  page.el('cp-repo-path').value = '/repos/--Moon  Base!';
+  page.el('cp-repo-path').oninput();
+  assert.equal(page.el('cp-project-name').value, 'Moon Base');
+  const submit = () => page.el('cp-register-form').onsubmit({ preventDefault() {} });
+  page.el('cp-project-name').value = ' Moon';
+  await submit();
+  assert.match(page.el('cp-agent-error').textContent, /begin and end/);
+  page.el('cp-project-name').value = 'Moon Base';
+  page.el('cp-worker-name').value = 'Pip1';
+  await submit();
+  assert.match(page.el('cp-agent-error').textContent, /1 to 12/);
+  assert.deepEqual(page.actions, []);
+  const actions = [];
+  globalThis.fetch = async (_url, {body}) => {
+    const request = JSON.parse(body);
+    actions.push(request);
+    return reply({ result: { id: request.action === 'register' ? 'returned-project' : 'returned-worker' } });
+  };
+  page.el('cp-worker-name').value = 'Pip';
+  await submit();
+  assert.deepEqual(actions, [{action: 'register', path:'/repos/--Moon  Base!', name:'Moon Base'}, {action:'create', projectId:'returned-project', name:'Pip'}]);
+});
+
+test('archive is read-only and creating the replacement is an explicit choice', async () => {
+  const snapshot = engineSnapshot();
+  const project = snapshot.projects[0];
+  Object.assign(project, { legacy:true, activeWorkerId:null, setup:{phase:'needs-worker'} });
+  snapshot.workers.shift();
+  Object.assign(snapshot.archivedWorkers[0], {name:'Atlas', resumeCommand:'manual resume', taskHistory:[{prompt:'old task'}]});
+  const page = await openPage({snapshot});
+  page.clickPuffle();
+  assert.equal(page.overlay.read(card + '.status.text'), 'Archived');
+  for (const button of ['startButton','sendButton','interruptButton','terminalButton']) assert.equal(page.overlay.read(card + '.' + button + '._visible'), false);
+  page.el('cp-igloos').onclick();
+  const old = page.el('cp-agent-list').children[0];
+  await old.querySelectorAll('button').find(b=>b.textContent==='View archive').onclick();
+  assert.equal(page.el('cp-session').hidden,true);
+  assert.match(page.el('cp-archive-details').textContent,/manual resume/);
+  assert.match(page.el('cp-archive-history').textContent,/old task/);
+  assert.deepEqual(page.actions, []);
+  page.el('cp-igloos').onclick();
+  await page.el('cp-agent-list').children[0].querySelectorAll('button').find(b=>b.textContent==='Create isolated Atlas').onclick();
+  assert.deepEqual(page.actions, [{action:'create',projectId:PROJECT_A,name:'Atlas'}]);
+});
+
+test('a selected project gains only its own active worker; replacement drafts and stale actions are isolated', async () => {
+  const snapshot = idle();
+  snapshot.projects[0].activeWorkerId = null;
+  snapshot.workers.shift();
+  const page = await openPage({snapshot});
+  page.clickPuffle();
+  page.publish({...idle(), revision:8});
+  page.el('cp-work').onclick();
+  page.overlay.run(card + '.taskInput.text = "Comet must never see this draft"');
+  const oldSlot = page.overlay.read('cpBridge.agentData.draftSlot');
+  assert.ok(oldSlot > 0);
+  const replacement = idle();
+  replacement.revision = 9;
+  replacement.projects[0].activeWorkerId = replacement.workers[0].id = 'replacement';
+  page.publish(replacement);
+  page.clickPuffle();
+  assert.notEqual(page.overlay.read('cpBridge.agentData.draftSlot'), oldSlot);
+  assert.equal(page.overlay.read(card + '.taskInput.text'), '');
+  page.window.ClaudePenguinBridge.receive({type:'agent-menu-action',action:'submit',projectId:PROJECT_A,draftSlot:oldSlot,generation:1,text:'old'});
+  assert.deepEqual(page.actions, []);
+});
+
+test('project rows surface visitor and setup errors and keep the corrected name bound to the failed project', async () => {
+  const snapshot = idle();
+  snapshot.visitor = null;
+  snapshot.visitorProblem = 'Visitor 107 is missing.';
+  snapshot.projects[1].setup = {phase:'failed',error:'Houdini rejected the name.',retryable:true,correction:'puffleName'};
+  const page = await openPage({snapshot});
+  page.el('cp-igloos').onclick();
+  assert.match(page.el('cp-visitor-problem').textContent,/Visitor 107/);
+  const row = page.el('cp-agent-list').children[1];
+  assert.match(row.textContent,/Houdini rejected the name/);
+  row.querySelector('input').value = 'Maple';
+  await row.querySelectorAll('button').find(b=>b.textContent==='Retry').onclick();
+  assert.deepEqual(page.actions,[{action:'retry',projectId:PROJECT_B,puffleName:'Maple'}]);
+});
+
+test('switching workers restores their browser drafts and drops old diff, terminal replay and output', async () => {
+  const page = await openPage({snapshot:idle()});
+  const engine = page.window.ClaudePenguinEngine;
+  globalThis.ResizeObserver = class { observe() {} disconnect() {} };
+  page.window.FitAddon = {FitAddon: class {}};
+  const output = [];
+  page.window.Terminal = class {
+    options = {};
+    loadAddon() {} open() {} onData() {} dispose() {} reset() {}
+    write(data, done) { output.push(data); done?.(); }
+  };
+  engine.openForProject(PROJECT_A, 'worker-a');
+  page.el('cp-task-text').value = 'Atlas only';
+  const targetA = page.socket.sent.find(m => m.type === 'attach');
+  let finish;
+  globalThis.fetch = () => new Promise(resolve => { finish = resolve; });
+  page.el('cp-tab-changes').onclick();
+  engine.openForProject(PROJECT_B, 'worker-b');
+  assert.equal(page.el('cp-task-text').value, '');
+  page.el('cp-task-text').value = 'Comet only';
+  engine.openForProject(PROJECT_A, 'worker-a');
+  assert.equal(page.el('cp-task-text').value, 'Atlas only');
+  finish(reply({result:{diff:'stale diff', untracked:[]}}));
+  await page.flush();
+  assert.equal(page.el('cp-diff').textContent,'');
+  const deliver = message => page.socket.onmessage({data:JSON.stringify(message)});
+  deliver({...targetA,type:'terminal.snapshot',data:'old screen'});
+  deliver({...targetA,type:'terminal',data:'old chunk'});
+  deliver({...targetA,type:'error',error:'old attach failed'});
+  assert.deepEqual(output,[]);
+  assert.equal(page.el('cp-agent-error').hidden,true);
+  deliver({...page.socket.sent.at(-1),type:'terminal.snapshot',data:'current screen'});
+  assert.deepEqual(output,['current screen']);
+});
+
+test('native card displays setup, repair and source availability without leaking diagnostics to Flash', async () => {
+  for (const [phase, game, sourceAvailable, expected] of [
+    ['preparing','provisioning',true,'Setting up'], ['failed','repair',true,'Needs repair'],
+    ['ready','ready',false,'Source unavailable'], ['failed','failed',true,'Setup failed'],
+  ]) {
+    const snapshot = idle();
+    Object.assign(snapshot.projects[0], {setup:{phase, error:'/Users/private/detail'}, sourceAvailable});
+    snapshot.projects[0].game.status = game;
+    const page = await openPage({snapshot});
+    page.el('cp-igloos').onclick();
+    await page.el('cp-agent-list').children[0].querySelectorAll('button').find(b=>b.textContent==='Open work').onclick();
+    assert.equal(page.overlay.read(card + '.status.text'), expected);
+    assert.doesNotMatch(JSON.stringify(page.calls), PRIVATE);
+    await page.flush();
+  }
 });

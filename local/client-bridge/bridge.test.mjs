@@ -65,7 +65,7 @@ test('project configuration rejects duplicate ownership and invalid identifiers'
   assert.equal(run('cpBridge.generation'), 0, 'rejected configurations do not advance the generation');
 });
 
-const nativePayload = '{enabled:true,connected:true,projectId:"one",name:"Atlas",projectName:"My repository",status:"idle",activity:"Ready",canStart:false,canSubmit:true,running:true,attention:0}';
+const nativePayload = '{enabled:true,connected:true,projectId:"one",draftSlot:1,name:"Atlas",projectName:"My repository",status:"idle",activity:"Ready",canStart:false,canSubmit:true,running:true,attention:0}';
 
 test('native menu preserves modal state, submits only its explicit mapped fixture, and keeps private data out', () => {
   const run = fixture();
@@ -85,7 +85,7 @@ test('native menu preserves modal state, submits only its explicit mapped fixtur
   assert.equal(run('cpBridge.menuAction("submit").error'), 'awaiting-task-event');
   run('cpBridge.tick()');
   assert.equal(run('cpBridge.agentMenu.card.sendButton.allowed'), false, 'polling cannot re-enable a submitted task before a real event');
-  assert.deepEqual(JSON.parse(run('JSON.stringify(Object.keys(events[events.length-1]).sort())')), ['action', 'generation', 'projectId', 'text', 'type']);
+  assert.deepEqual(JSON.parse(run('JSON.stringify(Object.keys(events[events.length-1]).sort())')), ['action', 'draftSlot', 'generation', 'projectId', 'text', 'type']);
   assert.equal(run('events[events.length-1].generation'), 1);
   assert.equal(run('cpBridge.menuAction("terminal").menuVisible'), false);
   assert.equal(run('ui.is_quick_keys_active'), true);
@@ -148,7 +148,7 @@ test('native task drafts survive closing and terminal handoff without crossing f
   run(configure + ';cpBridge.setAgentMenu(' + nativePayload + ');cpBridge.showAgentMenu()');
   run('cpBridge.agentMenu.card.taskInput.text="Atlas draft";cpBridge.menuAction("terminal");cpBridge.showAgentMenu()');
   assert.equal(run('cpBridge.agentMenu.card.taskInput.text'), 'Atlas draft');
-  run('var second=' + nativePayload + ';second.projectId="two";cpBridge.setAgentMenu(second);cpBridge.showAgentMenu()');
+  run('var second=' + nativePayload + ';second.projectId="two";second.draftSlot=2;cpBridge.setAgentMenu(second);cpBridge.showAgentMenu()');
   assert.equal(run('cpBridge.agentMenu.card.taskInput.text'), '', 'different puffle must not inherit the draft');
   run('cpBridge.agentMenu.card.taskInput.text="Comet draft";cpBridge.menuAction("close");cpBridge.setAgentMenu(' + nativePayload + ');cpBridge.showAgentMenu()');
   assert.equal(run('cpBridge.agentMenu.card.taskInput.text'), 'Atlas draft');
@@ -222,9 +222,9 @@ test('a native action the browser refuses releases a pending task, keeps its dra
   run(configure + ';cpBridge.setAgentMenu(' + nativePayload + ');cpBridge.showAgentMenu()');
   run('cpBridge.agentMenu.card.taskInput.text="Fix the greeting";cpBridge.menuAction("submit")');
   assert.equal(run('cpBridge.agentSubmitPending'), true);
-  assert.equal(run('cpBridge.rejectAgentAction("submit","two").ok'), true);
+  assert.equal(run('cpBridge.rejectAgentAction("submit","two",2).ok'), true);
   assert.equal(run('cpBridge.agentSubmitPending'), true, 'another project’s refusal does not release this task');
-  assert.equal(run('cpBridge.rejectAgentAction("submit","one").ok'), true);
+  assert.equal(run('cpBridge.rejectAgentAction("submit","one",1).ok'), true);
   assert.equal(run('cpBridge.agentSubmitPending'), false);
   assert.equal(run('cpBridge.agentMenu.card.sendButton.allowed'), true, 'Send follows the host-reported state again');
   assert.equal(run('cpBridge.agentMenu.card.taskInput.text'), 'Fix the greeting');
@@ -236,7 +236,7 @@ test('a native action the browser refuses releases a pending task, keeps its dra
   // Sending again or closing the card clears the notice.
   run('cpBridge.setAgentMenu(' + nativePayload + ');cpBridge.menuAction("submit");cpBridge.tick()');
   assert.equal(run('cpBridge.agentMenu.card.taskLabel.text'), 'Give Atlas a task');
-  run('cpBridge.rejectAgentAction("submit","one");cpBridge.hideAgentMenu();cpBridge.showAgentMenu()');
+  run('cpBridge.rejectAgentAction("submit","one",1);cpBridge.hideAgentMenu();cpBridge.showAgentMenu()');
   assert.equal(run('cpBridge.agentMenu.card.taskLabel.text'), 'Give Atlas a task');
   assert.equal(run('cpBridge.agentMenu.card.taskInput.text'), 'Fix the greeting', 'the draft survives closing');
   // Refusing a project action while no card is open changes nothing.

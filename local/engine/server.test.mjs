@@ -1,3 +1,4 @@
+import { engineStateDir, stateDirProblem } from './state-dir.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
@@ -9,7 +10,7 @@ import { WebSocket } from 'ws';
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { createEngineServer, acquireLock, previewGate, stateDirProblem } from './server.mjs';
+import { createEngineServer, acquireLock } from './server.mjs';
 
 async function fixture(manager, options = {}) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'penguin-engine-http-'));
@@ -112,7 +113,7 @@ test('WebSocket authenticates before subscribing and replays terminal data witho
     await once(socket, 'open');
     const welcome = await next(() => socket.send(JSON.stringify({ type: 'auth', token: f.token })));
     assert.equal(welcome.type, 'snapshot');
-    socket.send(JSON.stringify({ type: 'attach', projectId: 'p1', workerId: 'w1' }));
+    socket.send(JSON.stringify({ type: 'attach', projectId: 'p1', workerId: 'w1', attachment: 7 }));
     await terminalStarted;
     f.publish({ type: 'terminal', projectId: 'p1', workerId: 'w1', data: 'already-serialized', sequence: 1 });
     const replay = await next(() => releaseTerminal({ data: 'screen', cols: 120, rows: 32, sequence: 1 }));
@@ -120,6 +121,8 @@ test('WebSocket authenticates before subscribing and replays terminal data witho
     assert.equal(replay.data, 'screen');
     const delta = await next(() => f.publish({ type: 'terminal', projectId: 'p1', workerId: 'w1', data: 'new-data', sequence: 2 }));
     assert.equal(delta.data, 'new-data');
+    assert.equal(delta.attachment, 7);
+    assert.equal(replay.attachment, 7);
     assert.equal(messages.filter(message => message.data === 'already-serialized').length, 0);
     const mismatch = await next(() => socket.send(JSON.stringify({ type: 'input', projectId: 'p2', workerId: 'w1', data: 'wrong' })));
     assert.equal(mismatch.type, 'error');
@@ -147,14 +150,12 @@ test('runtime lock prevents two engines from owning the same state directory', a
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
 
-test('the real agent runtime stays disabled until a developer opts into dedicated preview state', () => {
-  const root = '/repo';
-  assert.throws(() => previewGate({}, root), /agent page is disabled here/);
-  assert.throws(() => previewGate({ CP_ENGINE_PREVIEW: 'engine-v2' }, root), /dedicated CP_ENGINE_STATE_DIR/);
-  assert.equal(previewGate({ CP_ENGINE_PREVIEW: 'engine-v2', CP_ENGINE_STATE_DIR: '.local/engine-preview' }, root), '/repo/.local/engine-preview');
+test('startup uses the documented state folder or an explicit override', () => {
+  assert.equal(engineStateDir({}, '/repo'), '/repo/.local/agent-engine');
+  assert.equal(engineStateDir({ CP_ENGINE_STATE_DIR: 'mine' }, '/repo'), '/repo/mine');
 });
 
-test('state folders that alias the default, are served over HTTP, or are mounted into containers are refused', async () => {
+test('private state is allowed in the default folder and refused in served or mounted folders', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'penguin-state-dir-'));
   try {
     for (const dir of ['.local/agent-engine', '.local/ruffle', '.local/client-bridge', '.local/native-igloos', '.local/logs', 'vanilla-media/media', 'templates', 'local/web/bridge']) {
@@ -163,10 +164,9 @@ test('state folders that alias the default, are served over HTTP, or are mounted
     await symlink(path.join(root, '.local/agent-engine'), path.join(root, 'alias'));
     await symlink(path.join(root, '.local/ruffle'), path.join(root, 'ruffle-link'));
     const problem = (dir, platform = process.platform) => stateDirProblem(path.resolve(root, dir), { root, platform });
-    for (const dir of ['.local/agent-engine', 'alias', '.local/./agent-engine/']) assert.match(problem(dir), /other than the default/, dir);
-    assert.match(problem('.local/Agent-Engine', 'darwin'), /other than the default/, 'case variants are the same folder on macOS');
+    for (const dir of ['.local/agent-engine', 'alias']) assert.equal(problem(dir), null);
     for (const dir of ['.local/ruffle/x', 'ruffle-link/x', '.local/client-bridge', '.local/native-igloos/state', '.local/logs/engine', 'vanilla-media',
-      'vanilla-media/media/x', 'templates/state', 'local/web/bridge/x']) {
+      'vanilla-media/media/x', 'templates/state', 'local/web/bridge/x', 'local/engine', 'dash', 'houdini', 'snowflake', '.local/bridge-public']) {
       assert.match(problem(dir), /served over HTTP or mounted into the game containers/, dir);
     }
     assert.match(problem('.local/RUFFLE/new', 'darwin'), /served over HTTP/);
@@ -194,11 +194,11 @@ test('hook events up to the hook client limit are accepted; other endpoints keep
   } finally { await f.cleanup(); }
 });
 
-test('the preview engine starts, holds its lock, and releases it on a clean shutdown', async () => {
+test('the engine starts without a preview gate, holds its lock, and releases it on a clean shutdown', async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'penguin-main-'));
   const port = 20000 + Math.floor(Math.random() * 20000);
   const child = spawn(process.execPath, [fileURLToPath(new URL('./server.mjs', import.meta.url))], {
-    env: { ...process.env, CP_ENGINE_PREVIEW: 'engine-v2', CP_ENGINE_STATE_DIR: path.join(dir, 'state'), CP_ENGINE_WORKTREE_ROOT: path.join(dir, 'worktrees'), CP_ENGINE_PORT: String(port),
+    env: { ...process.env, CP_ENGINE_STATE_DIR: path.join(dir, 'state'), CP_ENGINE_WORKTREE_ROOT: path.join(dir, 'worktrees'), CP_ENGINE_PORT: String(port),
       CP_NATIVE_IGLOOS_DIR: path.join(dir, 'native-igloos'), CP_ENGINE_GAME_PROVISIONING: 'off' },
     stdio: ['ignore', 'pipe', 'pipe'] });
   try {
@@ -219,4 +219,34 @@ test('the preview engine starts, holds its lock, and releases it on a clean shut
     assert.equal(existsSync(path.join(dir, 'native-igloos', 'owner.lock')), false, 'a clean shutdown releases publication');
     assert.deepEqual(JSON.parse(await readFile(path.join(dir, 'native-igloos', 'published.json'), 'utf8')), { version: 1, visitorId: null, igloos: [] });
   } finally { child.kill('SIGKILL'); await rm(dir, { recursive: true, force: true }); }
+});
+
+test('game container bind mounts exclude the checkout, private engine state and environment file', async () => {
+  const config = await readFile(new URL('../compose.yml', import.meta.url), 'utf8');
+  const sources = [...config.matchAll(/^\s+- (\.\.?\/[^:\n]*|\.\.?):[^\n]+$/gm)].map(match => path.resolve('/repo/local', match[1]));
+  assert.ok(sources.includes('/repo/.local/bridge-public'));
+  assert.ok(sources.includes('/repo/local'));
+  for (const name of ['.local/agent-engine/state.json','.local/agent-engine-demo/game-secrets.json','.local/env']) {
+    const file = path.resolve('/repo', name);
+    assert.ok(sources.every(source => file !== source && !file.startsWith(source + '/')), name);
+  }
+});
+
+test('normal startup refuses a legacy state with migration guidance and preserves its bytes', async t => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'penguin-legacy-start-'));
+  t.after(() => rm(root, {recursive:true, force:true}));
+  const state = path.join(root, 'state');
+  await mkdir(state);
+  const bytes = '{"version":1,"revision":79,"projects":[],"workers":[]}';
+  await writeFile(path.join(state, 'state.json'), bytes);
+  const child = spawn(process.execPath, [fileURLToPath(new URL('./server.mjs', import.meta.url))], {
+    env:{...process.env, CP_ENGINE_STATE_DIR:state, CP_NATIVE_IGLOOS_DIR:path.join(root,'publication'), CP_ENGINE_GAME_PROVISIONING:'off'},
+    stdio:['ignore','ignore','pipe'],
+  });
+  let message = '';
+  child.stderr.on('data', chunk => { message += chunk; });
+  assert.deepEqual(await once(child,'close'), [1,null]);
+  assert.match(message, /migrate.mjs/);
+  assert.equal(await readFile(path.join(state,'state.json'),'utf8'), bytes);
+  assert.equal(existsSync(path.join(state,'runtime.lock')),false);
 });

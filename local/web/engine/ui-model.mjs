@@ -22,7 +22,7 @@ export function resolveTarget(snapshot, target) {
   if (!target) return null;
   const project = snapshot?.projects?.find(item => item.id === target.projectId);
   const worker = snapshot?.workers?.find(item => item.id === target.workerId && item.projectId === target.projectId);
-  return project && worker ? { project, worker } : null;
+  return project && worker && project.activeWorkerId === worker.id ? { project, worker } : null;
 }
 
 // Routes a project UUID to the engine's recorded active worker. When the caller
@@ -46,7 +46,7 @@ export function controlsForWorker(connected, resolved, terminalReady) {
   const worker = resolved?.worker;
   const ready = Boolean(connected && worker);
   return {
-    start: ready && !worker.running,
+    start: ready && !worker.running && worker.workspace?.state === 'ready' && !worker.recoveryBlocked,
     interrupt: ready && worker.running,
     stop: ready && worker.running,
     submit: ready && worker.running && terminalReady && ['idle', 'review', 'interrupted'].includes(worker.status),

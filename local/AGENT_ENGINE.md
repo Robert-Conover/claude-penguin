@@ -1,26 +1,9 @@
-# One puffle, one Claude Code session
+# Project igloos and Claude Code sessions
 
-The opt-in host engine connects Atlas in Bridge Alpha to one real Claude Code
-terminal on this Mac. The original game remains in its existing containers. The
-engine runs separately on loopback port 8081 and starts a Claude process only when
-you choose **Start / Resume** in the puffle card. After game login, that card and
-the **Work** and **Igloos** buttons are drawn inside the Flash client. The full
-Claude terminal opens separately when needed.
-
-This milestone supports one registered Git repository and one named worker. It
-uses the existing `bridgecheck` visitor and `bridge-alpha` fixture destination;
-Bridge Beta is not a second coding project. A registered project gets its own
-UUID, separate from the fixture ID, and a canonical repository path. Registering
-a symlink to the same repository returns the same project. A second distinct
-repository or worker is refused rather than replacing the saved mapping.
-
-> **In-progress branch.** On the multi-project branch, the engine itself has moved to
-> [state v2 with isolated worktrees](#multi-project-engine-in-progress) and now
-> provisions [one game owner per project](#game-provisioning-and-native-igloos-stage-2).
-> Browser integration is not finished there, so `server.mjs` refuses to serve the
-> agent page unless you explicitly opt into the engine preview. Everything below,
-> up to the multi-project section, describes the released single-puffle milestone
-> on `dev`.
+Each registered repository gets an igloo, a named puffle, a persistent Git worktree,
+and an independent Claude Code session on the host. The original client runs in
+Ruffle. Game services stay in Docker. The optional agent page listens on loopback
+and starts a puffle only when you choose **Start / Resume**.
 
 ## Start
 
@@ -29,21 +12,20 @@ Install Node 22 or newer, npm, and
 authentication through its normal host setup before asking the puffle to work.
 The launcher does not log you in or request authentication.
 
-Prepare the game and the [bridge experiment](GAME_BRIDGE.md):
+Start the local game, build the overlay with a JDK, and launch the host engine.
 
 ```sh
 ./local/start
 python3 local/client-bridge/build.py
-./local/bridge-fixtures
 ./local/agent-start
 ```
 
 The overlay build needs a JDK; see the [build instructions](client-bridge/README.md).
-Fixture setup uses dedicated accounts and preserves the interactive `player`
-account. Close any existing `bridgecheck` game session before setup or protocol
-verification. Houdini allows only one session per account.
+The engine provisions or verifies the marked visitor without logging in as it.
+Use the visitor in one browser game tab at a time. Scripted verification uses
+dedicated owners or `localcheck`.
 
-`agent-start` checks the fixture manifest, generated overlay, Ruffle files, and
+`agent-start` checks the game configuration, generated overlay, Ruffle files, and
 the baseline game's HTTP readiness. It installs locked dependencies with
 `npm ci --ignore-scripts` if the engine or shared web dependencies are missing,
 then runs the host server in the foreground. Keep that terminal open while
@@ -60,41 +42,30 @@ Blizzard. If fixture setup originally used a different
 The ordinary [game page](http://localhost:8080/) and
 [bridge simulation](http://localhost:8080/?bridge=1#/login) remain separate modes.
 
-## Work with Atlas
+## Add and visit projects
 
-1. Open **Work**. The setup card connects an absolute path to an existing Git
-   repository with at least one commit and lets you name the session. For
-   verification, use a disposable repository with a clean working tree.
-2. Once connected, click Atlas in its igloo or choose **Work** from anywhere on
-   the island. The native Flash puffle card shows its current state, a task field,
-   and the **Start / Resume**, **Interrupt**, **Send task**, **Open Claude**, and
-   **Changes** buttons.
-3. Choose **Start / Resume**, then **Open Claude** for folder trust, questions,
-   authentication, or permissions. This opens the real terminal in a separate
-   window styled to match the game. Claude starts in manual permission mode and
-   retains applicable settings. **Session details** reveals the repository path,
-   session UUID, and detailed runtime activity when needed.
-4. Enter an instruction on the native card and choose **Send task**, or type
-   directly in Claude's terminal. The worker edits the registered checkout
-   directly; this milestone does not create an isolated branch or worktree.
-5. Choose the native **Igloos** button to open the destination list, which uses
-   matching browser menu styling. Select your project or **Visit Town**. Closing
-   a menu or traveling leaves the host-owned PTY running. **Work** remains
-   available for attention and review without returning to the igloo.
-6. **Changes** opens a browser viewer for tracked changes and bounded untracked
-   previews. The comparison starts at the commit recorded when the worker was
-   created, including subsequent agent commits and current working-tree edits.
-   Pre-existing edits are identified but are not separated from agent edits.
-   Review and integration remain explicit actions outside the menu. **Back to
-   puffle** returns from the terminal or Changes viewer to the native card.
-
-Before game login, or while the native menu is unavailable, **Work** uses a
-compact browser puffle card with the same game-inspired appearance. Its **Task**,
-**Changes**, and **Journal** tabs retain task entry, diff review, and history.
-The terminal is behind **Open Claude**, rather than the default view. Returning
-from a viewer also uses this fallback if the game cannot reopen its native card.
-The destination list and terminal remain browser surfaces; they are not original
-Flash menus.
+1. Open **Igloos → Add project** and enter the repository path, project name and
+   puffle name. The chooser shows setup progress, name corrections, retries and
+   manual repair instructions. Registration supports up to 32 distinct repositories.
+   Game acceptance creates permanent managed owner accounts. Project deletion is deferred.
+2. Travel using the original map's cluster of igloos or **Visit** in the chooser.
+   Click a mapped puffle to select its project. **Work** reopens that selection
+   from anywhere on the island. Without a selection it opens the chooser.
+3. Choose **Start / Resume** and **Open Claude**. On first launch Claude can ask
+   whether you trust the new worktree folder. Check the displayed path before
+   confirming. Claude runs in manual permission mode. Answer tool requests in
+   the terminal. Several puffles can run concurrently.
+4. Enter a task in the native card, or use the browser task card when the game
+   cannot display it. Each surface keeps drafts per worker for the current page.
+   Close the card or visit Town while work runs. The Work badge counts workers
+   waiting for input, failed turns and turns ready for review.
+5. Open **Changes** to review agent commits and current edits from the immutable
+   baseline. **Copy path** copies the worktree and **Copy branch** copies its
+   current branch. The **Journal** tab shows the selected worker's task history.
+   Verify task results yourself and stop the session before external Git operations.
+6. A migrated project also has **View archive**, with its original folder, session
+   ID, task history and copyable resume command. Choose **Create isolated Atlas**
+   on its row to give it a new worktree and conversation on the existing game mapping.
 
 The worker UUID and Claude session UUID persist. Initial launch uses
 `--session-id`; once Claude confirms that session, later starts use that exact
@@ -162,13 +133,12 @@ Optional host environment variables:
 
 | Variable | Purpose |
 | --- | --- |
-| `CP_ENGINE_STATE_DIR` | Dedicated state directory; relative values resolve from the repository root. Changing it selects separate engine state, not an automatic migration. The multi-project engine compares canonical paths (case-insensitively on macOS) and refuses a folder inside one that is served over HTTP or mounted into the game containers: `vanilla-media/`, `templates/`, `local/web/bridge/`, `.local/ruffle/`, `.local/client-bridge/`, `.local/native-igloos/`, and `.local/logs/`. |
+| `CP_ENGINE_STATE_DIR` | Dedicated state directory; relative values resolve from the repository root. Changing it selects separate engine state, not an automatic migration. The multi-project engine compares canonical paths (case-insensitively on macOS) and refuses a folder inside one that is served over HTTP or mounted into the game containers: `vanilla-media/`, `templates/`, `local/`, the vendored server folders, `.local/bridge-public/`, `.local/ruffle/`, `.local/client-bridge/`, `.local/native-igloos/`, and `.local/logs/`. |
 | `CP_ENGINE_PORT` | Loopback port, default `8081`. Use the URL printed by the launcher. |
 | `CP_CLAUDE_PATH` | Claude executable path when `claude` is not on `PATH`. |
-| `CP_ENGINE_WORKTREE_ROOT` | Multi-project engine only: absolute root for new puffle worktrees, default `~/.claude-penguin/worktrees`. |
-| `CP_ENGINE_PREVIEW` | Multi-project engine only: `engine-v2` opts into the engine-only preview with a dedicated `CP_ENGINE_STATE_DIR`. |
-| `CP_NATIVE_IGLOOS_DIR` | Multi-project engine only: native igloo publication directory, default `.local/native-igloos` (the directory the world service mounts). Change it only for tests. |
-| `CP_ENGINE_GAME_PROVISIONING` | Multi-project engine only: `off` disables game provisioning (setup then stops at `game-pending`). For engine-only development and tests. When the engine later starts with provisioning on, each `game-pending` project becomes a retryable failure, and **Retry** provisions it. |
+| `CP_ENGINE_WORKTREE_ROOT` | absolute root for new puffle worktrees, default `~/.claude-penguin/worktrees`. |
+| `CP_NATIVE_IGLOOS_DIR` | native igloo publication directory, default `.local/native-igloos` (the directory the world service mounts). Change it only for tests. |
+| `CP_ENGINE_GAME_PROVISIONING` | `off` disables game provisioning (setup then stops at `game-pending`). For engine-only development and tests. When the engine later starts with provisioning on, each `game-pending` project becomes a retryable failure, and **Retry** provisions it. |
 
 The engine validates Host/Origin and uses separate browser and per-run hook
 credentials. Game fixture IDs alone do not authorize terminal control. Logs and
@@ -199,29 +169,11 @@ SessionStart uses a command hook; the observer forwards JSON locally without
 approving permissions or changing Claude's response. Hooks supplement the real
 terminal rather than replacing its interaction model.
 
-Multiple project igloos, neighborhood/map changes, concurrent workers with
-isolated worktrees, task boards, and integration actions remain later milestones.
+An explicitly started host session requires a prepared, validated worktree. Game
+verification controls igloo publication and native execution controls. An unavailable
+igloo does not terminate a running Claude process.
 
-## Multi-project engine (in progress)
-
-Stage 1 of the multi-project milestone changed the host engine only. It is
-covered by automated tests and a migration rehearsal on a private copy. Stage 2
-adds [game provisioning and the native igloo list](#game-provisioning-and-native-igloos-stage-2);
-the chooser, card, and selection surfaces are still in progress, so the real
-agent page stays disabled. For engine-only development:
-
-```sh
-CP_ENGINE_PREVIEW=engine-v2 CP_ENGINE_STATE_DIR=.local/engine-preview node local/engine/server.mjs
-```
-
-`./local/agent-start` passes these variables through. It no longer needs the
-Alpha/Beta fixture manifest (`./local/bridge-fixtures`); it still needs
-`./local/start` and the built overlay.
-
-The preview refuses the default `.local/agent-engine/` directory and never
-migrates saved state implicitly.
-
-What the engine now does:
+## Repository and workspace rules
 
 - **Projects.** It registers up to 32 existing, non-bare Git repositories, each
   with at least one commit. Projects are deduplicated by canonical Git common
@@ -303,10 +255,10 @@ What the engine now does:
   is a nested repository also warns (`nestedRepository: true`). That lookup runs
   in the background, so the first event from such a folder may not warn yet.
   Hook events up to 1 MiB are accepted. Worktrees isolate checkouts and indexes, not
-  filesystem access, and Claude keeps manual permissions. Where Claude Code
-  stores persistent permission approvals (the worktree's or the source
-  checkout's `.claude/settings.local.json`) has not been verified yet; live
-  acceptance will check and report it.
+  filesystem access, and Claude keeps manual permissions. Claude documents that permanent
+  repository approvals resolve through worktrees to the main checkout's
+  `.claude/settings.local.json`. See [Claude permissions](https://code.claude.com/docs/en/permissions)
+  and the dated [local observations](VALIDATION.md).
 - **Review.** Review shows cumulative committed and uncommitted changes since
   the immutable baseline, previews of untracked files (symlinks, hard-linked
   files, and other non-regular files are skipped; the untracked list stops at
@@ -323,7 +275,7 @@ workers. The engine refuses version 1 state and never migrates it implicitly.
 Older engine code refuses version 2. The explicit command:
 
 ```sh
-node local/engine/migrate.mjs --state-dir <copy> --rehearsal
+node local/engine/migrate.mjs --state-dir .local/agent-engine-demo
 ```
 
 takes the runtime lock and fails closed if a saved engine or worker process may
@@ -342,16 +294,13 @@ binds to a repository at its old path only if that repository contains the
 archived worker's baseline commit, so an unrelated repository created there
 later never inherits the history or the Atlas igloo.
 
-In this stage the command migrates only rehearsal copies outside the checkout.
-Real Atlas state is migrated once the archive and replacement controls exist.
-
 To roll back, stop the engine, then copy the backup over `state.json` and run
 the older engine. Copy, rather than rename, so the backup stays available.
 Worktrees and branches created by the v2 engine stay in place. They are locked,
 and you can remove them manually with `git worktree unlock` and
 `git worktree remove`.
 
-### Game provisioning and native igloos (Stage 2)
+### Game provisioning and native igloos
 
 The original server addresses an igloo by its owner (`ownerId + 2000`), so
 layouts alone cannot isolate puffles. Each project therefore gets one dedicated,
@@ -400,7 +349,7 @@ adopted twice, or deleted. Repair needs a person:
 inspect the game database, then retry. Missing `game-secrets.json` entries for
 an existing owner also stop with `repair` rather than creating another owner.
 At startup the engine re-verifies, in the background, the visitor and then
-every ready managed mapping (two provisioning runs). A mismatched owner mapping
+all ready mappings. It verifies a legacy owner using the recorded fixture identity, its marker email, locked layout and blue puffle. Restore a mismatched legacy fixture manually and restart to recheck it. A mismatched owner mapping
 moves that project to `repair`. A visitor that is missing or mismatched is never
 remapped: snapshots report `visitor: null` with a `visitorProblem` message, the
 publication is withdrawn (no visitor, no igloos) until the visitor verifies
@@ -482,4 +431,4 @@ python3 -m unittest local/test_game_provision.py local/test_native_igloos.py
 
 The container regression suite (`local/test_houdini_compat.py`) and live
 provisioning against the running stack are recorded in the dated validation
-record. In-game igloo map checks in Ruffle are still pending.
+record. See the Stage 3 entry for Ruffle map, player-card and concurrent Claude acceptance.

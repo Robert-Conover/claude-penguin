@@ -545,7 +545,7 @@ export async function createManager({ stateDir, onEvent = () => {}, claudePath =
   }
 
   /**
-   * Re-verify the visitor and every ready managed mapping (one batched
+   * Re-verify the visitor and every ready mapping (one batched
    * provisioning run). A mismatch marks the mapping for repair and removes it
    * from publication; a visitor that fails verification withdraws the whole
    * publication (see ensureVisitor) while owner mappings are still checked. An
@@ -557,20 +557,24 @@ export async function createManager({ stateDir, onEvent = () => {}, claudePath =
     try { await ensureVisitor({ force: true }); }
     catch (error) { if (!REPAIR_CODES.includes(error.code)) throw error; }
     const secrets = readSecrets(stateDir);
-    const ready = state.projects.filter(project => project.game?.source === 'managed' && project.game.status === 'ready');
+    const ready = state.projects.filter(project => project.game?.status === 'ready' || (project.game?.source === 'legacy-fixture' && project.game.status === 'repair'));
     const markRepair = (project, message) => withProjectLock(project.id, async () => {
-      if (project.game?.status !== 'ready') return;
+      if (!['ready', 'repair'].includes(project.game?.status)) return;
       project.game.status = 'repair';
-      setSetup(project, { phase: 'failed', step: null, error: message, retryable: true, correction: null });
+      setSetup(project, { phase: 'failed', step: null, error: message, retryable: project.game.source === 'managed', correction: null });
     });
     let repair = 0;
     const checks = [];
     for (const project of ready) {
+      const { ownerId, iglooId, puffleId, puffleName, fixtureId } = project.game;
+      const expected = { ownerId, iglooId, puffleId, puffleName };
+      if (project.game.source === 'legacy-fixture') {
+        checks.push({ project, expected, mapping: { key: project.id, fixtureId, ...expected } });
+        continue;
+      }
       const credentials = secrets.owners[project.id];
-      if (!credentials) { repair++; await markRepair(project, 'This project\'s managed-owner credentials are missing from game-secrets.json. Restore that file.'); continue; }
-      const { ownerId, iglooId, puffleId, puffleName } = project.game;
-      checks.push({ project, expected: { ownerId, iglooId, puffleId, puffleName },
-        mapping: { key: project.id, marker: credentials.marker, username: credentials.username, ownerId, iglooId, puffleId, puffleName } });
+      if (!credentials) { repair++; await markRepair(project, "This project's managed-owner credentials are missing from game-secrets.json. Restore that file."); continue; }
+      checks.push({ project, expected, mapping: { key: project.id, marker: credentials.marker, username: credentials.username, ...expected } });
     }
     const results = await game.verifyOwners(checks.map(check => check.mapping));
     assertOpen();
@@ -578,13 +582,22 @@ export async function createManager({ stateDir, onEvent = () => {}, claudePath =
       const result = results.find(item => item.key === check.project.id);
       const unchanged = () => Object.entries(check.expected).every(([key, value]) => check.project.game?.[key] === value);
       if (result?.ok) {
-        await withProjectLock(check.project.id, async () => { if (unchanged() && check.project.game.status === 'ready') { check.project.game.verifiedAt = now(); commit(); } });
+        await withProjectLock(check.project.id, async () => {
+          if (!unchanged()) return;
+          const project = check.project;
+          if (project.game.source === 'legacy-fixture' && project.game.status === 'repair') {
+            project.game.status = 'ready';
+            const worker = state.workers.find(item => item.id === project.activeWorkerId);
+            if (!worker || worker.workspace.state === 'ready') setSetup(project, { phase: worker ? 'ready' : 'needs-worker', error: null, retryable: false });
+          }
+          if (project.game.status === 'ready') { project.game.verifiedAt = now(); commit(); }
+        });
       } else {
         repair++;
         if (unchanged()) await markRepair(check.project, `The game mapping no longer verifies: ${(result?.problems ?? ['no result']).join(' ')}`);
       }
     }
-    return { checked: checks.length, repair, visitorProblem };
+    return { checked: ready.length, repair, visitorProblem };
   }
 
   async function createWorker({ projectId, name } = {}) {

@@ -201,7 +201,7 @@ export function createGameProvisioner({ root, compose = path.join(root, 'local/c
   /** Database-side verification of complete owner/layout/puffle mappings, batched in one service run. */
   async function verifyOwners(mappings) {
     if (!mappings.length) return [];
-    for (const mapping of mappings) if (!MANAGED_USERNAME.test(mapping.username)) throw new ProvisionError('Refusing to verify a non-managed account.');
+    for (const mapping of mappings) if (!Object.hasOwn(mapping, 'fixtureId') && !MANAGED_USERNAME.test(mapping.username)) throw new ProvisionError('Refusing to verify a non-managed account.');
     const result = await runSeed({ op: 'verify', mappings });
     if (result.status !== 'ok' || !Array.isArray(result.results)) throw seedFailure(result);
     return result.results.map(item => ({ key: item.key, ok: item.ok === true, problems: Array.isArray(item.problems) ? item.problems.map(String).slice(0, 10) : [] }));
