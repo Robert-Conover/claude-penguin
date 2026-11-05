@@ -405,5 +405,52 @@
       "Real Atlas migration (Stage 3)",
       "GitHub-hosted CI run for this branch"
     ]
+  },
+  "multi_project_game_mapping_stage2": {
+    "date": "2026-11-04",
+    "status": "automated_and_live_provisioning_passed_browser_acceptance_pending",
+    "runtime_gate": "agent page still disabled unless CP_ENGINE_PREVIEW=engine-v2 with a dedicated non-default CP_ENGINE_STATE_DIR",
+    "jdk": "Homebrew OpenJDK 27.0.1",
+    "regression_tests": {
+      "engine": 77,
+      "web_and_ui": 21,
+      "client_contract": 14,
+      "swf_preservation": 6,
+      "python_provisioning_and_adapter": 10,
+      "houdini_container": 11
+    },
+    "overlay_build": {
+      "passed": true,
+      "contract_version": 2,
+      "generated_overlay_preservation": true
+    },
+    "protocol_verify": true,
+    "live_provisioning": {
+      "passed": true,
+      "visitorId": 107,
+      "ownerId": 108,
+      "iglooId": 6,
+      "roomId": 2108,
+      "puffleId": 6,
+      "puffleName": "Pebble",
+      "rerun_reused_owner": true,
+      "publication_emptied_on_shutdown": true
+    },
+    "non_visitor_upstream_behavior": {
+      "account": "localcheck",
+      "penguinId": 102,
+      "managed_igloo_listed": false,
+      "pio": 0
+    },
+    "bug_found_and_fixed": "migrate.mjs failed on a checkout without .local/",
+    "remaining": [
+      "Visitor igloo map and player card in Ruffle",
+      "Reconfigurable overlay, UUID routing, travel and animation in Ruffle",
+      "Live puffle-name rejection (error 441)",
+      "Real Claude tasks in isolated worktrees",
+      "Chooser, cards, selection, drafts, and browser acceptance (Stage 3)",
+      "Real Atlas migration (Stage 3)",
+      "GitHub-hosted CI run for this branch"
+    ]
   }
 }

@@ -13,8 +13,10 @@ command -v "$claude_command" >/dev/null || {
   exit 1
 }
 
-if [ ! -f .local/bridge-fixtures.json ]; then
-  echo 'Missing game fixtures. Start ./local/start, then run ./local/bridge-fixtures.' >&2
+# Agent mode provisions one owner per project and verifies (or creates) only the
+# marked bridgecheck visitor itself; the Alpha/Beta fixture manifest is not needed.
+if [ ! -f .local/env ]; then
+  echo 'Missing local game configuration. Run ./local/start first.' >&2
   exit 1
 fi
 if [ ! -f .local/client-bridge/engine.swf ] || [ ! -f .local/client-bridge/build.json ]; then
@@ -25,11 +27,9 @@ if [ ! -f .local/ruffle/ruffle.js ]; then
   echo 'Missing Ruffle runtime. Run ./local/start first.' >&2
   exit 1
 fi
-node --input-type=module - <<'CHECK_FIXTURES'
+node --input-type=module - <<'CHECK_OVERLAY'
 import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
-import { validateFixtures } from './local/web/bridge/model.mjs';
-validateFixtures(JSON.parse(readFileSync('.local/bridge-fixtures.json', 'utf8')));
 const build = JSON.parse(readFileSync('.local/client-bridge/build.json', 'utf8'));
 const hash = file => createHash('sha256').update(readFileSync(file)).digest('hex');
 if (build.extensionSha256 !== hash('local/client-bridge/bridge.as') ||
@@ -37,7 +37,7 @@ if (build.extensionSha256 !== hash('local/client-bridge/bridge.as') ||
   console.error('The game menu overlay is out of date. Run python3 local/client-bridge/build.py, then restart.');
   process.exit(1);
 }
-CHECK_FIXTURES
+CHECK_OVERLAY
 curl --fail --silent --show-error --max-time 5 http://localhost:8080/healthz >/dev/null || {
   echo 'The baseline game is not ready on port 8080. Run ./local/start first.' >&2
   exit 1

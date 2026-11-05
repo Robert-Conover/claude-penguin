@@ -28,6 +28,25 @@ class OverlayTests(unittest.TestCase):
         self.assertEqual(struct.unpack_from('<I', changed, 4)[0], len(decoded) + 8)
         self.assertEqual(changed[:4], original[:4])
 
+    def test_long_tags_and_later_frames_are_preserved_with_a_large_extension(self):
+        # A long-form original tag hides ShowFrame-like bytes; only the first
+        # real ShowFrame receives the extension, and later frames stay intact.
+        payload = bytes([0x40, 0x00]) * 50
+        long_action = struct.pack('<HI', (12 << 6) | 63, len(payload)) + payload
+        background = struct.pack('<H', (9 << 6) | 3) + b'\x01\x02\x03'
+        frames = b'\x40\x00' + background + b'\x40\x00' + b'\x00\x00'
+        body = b'\x08\x00\x00\x0c\x02\x00' + background + long_action + frames
+        extension = bytes(range(256)) * 4
+        changed, offset, size = build.overlay(swf(body), extension)
+        decoded = zlib.decompress(changed[8:])
+        self.assertEqual(offset, 6 + len(background) + len(long_action))
+        self.assertEqual(size, 6 + len(extension))
+        self.assertEqual(decoded[:offset] + decoded[offset + size:], body)
+        header, length = struct.unpack_from('<HI', decoded, offset)
+        self.assertEqual((header >> 6, header & 63, length), (12, 63, len(extension)))
+        self.assertEqual(decoded[offset + 6:offset + size], extension)
+        self.assertEqual(decoded[offset + size:], frames)
+
     def test_rejects_incorrect_declared_length(self):
         original = swf(b'\x08\x00\x00\x0c\x01\x00\x40\x00\x00\x00')
         with self.assertRaisesRegex(ValueError, 'length'):

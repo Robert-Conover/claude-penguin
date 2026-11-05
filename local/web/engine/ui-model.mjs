@@ -2,6 +2,7 @@ export const statusLabels = Object.freeze({
   starting: 'Starting', idle: 'Ready for a task', working: 'Working',
   'needs-you': 'Needs you', review: 'Ready for review · turn ended',
   interrupted: 'Interrupted', failed: 'Failed', stopped: 'Stopped', offline: 'Stopped',
+  setup: 'Setting up', 'needs-repair': 'Needs repair',
 });
 
 export const targetKey = target => target ? `${target.projectId}/${target.workerId}` : '';
@@ -24,11 +25,13 @@ export function resolveTarget(snapshot, target) {
   return project && worker ? { project, worker } : null;
 }
 
-export function targetForFixture(snapshot, fixtureId) {
-  const project = snapshot?.projects?.find(item => item.fixtureId === fixtureId);
-  if (!project) return null;
-  const workers = snapshot.workers?.filter(item => item.projectId === project.id) ?? [];
-  return workers.length === 1 ? { projectId: project.id, workerId: workers[0].id } : null;
+// Routes a project UUID to the engine's recorded active worker. When the caller
+// names a worker, it must be that active worker; nothing else is substituted.
+export function targetForProject(snapshot, projectId, workerId = null) {
+  const project = snapshot?.projects?.find(item => item.id === projectId);
+  if (!project?.activeWorkerId || (workerId !== null && workerId !== project.activeWorkerId)) return null;
+  const worker = snapshot.workers?.find(item => item.id === project.activeWorkerId && item.projectId === project.id);
+  return worker ? { projectId: project.id, workerId: worker.id } : null;
 }
 
 export function attentionCount(snapshot) {

@@ -81,7 +81,7 @@ credentials, terminal execution, or arbitrary filesystem endpoints are exposed.
 Ruffle documents [ExternalInterface](https://ruffle.rs/js-docs/master/interfaces/Player.PlayerV1.html#callExternalInterface)
 and [URL rewriting](https://ruffle.rs/js-docs/master/interfaces/Config.BaseLoadOptions.html#urlRewriteRules).
 The game-specific callbacks are derived from the pinned client; see the
-[callback contract](client-bridge/README.md#browser-contract-version-1).
+[callback contract](client-bridge/README.md#browser-contract-version-2).
 
 ## Verify
 
@@ -111,3 +111,52 @@ The required loop is task submission, a real permission prompt, interrupt, diff
 review, and reconnect with the same conversation. Turn end remains distinct from
 verified task completion. More repositories, a neighborhood scene, concurrent
 workers, and isolated worktrees remain later milestones.
+
+## Multi-project game mapping (in progress)
+
+Stage 2 of the multi-project milestone moves agent mode off the fixture manifest.
+The bridge lab on this page is unchanged: it still loads `/bridge/fixtures.json`,
+requires Bridge Alpha and Bridge Beta, and plays explicitly simulated cues.
+
+In agent mode (`?bridge=1&agents=1`), the browser derives game mappings from the
+engine snapshot with `agentMappings()` in the [identity model](web/bridge/model.mjs).
+It uses only:
+
+- the engine's verified `visitor` (`penguinId`, `username`, `verifiedAt`); without
+  one, no mapping is usable and the native HUD stays off;
+- projects whose `game.status` is `ready`. Provisioning, failed, and repair
+  mappings are skipped. A mapping is also rejected if its project ID is not a
+  UUID, its room is not `ownerId + 2000`, its owner is the visitor, or another
+  ready project claims the same owner, igloo, room, or puffle. Every claimant of a
+  shared identity is excluded, and the panel reports how many are hidden.
+
+The project UUID is the mapping identity. Flash receives `{projectId, ownerId,
+puffleId}` per project, and a bounded display card (project and puffle names,
+status, activity, aggregate attention). Paths, worker and session IDs, setup
+detail, and tokens stay in the browser. A verified visitor with zero ready
+projects configures an empty neighborhood. Town travel and the HUD work, and
+**Work** opens the project list.
+
+The panel reconfigures the overlay whenever the ready mapping set changes, for
+example after setup, retry, migration, repair, or an engine reconnect, without a
+page reload. Until the overlay confirms the new configuration generation, igloo
+buttons, puffle clicks, project card actions, and in-flight travel are refused.
+Afterwards, only snapshots and events carrying that generation are accepted.
+
+A puffle click selects that project and its engine-recorded `activeWorkerId`,
+validated against the current owner, room, and rendered puffle. If the project has
+no active worker, the browser card opens for that project only. **Work** opens the
+selected puffle's card, or the project list when nothing is selected. Attention
+counts all active workers; animation plays only for the mapped puffle in the
+current room, from its own worker's state. Travel and closing menus never stop a
+started PTY.
+
+Not in this stage (Stage 3): the game-styled project chooser, Add project form,
+archive view, native card setup, repair, and archived states, per-worker drafts,
+and sharing one selection across the terminal, journal, and changes views. The
+browser card still uses its Stage 1 forms. Without a requested project, its create
+form targets the first project without a puffle. `agent-start` still requires the
+fixture manifest, and the real agent page stays gated, as described in the
+[engine guide](AGENT_ENGINE.md#multi-project-engine-in-progress). The overlay must
+be rebuilt with `python3 local/client-bridge/build.py`, because the browser
+refuses an older contract version. Interactive verification in Ruffle is pending.

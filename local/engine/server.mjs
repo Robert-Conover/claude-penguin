@@ -190,7 +190,14 @@ export function createEngineServer({ manager, publicOrigin = 'http://localhost:8
 }
 
 import { acquireLock } from './lock.mjs';
+import { acquirePublication } from './publication.mjs';
+import { createGameProvisioner } from './game.mjs';
 export { acquireLock };
+
+/** The native igloo publication directory, mounted read-only into the world container. */
+export function publicationDir(env = process.env, root = projectRoot) {
+  return path.resolve(root, env.CP_NATIVE_IGLOOS_DIR || '.local/native-igloos');
+}
 
 /**
  * Stage 1 of the multi-project milestone changes the engine only. The game
@@ -215,16 +222,26 @@ async function main() {
   const publicOrigin = `http://localhost:${port}`;
   const stateDir = previewGate();
   const unlock = await acquireLock(stateDir);
-  let manager;
+  let manager, publisher, provisioner;
   try {
+    // One engine owns the native igloo list across all state directories.
+    publisher = acquirePublication({ dir: publicationDir(), stateDir });
+    provisioner = process.env.CP_ENGINE_GAME_PROVISIONING === 'off' ? null : createGameProvisioner({ root: projectRoot });
     const { createManager } = await import('./manager.mjs');
     let publish = () => {};
-    manager = await createManager({ stateDir, onEvent: event => publish(event), claudePath: process.env.CP_CLAUDE_PATH ?? 'claude', hookBaseUrl: `${publicOrigin}/engine/hooks` });
+    manager = await createManager({ stateDir, onEvent: event => publish(event), claudePath: process.env.CP_CLAUDE_PATH ?? 'claude', hookBaseUrl: `${publicOrigin}/engine/hooks`,
+      game: provisioner, publisher, onWarning: message => console.error(message) });
     const host = createEngineServer({ manager, publicOrigin });
     publish = host.publish;
     const server = host.server;
     await new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, '127.0.0.1', resolve); });
     console.log(`Claude Penguin engine: ${publicOrigin}/?bridge=1&agents=1#/login`);
+    if (provisioner) {
+      // Background: confirm the visitor and every ready mapping still match the game database.
+      manager.verifyGameMappings().then(
+        ({ checked, repair }) => console.log(`Game mappings verified: ${checked - repair} of ${checked} ready${repair ? `; ${repair} need repair` : ''}.`),
+        failure => console.error(`Game mapping verification did not complete: ${failure.message}`));
+    } else console.log('Game provisioning is off (CP_ENGINE_GAME_PROVISIONING=off); new projects stop at game-pending.');
     let closing = false;
     const shutdown = async () => {
       if (closing) return;
@@ -237,6 +254,8 @@ async function main() {
     for (const signal of ['SIGTERM', 'SIGINT']) process.on(signal, shutdown);
   } catch (failure) {
     await manager?.close();
+    provisioner?.close();
+    try { publisher?.close(); } catch (error) { console.error(`Native igloo publication could not be cleared: ${error.message}`); }
     await unlock();
     throw failure;
   }

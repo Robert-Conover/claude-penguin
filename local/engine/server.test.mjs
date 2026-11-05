@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
-import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, readFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
@@ -159,7 +159,8 @@ test('the preview engine starts, holds its lock, and releases it on a clean shut
   const dir = await mkdtemp(path.join(os.tmpdir(), 'penguin-main-'));
   const port = 20000 + Math.floor(Math.random() * 20000);
   const child = spawn(process.execPath, [fileURLToPath(new URL('./server.mjs', import.meta.url))], {
-    env: { ...process.env, CP_ENGINE_PREVIEW: 'engine-v2', CP_ENGINE_STATE_DIR: path.join(dir, 'state'), CP_ENGINE_WORKTREE_ROOT: path.join(dir, 'worktrees'), CP_ENGINE_PORT: String(port) },
+    env: { ...process.env, CP_ENGINE_PREVIEW: 'engine-v2', CP_ENGINE_STATE_DIR: path.join(dir, 'state'), CP_ENGINE_WORKTREE_ROOT: path.join(dir, 'worktrees'), CP_ENGINE_PORT: String(port),
+      CP_NATIVE_IGLOOS_DIR: path.join(dir, 'native-igloos'), CP_ENGINE_GAME_PROVISIONING: 'off' },
     stdio: ['ignore', 'pipe', 'pipe'] });
   try {
     let output = '';
@@ -171,9 +172,12 @@ test('the preview engine starts, holds its lock, and releases it on a clean shut
       child.on('exit', () => { clearTimeout(timer); reject(new Error(`Engine exited: ${output}`)); });
     });
     assert.ok(existsSync(path.join(dir, 'state', 'runtime.lock')));
+    assert.ok(existsSync(path.join(dir, 'native-igloos', 'owner.lock')), 'the engine owns native igloo publication');
     const exit = once(child, 'exit');
     child.kill('SIGINT');
     assert.deepEqual(await exit, [0, null]);
     assert.equal(existsSync(path.join(dir, 'state', 'runtime.lock')), false);
+    assert.equal(existsSync(path.join(dir, 'native-igloos', 'owner.lock')), false, 'a clean shutdown releases publication');
+    assert.deepEqual(JSON.parse(await readFile(path.join(dir, 'native-igloos', 'published.json'), 'utf8')), { version: 1, visitorId: null, igloos: [] });
   } finally { child.kill('SIGKILL'); await rm(dir, { recursive: true, force: true }); }
 });

@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { createGit } from './git-policy.mjs';
+import { ProvisionError } from './game.mjs';
 
 /** A private temp folder (outside any repository) with its own Git global config. */
 export function sandbox(t, prefix = 'penguin-') {
@@ -51,6 +52,56 @@ export class FakePty {
   data(data) { this.dataCallback(data); }
   exit(exitCode = 0) { this.exitCallback({ exitCode }); }
   kill(signal) { this.kills.push(signal); queueMicrotask(() => this.exit()); }
+}
+
+/**
+ * An in-memory stand-in for createGameProvisioner (game.mjs): marked owners,
+ * Houdini's name filter and title-casing, locked igloos, and verification.
+ * `fake.fail[op]` (a function or ProvisionError) injects one failure;
+ * `fake.before[op]` runs a check at call time.
+ */
+export function fakeGame({ visitorId = 107, filtered = ['Badword'] } = {}) {
+  const db = { visitorId, owners: [], nextOwner: 201, nextIgloo: 9, nextPuffle: 31, taken: new Set(), filtered: new Set(filtered.map(name => name.toLowerCase())) };
+  const calls = [];
+  const fake = { db, calls, fail: {}, before: {} };
+  const title = name => name.slice(0, 1).toUpperCase() + name.slice(1).toLowerCase();
+  async function step(op, args) {
+    calls.push([op, args]);
+    await fake.before[op]?.(args);
+    const failure = fake.fail[op];
+    if (failure) { delete fake.fail[op]; throw typeof failure === 'function' ? failure(args) : failure; }
+  }
+  fake.ensureVisitor = async () => { await step('visitor', {}); return { penguinId: db.visitorId, username: 'bridgecheck', created: false }; };
+  fake.ensureOwner = async args => {
+    await step('owner', args);
+    if (db.taken.has(args.username)) throw new ProvisionError('taken', 'USERNAME_TAKEN');
+    let owner = db.owners.find(item => item.marker === args.marker);
+    if (owner && owner.username !== args.username) throw new ProvisionError('marker mismatch', 'MISMATCH');
+    if (!owner) { owner = { ...args, ownerId: db.nextOwner++, iglooId: null, pets: [], locked: true }; db.owners.push(owner); }
+    return { ownerId: owner.ownerId, created: false };
+  };
+  fake.prepareIgloo = async args => {
+    await step('igloo', args);
+    const owner = db.owners.find(item => item.ownerId === args.ownerId && item.username === args.username && item.password === args.password);
+    if (!owner) throw new ProvisionError('The managed credentials logged in as a different penguin.', 'MISMATCH');
+    if (!owner.pets.length) {
+      if (db.filtered.has(args.requestedName.toLowerCase())) throw new ProvisionError(`The game rejected the puffle name "${args.requestedName}".`, 'NAME_REJECTED');
+      owner.pets.push({ id: db.nextPuffle++, name: title(args.requestedName) });
+    }
+    owner.iglooId ??= db.nextIgloo++;
+    return { iglooId: owner.iglooId, roomId: owner.ownerId + 2000, puffleId: owner.pets[0].id, puffleName: owner.pets[0].name };
+  };
+  fake.verifyOwners = async mappings => {
+    await step('verify', mappings);
+    return mappings.map(mapping => {
+      const owner = db.owners.find(item => item.marker === mapping.marker);
+      const ok = Boolean(owner && owner.ownerId === mapping.ownerId && owner.iglooId === mapping.iglooId && owner.locked &&
+        owner.pets.length === 1 && owner.pets[0].id === mapping.puffleId && owner.pets[0].name === mapping.puffleName);
+      return { key: mapping.key, ok, problems: ok ? [] : ['The managed mapping changed.'] };
+    });
+  };
+  fake.close = () => { fake.closed = true; };
+  return fake;
 }
 
 /** Snapshot the parts of a source checkout that engine setup must never change. */

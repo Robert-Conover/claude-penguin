@@ -45,10 +45,15 @@ services:
     image: club-penguin-houdini:local
     build: ../houdini
     entrypoint: [python, /local/houdini_bootstrap.py]
+    environment:
+      CP_NATIVE_IGLOOS_FILE: /native-igloos/published.json
     volumes:
       - ../houdini:/usr/src/houdini:ro
       - ../.local/logs/world:/logs
       - ./houdini_bootstrap.py:/local/houdini_bootstrap.py:ro
+      # The agent engine replaces published.json atomically (a new inode), so
+      # mount the containing directory rather than the file.
+      - ../.local/native-igloos:/native-igloos:ro
     command: [world, -id, '3100', --name, Blizzard, --port, '9875', --lang, en, --redis-address, redis, --database-address, db, --database-username, '${POSTGRES_USER}', --database-name, '${POSTGRES_DB}', --database-password, '${POSTGRES_PASSWORD}', --logging-general, /logs/general.log, --logging-error, /logs/errors.log]
     ports: ['127.0.0.1:9875:9875']
     depends_on:
@@ -116,6 +121,22 @@ services:
     volumes:
       - ..:/project:ro
     entrypoint: [python, /project/local/verify_seed.py]
+    depends_on:
+      db: {condition: service_healthy}
+  # Agent-engine game provisioning. Requests (including generated managed-owner
+  # credentials) arrive as JSON on stdin; only the three scripts it needs are
+  # mounted, so private engine state under .local/ stays out of this container.
+  provision:
+    profiles: [tools]
+    image: club-penguin-houdini:local
+    env_file: ../.local/env
+    environment:
+      POSTGRES_HOST: db
+    volumes:
+      - ./game_provision.py:/provision/game_provision.py:ro
+      - ./game_accounts.py:/provision/game_accounts.py:ro
+      - ./verify_game.py:/provision/verify_game.py:ro
+    entrypoint: [python, /provision/game_provision.py]
     depends_on:
       db: {condition: service_healthy}
 

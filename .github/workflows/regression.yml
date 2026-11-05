@@ -73,6 +73,10 @@ jobs:
         # The real generated-overlay test is expected to skip on a source-only checkout.
         run: python3 -m unittest discover -v -s local/client-bridge -p 'test_*.py'
 
+      - name: Test game provisioning and native igloo adapter host logic
+        # Compiles the vendored upstream handlers from source; no Houdini dependencies or database.
+        run: python3 -m unittest -v local/test_game_provision.py local/test_native_igloos.py
+
       - name: Check whitespace
         # On pull requests HEAD is GitHub's merge commit; compare against its base parent.
         run: git diff --check HEAD^ HEAD
@@ -82,7 +86,8 @@ jobs:
         run: |
           cat >> "$GITHUB_STEP_SUMMARY" <<'EOF'
           These checks use fake Claude PTYs, temporary repositories and worktrees, local HTTP/socket
-          fixtures, client contract doubles, and four synthetic SWF preservation tests.
+          fixtures, client contract doubles, five synthetic SWF preservation tests, and host tests
+          for game provisioning and the native igloo adapter.
           The generated-overlay preservation test skips because this job does not
           download the pinned media archive or build the overlay.
 

@@ -15,11 +15,12 @@ a symlink to the same repository returns the same project. A second distinct
 repository or worker is refused rather than replacing the saved mapping.
 
 > **In-progress branch.** On the multi-project branch, the engine itself has moved to
-> [state v2 with isolated worktrees](#multi-project-engine-in-progress). Game
-> provisioning and browser integration are not finished there, so `server.mjs`
-> refuses to serve the agent page unless you explicitly opt into the engine
-> preview. Everything below describes the released single-puffle milestone on
-> `dev`.
+> [state v2 with isolated worktrees](#multi-project-engine-in-progress) and now
+> provisions [one game owner per project](#game-provisioning-and-native-igloos-stage-2).
+> Browser integration is not finished there, so `server.mjs` refuses to serve the
+> agent page unless you explicitly opt into the engine preview. Everything below,
+> up to the multi-project section, describes the released single-puffle milestone
+> on `dev`.
 
 ## Start
 
@@ -166,6 +167,8 @@ Optional host environment variables:
 | `CP_CLAUDE_PATH` | Claude executable path when `claude` is not on `PATH`. |
 | `CP_ENGINE_WORKTREE_ROOT` | Multi-project engine only: absolute root for new puffle worktrees, default `~/.claude-penguin/worktrees`. |
 | `CP_ENGINE_PREVIEW` | Multi-project engine only: `engine-v2` opts into the engine-only preview with a dedicated `CP_ENGINE_STATE_DIR`. |
+| `CP_NATIVE_IGLOOS_DIR` | Multi-project engine only: native igloo publication directory, default `.local/native-igloos` (the directory the world service mounts). Change it only for tests. |
+| `CP_ENGINE_GAME_PROVISIONING` | Multi-project engine only: `off` disables game provisioning (setup then stops at `game-pending`). For engine-only development and tests. |
 
 The engine validates Host/Origin and uses separate browser and per-run hook
 credentials. Game fixture IDs alone do not authorize terminal control. Logs and
@@ -201,15 +204,19 @@ isolated worktrees, task boards, and integration actions remain later milestones
 
 ## Multi-project engine (in progress)
 
-Stage 1 of the multi-project milestone changes the host engine only. It is
-covered by automated tests and a migration rehearsal on a private copy. Game
-provisioning, the native igloo list, and the chooser, card, and selection
-surfaces come in later stages. Until then, the real agent page is disabled. For
-engine-only development:
+Stage 1 of the multi-project milestone changed the host engine only. It is
+covered by automated tests and a migration rehearsal on a private copy. Stage 2
+adds [game provisioning and the native igloo list](#game-provisioning-and-native-igloos-stage-2);
+the chooser, card, and selection surfaces are still in progress, so the real
+agent page stays disabled. For engine-only development:
 
 ```sh
 CP_ENGINE_PREVIEW=engine-v2 CP_ENGINE_STATE_DIR=.local/engine-preview node local/engine/server.mjs
 ```
+
+`./local/agent-start` passes these variables through. It no longer needs the
+Alpha/Beta fixture manifest (`./local/bridge-fixtures`); it still needs
+`./local/start` and the built overlay.
 
 The preview refuses the default `.local/agent-engine/` directory and never
 migrates saved state implicitly.
@@ -315,3 +322,122 @@ the older engine. Copy, rather than rename, so the backup stays available.
 Worktrees and branches created by the v2 engine stay in place. They are locked,
 and you can remove them manually with `git worktree unlock` and
 `git worktree remove`.
+
+### Game provisioning and native igloos (Stage 2)
+
+The original server addresses an igloo by its owner (`ownerId + 2000`), so
+layouts alone cannot isolate puffles. Each project therefore gets one dedicated,
+engine-managed owner penguin. The bridge-only simulation (Bridge Alpha/Beta,
+`./local/bridge-fixtures`) is separate and unchanged.
+
+**Setup.** After a project's worktree is ready, setup provisions its game
+mapping, then reaches `ready`; it never reaches `ready` with only one part done.
+The project's operation lock covers each step, progress is saved after each one,
+and a failure is retryable without creating a second identity:
+
+1. **Visitor.** The engine verifies, or creates, only the marked `bridgecheck`
+   visitor. It shares the username, marker email, and disposable password source
+   (`CLUB_PENGUIN_TEST_PASSWORD`, default `PenguinLocal2026!`) with the fixture
+   seeder through `local/game_accounts.py`, so either accepts the other's
+   account. The verified ID is saved as `state.visitor`. The engine never logs
+   in as `bridgecheck`, so it cannot disconnect your browser session.
+2. **Owner.** A UUID ownership marker and generated credentials are saved to
+   `<state dir>/game-secrets.json` (mode `0600`) before anything is created. The
+   username is `cp` plus 10 random lowercase letters or digits, within the
+   database's 12-character limit; a username taken by any other account is
+   regenerated and saved before the next attempt. The project name becomes the
+   owner's nickname, approved for English so the igloo list shows it.
+3. **Igloo and puffle.** The engine logs in as that owner through the ordinary
+   login and world servers on loopback. It checks the requested name with
+   `p#checkpufflename`, adopts one blue puffle (`p#pn`), loads the owner's
+   default igloo (`g#gm`), enters it, and confirms the puffle is there. Houdini's
+   name filter and title-casing apply: `nOVA` becomes `Nova`, and the puffle
+   records that server-normalized name. If the game rejects the name (a failed
+   check or error 441), setup fails with `correction: "puffleName"`; retry with
+   a new `puffleName` (1–12 letters).
+4. **Verification.** The provisioning service checks the complete mapping in the
+   database: exactly one account carries the marker, its active layout is the
+   recorded igloo, that igloo is still **locked**, and the owner has exactly the
+   recorded puffle. Only then is the mapping `ready`.
+
+A retry reconciles against the same marker, username, and recorded IDs. Several
+marked accounts, a marker under another username, a different owner ID, extra
+or renamed puffles, a changed layout, or an unlocked igloo stop with status
+`repair`. Nothing is remapped, adopted twice, or deleted. Repair needs a person:
+inspect the game database, then retry. Missing `game-secrets.json` entries for
+an existing owner also stop with `repair` rather than creating another owner.
+At startup the engine re-verifies the visitor and every ready managed mapping in
+one background provisioning run; a mismatch moves that project to `repair`.
+
+The snapshot adds `visitor` (`penguinId`, `username`, `verifiedAt`) and an
+allowlisted `project.game` (`source`, `status`, `ownerId`, `iglooId`, `roomId`,
+`puffleId`, `puffleName`, `fixtureId`, `verifiedAt`). Owner usernames,
+passwords, and markers never appear in `state.json`, snapshots, published
+files, command arguments, or logs. A migrated legacy Atlas keeps its
+`legacy-fixture` mapping (owner 105, igloo 4) and is not reprovisioned.
+
+**Provisioning service.** Database work runs in the `provision` Compose service
+(`local/game_provision.py`, tools profile). The engine runs
+`./local/compose run --rm --no-deps -T provision` with fixed arguments and sends
+one JSON request on stdin (`visitor`, `owner`, or `verify`). The database
+password stays in the container environment, and only the three scripts it needs
+are mounted, so private engine state is not visible to it. The game stack must
+already be running. With `CP_ENGINE_GAME_PROVISIONING=off`, setup stops at
+`game-pending` instead.
+
+**Native publication.** The running engine atomically rewrites
+`.local/native-igloos/published.json` whenever ready mappings or the visitor
+change:
+
+```json
+{ "version": 1, "visitorId": 107, "igloos": [{ "ownerId": 201, "iglooId": 9 }] }
+```
+
+It lists only `ready` mappings from this engine's own state (never
+`provisioning`, `failed`, or `repair`), including a ready legacy Atlas. A clean
+shutdown empties the list. One engine owns publication across all state
+directories through `.local/native-igloos/owner.lock`; a second engine refuses
+to start rather than overwrite it. After a crash, the lock and the last verified
+list remain. That list does **not** mean any agent is running. Recovery follows
+the `runtime.lock` policy: after confirming the old engine and its Claude
+processes have stopped, remove `runtime.lock` and `.local/native-igloos/owner.lock`
+explicitly, then start the engine, which replaces the list. Neither lock is ever
+deleted automatically.
+
+**World adapter.** `compose.yml` mounts the publication directory read-only into
+the world service (a directory, because atomic replacement changes the file's
+inode), and `houdini_bootstrap.py` reads it on demand. The managed igloos stay
+locked in the database. Only for the published visitor:
+
+- `g#gr` (the igloo map's open list) returns the upstream list unchanged, then
+  appends each published owner that is not already listed. Offline owners are
+  read from the database without adding fake online penguins. Nicknames use the
+  same approval rule as `safe_name`, likes come from the existing query and
+  cache, population comes from a loaded room or is zero, and entries are
+  advertised as open (`locked` 0). An owner whose active layout no longer matches
+  the published igloo is skipped.
+- `g#pio` (the player card's "is this igloo open?") answers open for published
+  owners.
+
+Every other penguin, including `player`, gets the upstream handlers unchanged.
+Only the callbacks are replaced, so authorization and cooldown metadata stay on
+the original listeners; startup fails if the pinned handler source changes. A
+missing or invalid file adds nothing and is reported once in the world log.
+After updating, rerun `./local/start` so the world service picks up the new
+mount.
+
+**Verification status.** Engine tests cover the setup lifecycle with a fake
+provisioner, the protocol client against a fake loopback Houdini, the service
+adapter's argument and stdin handling, secrets, and publication ownership. Host
+unit tests cover the provisioning script's logic and the adapter against the
+vendored handler source:
+
+```sh
+npm test --prefix local/engine
+python3 -m unittest local/test_game_provision.py local/test_native_igloos.py
+```
+
+The container regression suite
+(`local/test_houdini_compat.py`), live provisioning against the running stack,
+and in-game igloo map checks still need to be run and recorded in the dated
+validation record.

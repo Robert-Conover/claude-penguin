@@ -1,4 +1,4 @@
-import { statusLabels, targetKey, resolveTarget, targetForFixture, controlsForWorker, nextSnapshotRevision, terminalDimensions } from './ui-model.mjs';
+import { statusLabels, targetKey, resolveTarget, targetForProject, controlsForWorker, nextSnapshotRevision, terminalDimensions } from './ui-model.mjs';
 
 const panel = document.createElement('section');
 panel.id = 'cp-agent-panel';
@@ -52,11 +52,11 @@ panel.innerHTML = `<header class="cp-agent-header"><button id="cp-agent-back" ar
   </div>`;
 document.body.append(panel);
 const el = id => document.getElementById(id);
-let snapshot = { projects: [], workers: [] }, selected = null, requestedFixture = null;
+let snapshot = { projects: [], workers: [] }, selected = null, requestedProject = null;
 let connected = false, token = '', socket, epoch = 0, retryDelay = 500, retryTimer;
 let busy = false, currentView = 'task', term, fit, terminalObserver, terminalReady = false, attachedKey = '', lastSize = '';
-let selectedOnce = false, diffFor = '', initialTerminalError = '';
-let lastRevision = -1, errorKind = '', nativeReturnFixture = null;
+let diffFor = '', initialTerminalError = '';
+let lastRevision = -1, errorKind = '', nativeReturn = null;
 
 function announce() { window.dispatchEvent(new CustomEvent('cp-engine-state', { detail: { connected, snapshot } })); }
 function error(message = '', kind = 'action') {
@@ -65,7 +65,7 @@ function error(message = '', kind = 'action') {
   el('cp-agent-error').textContent = message;
 }
 function visibility(open) {
-  if (!open) nativeReturnFixture = null;
+  if (!open) nativeReturn = null;
   panel.hidden = !open;
   window.dispatchEvent(new CustomEvent('cp-engine-visibility', { detail: { open } }));
   if (open) showView('task');
@@ -79,9 +79,8 @@ function disposeTerminal() {
   el('cp-terminal-host').replaceChildren();
 }
 function select(target) {
-  selectedOnce = true;
   if (targetKey(target) !== targetKey(selected)) {
-    nativeReturnFixture = null;
+    nativeReturn = null;
     terminalReady = false;
     attachedKey = '';
     lastSize = '';
@@ -92,37 +91,39 @@ function select(target) {
     disposeTerminal();
   }
   selected = target;
-  requestedFixture = null;
+  requestedProject = null;
   render();
 }
+// Game routing names a project UUID and, when a puffle was clicked, its worker.
+// There is no fixture lookup and no fallback to another project's worker.
 window.ClaudePenguinEngine = {
-  open(target, view = 'task') { nativeReturnFixture = null; if (target) select(target); visibility(true); showView(view); render(); },
+  open(target, view = 'task') { nativeReturn = null; if (target) select(target); visibility(true); showView(view); render(); },
   toggle() { visibility(panel.hidden); render(); },
   close() { visibility(false); },
-  openForFixture(fixtureId, view = 'task') {
-    nativeReturnFixture = null;
-    requestedFixture = fixtureId;
-    selectedOnce = true;
-    const target = targetForFixture(snapshot, fixtureId);
+  openForProject(projectId, workerId = null, view = 'task') {
+    nativeReturn = null;
+    const target = targetForProject(snapshot, projectId, workerId);
     if (target) select(target);
     else {
       selected = null;
       terminalReady = false;
       attachedKey = '';
       disposeTerminal();
+      // Resolve later only to the same project's active worker, never another one.
+      requestedProject = { projectId, workerId };
     }
     visibility(true);
     showView(view);
     render();
   },
-  async handleNativeAction({ fixtureId, action: actionName, text } = {}) {
-    const target = targetForFixture(snapshot, fixtureId);
+  async handleNativeAction({ projectId, workerId, action: actionName, text } = {}) {
+    const target = targetForProject(snapshot, projectId, workerId ?? null);
     const resolved = resolveTarget(snapshot, target);
     try {
-      if (!target || !resolved) throw new Error('This puffle has no connected session.');
+      if (!workerId || !target || !resolved) throw new Error('This puffle has no connected session.');
       if (actionName === 'terminal' || actionName === 'changes') {
         this.open(target, actionName);
-        nativeReturnFixture = fixtureId;
+        nativeReturn = { ...target };
         return true;
       }
       const controls = controlsForWorker(connected, resolved, true);
@@ -130,12 +131,12 @@ window.ClaudePenguinEngine = {
       await action(actionName, { ...target, ...(actionName === 'submit' ? { text } : {}) });
       return true;
     } catch (problem) {
-      this.openForFixture(fixtureId);
+      this.openForProject(projectId, workerId ?? null);
       error(problem.message);
       return false;
     }
   },
-  openView(view, target) { nativeReturnFixture = null; if (target) select(target); visibility(true); showView(view); render(); },
+  openView(view, target) { nativeReturn = null; if (target) select(target); visibility(true); showView(view); render(); },
   getState() { return { connected, snapshot }; },
 };
 el('cp-agent-close').onclick = () => visibility(false);
@@ -199,18 +200,25 @@ function applySnapshot(next) {
   if (revision === null) return;
   lastRevision = revision;
   snapshot = next;
-  if (!selectedOnce && snapshot.workers.length === 1) {
-    const worker = snapshot.workers[0];
-    selected = { projectId: worker.projectId, workerId: worker.id };
-    selectedOnce = true;
-  }
-  if (requestedFixture && !selected) {
-    const target = targetForFixture(snapshot, requestedFixture);
+  // No implicit selection: Work without a selected puffle shows the list.
+  if (requestedProject && !selected) {
+    const target = targetForProject(snapshot, requestedProject.projectId, requestedProject.workerId);
     if (target) select(target);
   }
   if (selected && !resolveTarget(snapshot, selected)) { terminalReady = false; attachedKey = ''; }
   render();
   announce();
+}
+// The create form targets the explicitly requested project when it has no
+// active puffle. The broader Stage 1 fallback (first project without a puffle)
+// applies only when no project was requested; Stage 3 replaces this form.
+function createProject() {
+  const withoutWorker = project => !snapshot.workers.some(item => item.projectId === project.id);
+  if (requestedProject) {
+    const requested = snapshot.projects.find(project => project.id === requestedProject.projectId);
+    return requested && !requestedProject.workerId && withoutWorker(requested) ? requested : null;
+  }
+  return snapshot.projects.find(withoutWorker) ?? null;
 }
 function render() {
   const resolved = resolveTarget(snapshot, selected);
@@ -232,14 +240,14 @@ function render() {
     list.append(button);
   }
   list.hidden = Boolean(resolved) && snapshot.workers.length <= 1 || snapshot.workers.length === 0;
-  const projectWithoutWorker = snapshot.projects.find(project => !snapshot.workers.some(item => item.projectId === project.id));
-  const fixtureUnavailable = requestedFixture && requestedFixture !== 'bridge-alpha' && !targetForFixture(snapshot, requestedFixture);
+  const projectWithoutWorker = createProject();
+  const projectUnavailable = Boolean(requestedProject) && !projectWithoutWorker;
   const missing = selected && !resolved;
-  el('cp-agent-missing').hidden = !missing && !fixtureUnavailable;
-  el('cp-agent-missing').textContent = missing ? 'This selected project or session is unavailable. Choose an existing puffle explicitly to continue.' : 'This puffle has no connected session. The first version connects Atlas in Bridge Alpha.';
-  el('cp-register-form').hidden = snapshot.projects.length > 0 || Boolean(fixtureUnavailable);
-  el('cp-create-form').hidden = !projectWithoutWorker || Boolean(fixtureUnavailable) || Boolean(missing);
-  if (projectWithoutWorker) el('cp-create-project').textContent = `${projectWithoutWorker.name} · ${projectWithoutWorker.path}`;
+  el('cp-agent-missing').hidden = !missing && !projectUnavailable;
+  el('cp-agent-missing').textContent = missing ? 'This selected project or session is unavailable. Choose an existing puffle explicitly to continue.' : 'This igloo\'s puffle session is unavailable. Choose an existing puffle explicitly to continue.';
+  el('cp-register-form').hidden = snapshot.projects.length > 0 || projectUnavailable;
+  el('cp-create-form').hidden = !projectWithoutWorker || projectUnavailable || Boolean(missing);
+  if (projectWithoutWorker) el('cp-create-project').textContent = `${projectWithoutWorker.name} · ${projectWithoutWorker.sourcePath}`;
   panel.querySelectorAll('#cp-register-form button, #cp-create-form button').forEach(button => { button.disabled = !connected || busy; });
   el('cp-session').hidden = !resolved;
   el('cp-agent-start').disabled = !controls.start || busy;
@@ -258,7 +266,7 @@ function render() {
   el('cp-agent-home').textContent = resolved.project.name;
   el('cp-agent-runtime-activity').textContent = worker.activity || worker.detail || '';
   el('cp-agent-activity').textContent = !connected ? 'Reconnect to give your puffle a task.' : !worker.running ? 'Start your puffle when you are ready.' : ({ starting: 'Waking up… Open Claude for any setup questions.', idle: 'Ready for your next idea!', working: 'On the job! You can keep exploring.', 'needs-you': 'Your puffle needs you. Open Claude to answer.', review: 'A turn has ended. Check Claude and review the changes.', interrupted: 'The turn was interrupted. Check Claude before continuing.', failed: 'Something went wrong. Open Claude to take a look.' })[worker.status] ?? 'Open Claude to see what is happening.';
-  el('cp-agent-project').textContent = `${resolved.project.name} · ${resolved.project.path}`;
+  el('cp-agent-project').textContent = `${resolved.project.name} · ${resolved.project.sourcePath}`;
   el('cp-agent-session-id').textContent = `Session ${worker.sessionId}`;
   el('cp-agent-start').textContent = worker.established ? 'Resume session' : 'Start session';
   el('cp-terminal-status').textContent = initialTerminalError || (!connected ? 'Disconnected. Displayed terminal output may be stale.' : !terminalReady ? 'Attaching to the session terminal…' : !worker.running ? 'Session process is stopped. Start or resume to continue.' : worker.status === 'needs-you' ? 'Claude needs a response. Use the terminal below.' : 'Connected to the live session terminal.');
@@ -306,12 +314,12 @@ el('cp-agent-stop').onclick = () => run('stop');
 el('cp-register-form').onsubmit = async event => {
   event.preventDefault();
   try {
-    await action('register', { path: el('cp-repo-path').value.trim(), name: el('cp-project-name').value.trim(), fixtureId: 'bridge-alpha' });
+    await action('register', { path: el('cp-repo-path').value.trim(), name: el('cp-project-name').value.trim() });
   } catch (problem) { error(problem.message); }
 };
 el('cp-create-form').onsubmit = async event => {
   event.preventDefault();
-  const project = snapshot.projects.find(item => !snapshot.workers.some(worker => worker.projectId === item.id));
+  const project = createProject();
   if (!project) return error('The selected repository is no longer available.');
   try {
     const result = await action('create', { projectId: project.id, name: el('cp-worker-name').value.trim() });
@@ -369,16 +377,16 @@ function showView(view) {
   if (view === 'changes' && diffFor !== targetKey(selected)) refreshDiff();
 }
 el('cp-agent-back').onclick = () => {
-  const fixtureId = nativeReturnFixture;
-  if (!fixtureId) return showView('task');
+  const target = nativeReturn;
+  if (!target) return showView('task');
   visibility(false);
-  const event = new CustomEvent('cp-engine-native-return', { detail: { fixtureId }, cancelable: true });
+  const event = new CustomEvent('cp-engine-native-return', { detail: { ...target }, cancelable: true });
   window.dispatchEvent(event);
   // A missing or unready game bridge leaves the ordinary task card available.
-  if (!event.defaultPrevented) window.ClaudePenguinEngine.openForFixture(fixtureId);
+  if (!event.defaultPrevented) window.ClaudePenguinEngine.openForProject(target.projectId, target.workerId);
 };
 for (const view of ['task', 'terminal', 'changes', 'history']) el(`cp-tab-${view}`).onclick = () => {
-  if (view === 'task' && nativeReturnFixture) return el('cp-agent-back').onclick();
+  if (view === 'task' && nativeReturn) return el('cp-agent-back').onclick();
   showView(view);
 };
 

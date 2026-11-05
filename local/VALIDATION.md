@@ -355,3 +355,64 @@ Not verified in this stage: real Claude tasks in worktrees, folder-trust prompts
 in a new worktree, where persistent permission approvals are written, game
 provisioning, the native igloo list, browser UI, and GitHub-hosted CI on this
 branch. Evidence is in the ignored `.local/stage1-engine-2026-11-04/`.
+
+## Multi-project game mapping, Stage 2 — November 4, 2026
+
+**Provisioning, publication, the visitor-only Houdini adapter, and the browser
+mapping model pass automated checks, and one project was provisioned against the
+running stack. Nothing in this stage ran in Ruffle, and the real agent page is
+still disabled.** Same host as Stage 1, with Homebrew OpenJDK 27.0.1 for the
+overlay build and the `club-penguin` Colima profile started with `./local/start`
+(existing `localcheck` and `player` accounts reported unchanged).
+
+Automated checks on the combined tree:
+
+- Engine: 77 tests passed. These are the 57 Stage 1 tests plus 11 game protocol
+  and provisioner, 8 setup-lifecycle, and 1 cross-boundary contract test. The
+  contract test feeds a real engine snapshot (with a fake provisioner) into the
+  browser's `agentMappings` and `flashConfiguration`. It confirms they and
+  `published.json` list the same ready igloos, and that no path, session ID,
+  owner username, password, or marker reaches the browser mapping or Flash.
+- Web/UI: 21 passed. Client contract: 14 passed. Python host tests for
+  provisioning and the adapter: 10 passed. Launcher syntax checks passed, as
+  did `./local/compose config --quiet`.
+- `python3 local/client-bridge/build.py` compiled the version-2 `bridge.as` with
+  JPEXS, and all 6 SWF tests passed, including the generated-overlay byte
+  preservation test (overlay SHA-256 `f1d346fc…`).
+- Houdini container regressions: 11 passed (`test_houdini_compat.py`, including
+  7 new adapter tests). On world startup the adapter installed, which means the
+  AST check of the pinned `g#gr` and `g#pio` handlers matched the real image.
+- `./local/verify` passed against the running stack.
+- The migration command test failed on a checkout without `.local/` (as on CI)
+  because `migrate.mjs` resolved that folder unconditionally. It now resolves it
+  only when present, and the test passes in a tree without `.local/`.
+
+Live provisioning (scratch state and worktree folders outside the checkout;
+evidence script and output in `.local/stage2-game-2026-11-04/`):
+
+- One disposable repository registered as `stage2-live` reached `ready`. The
+  engine verified `bridgecheck` as game ID 107 without logging in as it, created
+  managed owner 108, adopted the blue puffle "Pebble" (puffle 6) in owner igloo
+  6, entered room 2108, and the provisioning service's database check passed.
+  `published.json` listed exactly `{ownerId: 108, iglooId: 6}` for visitor 107
+  while the engine ran, and was emptied on clean shutdown.
+- A second run on the same state reused owner 108, re-verified it, and created
+  nothing new.
+- Logged in as the dedicated `localcheck` account (102) while the publication was
+  live, `g#gr` listed no managed igloo and `g#pio` for owner 108 returned `0`,
+  so non-visitors keep upstream behavior.
+- The first attempt placed the worktree root inside the checkout; the engine
+  refused it, as designed. That attempt's process exited while holding
+  `owner.lock`; its PID was confirmed dead and the lock removed by hand,
+  following the documented recovery.
+
+The game database now permanently contains managed owner 108 (`cp…` username,
+marker email under `managed.claude-penguin.invalid`) with puffle 6. It is a
+disposable verification identity; `player` was not used.
+
+Not verified in this stage: the visitor's in-game igloo map and player card
+(they require a `bridgecheck` session in the browser), anything in Ruffle (the
+reconfigurable overlay, UUID click routing, travel and animation with real
+clips), a puffle name rejected live by Houdini (error 441 and the failed name
+check are covered only by fakes), real Claude tasks in worktrees, and
+GitHub-hosted CI on this branch.

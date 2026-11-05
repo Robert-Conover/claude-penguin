@@ -19,7 +19,10 @@ const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '
 export async function migrate({ stateDir, rehearsal = false, at } = {}) {
   if (typeof stateDir !== 'string' || !path.isAbsolute(stateDir)) throw new Error('Pass --state-dir with an absolute path.');
   const real = fs.realpathSync.native(stateDir);
-  if (!rehearsal || inside(fs.realpathSync.native(path.join(projectRoot, '.local')), real) || inside(fs.realpathSync.native(projectRoot), real)) {
+  // .local/ may be absent (a fresh checkout) or a symlink elsewhere; resolve it only when present.
+  const localDir = path.join(projectRoot, '.local');
+  const protectedDirs = [projectRoot, ...(fs.existsSync(localDir) ? [localDir] : [])].map(dir => fs.realpathSync.native(dir));
+  if (!rehearsal || protectedDirs.some(dir => inside(dir, real))) {
     throw new Error('This milestone migrates only private rehearsal copies outside the checkout (pass --rehearsal). Real state migration is enabled with the archive and replacement controls.');
   }
   const unlock = await acquireLock(real);

@@ -6,6 +6,9 @@ import * as nodePty from '@lydell/node-pty';
 import headless from '@xterm/headless';
 import serialize from '@xterm/addon-serialize';
 import { readState, writeState, writePrivateJson } from './state.mjs';
+import { ProvisionError, VISITOR_USERNAME } from './game.mjs';
+import { generateUsername, newOwnerCredentials, readSecrets, writeSecrets } from './game-secrets.mjs';
+import { publicationFor } from './publication.mjs';
 import { assertGitVersion, assertReadPolicy, createGit, ensureEmptyHooksDir } from './git-policy.mjs';
 import {
   MAX_PROJECTS, createWorktree, defaultProjectName, identifyRepository, inside, inspectWorkspace, prepareWorktreeRoot,
@@ -54,6 +57,9 @@ function secretMatches(expected, supplied) {
 }
 
 const positiveId = value => Number.isSafeInteger(value) && value > 0;
+const GAME_SOURCES = ['managed', 'legacy-fixture'];
+const GAME_STATUSES = ['provisioning', 'ready', 'failed', 'repair'];
+const USERNAME_ATTEMPTS = 5;
 const absolute = value => typeof value === 'string' && path.isAbsolute(value);
 
 function validateSaved(state) {
@@ -64,7 +70,15 @@ function validateSaved(state) {
     projectIds.add(project.id);
     if (projectNameProblem(project.name)) invalid(`project ${project.id} has an invalid name.`);
     if (!absolute(project.sourcePath) || (project.commonDir !== null && !absolute(project.commonDir))) invalid(`project ${project.id} has an invalid repository path.`);
-    if (project.game !== null && (typeof project.game !== 'object' || !['ownerId', 'iglooId', 'roomId', 'puffleId'].every(key => positiveId(project.game[key])))) invalid(`project ${project.id} has an invalid game mapping.`);
+    if (project.game !== null) {
+      const game = project.game;
+      const ids = ['ownerId', 'iglooId', 'roomId', 'puffleId'];
+      if (typeof game !== 'object' || !GAME_SOURCES.includes(game.source) || !GAME_STATUSES.includes(game.status)) invalid(`project ${project.id} has an invalid game mapping.`);
+      // A ready or legacy mapping is complete; a managed mapping in progress may lack IDs it has not reached yet.
+      const complete = game.status === 'ready' || game.source === 'legacy-fixture';
+      if (!ids.every(key => positiveId(game[key]) || (!complete && (game[key] ?? null) === null))) invalid(`project ${project.id} has an invalid game mapping.`);
+      if (positiveId(game.ownerId) && positiveId(game.roomId) && game.roomId !== game.ownerId + 2000) invalid(`project ${project.id} has an invalid igloo room address.`);
+    }
     if (project.activeWorkerId !== null && !UUID.test(project.activeWorkerId)) invalid(`project ${project.id} has an invalid worker reference.`);
     if (!project.setup || typeof project.setup !== 'object') invalid(`project ${project.id} has no setup record.`);
   }
@@ -86,6 +100,15 @@ function validateSaved(state) {
     if (active.length > 1) invalid(`project ${project.id} has more than one active puffle.`);
     if ((project.activeWorkerId ?? null) !== (active[0]?.id ?? null)) invalid(`project ${project.id} does not reference its active puffle.`);
   }
+  const visitor = state.visitor;
+  if (visitor !== null && (typeof visitor !== 'object' || !positiveId(visitor.penguinId) || visitor.username !== VISITOR_USERNAME)) invalid('the visitor record is invalid.');
+  const owners = new Set(visitor ? [visitor.penguinId] : []);
+  for (const project of state.projects) {
+    const ownerId = project.game?.ownerId;
+    if (!positiveId(ownerId)) continue;
+    if (owners.has(ownerId)) invalid(`project ${project.id} shares its game owner with the visitor or another project.`);
+    owners.add(ownerId);
+  }
 }
 
 /**
@@ -94,7 +117,11 @@ function validateSaved(state) {
  * persistent engine worktree and never falls back to the source checkout.
  */
 export async function createManager({ stateDir, onEvent = () => {}, claudePath = 'claude', ptySpawn = nodePty.spawn, hookBaseUrl,
-  startupTimeoutMs = 12000, worktreeRoot = resolveWorktreeRoot(), gitEnv = {}, gitVersionText } = {}) {
+  startupTimeoutMs = 12000, worktreeRoot = resolveWorktreeRoot(), gitEnv = {}, gitVersionText,
+  game = null, publisher = null, onWarning = () => {} } = {}) {
+  // `game` is the injectable provisioner (createGameProvisioner in game.mjs, or a
+  // test fake). Without it, setup stops at game-pending. `publisher` is the
+  // native igloo publication owned by this engine (publication.mjs).
   if (typeof stateDir !== 'string' || !path.isAbsolute(stateDir)) fail('An absolute private state directory is required.');
   const hookUrl = new URL(hookBaseUrl);
   if (hookUrl.protocol !== 'http:' || !['localhost', '127.0.0.1', '[::1]'].includes(hookUrl.hostname)) fail('Hooks must use a loopback HTTP address.');
@@ -122,9 +149,10 @@ export async function createManager({ stateDir, onEvent = () => {}, claudePath =
       // Legacy projects learn their repository identity once their source is reachable.
       try { project.commonDir = (await identifyRepository(git, project.sourcePath)).commonDir; } catch { /* Stay unresolved; registration then cannot deduplicate it. */ }
     }
+    if (project.game?.source === 'managed' && project.game.status === 'provisioning') project.game.status = 'failed';
     if (project.setup.phase === 'preparing') {
       project.setup = { ...project.setup, phase: 'failed', retryable: true, updatedAt: startedAt,
-        error: 'Setup stopped when the engine stopped. Retry to reconcile the reserved worktree; nothing was removed.' };
+        error: 'Setup stopped when the engine stopped. Retry to reconcile the reserved worktree and game identities; nothing was removed.' };
     }
   }
   for (const worker of state.workers) {
@@ -169,11 +197,12 @@ export async function createManager({ stateDir, onEvent = () => {}, claudePath =
   // ------------------------------------------------------------ views (allowlisted)
 
   function projectView(project) {
-    const game = project.game ? Object.fromEntries(['source', 'status', 'fixtureId', 'ownerId', 'iglooId', 'roomId', 'puffleId', 'puffleName']
+    // Allowlisted: game usernames, passwords, and ownership markers never leave the host engine.
+    const mapping = project.game ? Object.fromEntries(['source', 'status', 'ownerId', 'iglooId', 'roomId', 'puffleId', 'puffleName', 'fixtureId', 'verifiedAt']
       .map(key => [key, project.game[key] ?? null])) : null;
-    const setup = Object.fromEntries(['phase', 'step', 'error', 'note', 'retryable', 'updatedAt'].map(key => [key, project.setup[key] ?? null]));
+    const setup = Object.fromEntries(['phase', 'step', 'error', 'note', 'retryable', 'correction', 'updatedAt'].map(key => [key, project.setup[key] ?? null]));
     return { id: project.id, name: project.name, sourcePath: project.sourcePath, sourceAvailable: fs.existsSync(project.sourcePath),
-      createdAt: project.createdAt, legacy: Boolean(project.legacy), setup, game, activeWorkerId: project.activeWorkerId ?? null };
+      createdAt: project.createdAt, legacy: Boolean(project.legacy), setup, game: mapping, activeWorkerId: project.activeWorkerId ?? null };
   }
   function workerView(worker) {
     const runtime = runtimes.get(worker.id);
@@ -190,15 +219,27 @@ export async function createManager({ stateDir, onEvent = () => {}, claudePath =
       resumeCommand: worker.established ? `cd ${shellQuote(worker.workspace.path)} && claude --resume ${worker.sessionId}` : null };
   }
   function snapshot() {
-    return { revision: state.revision, limits: { maxProjects: MAX_PROJECTS }, worktreeRoot,
+    const visitor = state.visitor ? { penguinId: state.visitor.penguinId, username: state.visitor.username, verifiedAt: state.visitor.verifiedAt ?? null } : null;
+    return { revision: state.revision, limits: { maxProjects: MAX_PROJECTS }, worktreeRoot, visitor,
       projects: state.projects.map(projectView),
       workers: state.workers.filter(worker => !worker.archived).map(workerView),
       archivedWorkers: state.workers.filter(worker => worker.archived).map(archivedView) };
   }
   function notify(event) { try { onEvent(event); } catch { /* A disconnected UI must not stop the agent. */ } }
+  let publicationProblem = null;
+  let publisherClosed = false;
+  /** Rewrites the native igloo publication when ready mappings or the visitor change. */
+  function publish() {
+    if (!publisher || publisherClosed) return;
+    try { publisher.update(publicationFor(state)); publicationProblem = null; }
+    catch (error) {
+      if (publicationProblem !== error.message) { publicationProblem = error.message; onWarning(`Native igloo publication failed: ${error.message}`); }
+    }
+  }
   function commit() {
     state.revision++;
     writeState(stateDir, state);
+    publish();
     notify({ type: 'snapshot', snapshot: snapshot() });
   }
   function update(worker, status, activity) {
@@ -277,29 +318,192 @@ export async function createManager({ stateDir, onEvent = () => {}, claudePath =
     commit();
   }
 
-  async function runSetup(project, worker) {
+  async function prepareWorkspace(project, worker) {
     const workspace = worker.workspace;
+    setSetup(project, { phase: 'preparing', step: 'Creating the worktree.', error: null, retryable: false, correction: null });
+    await createWorktree(git, { sourcePath: project.sourcePath, workspacePath: workspace.path, branch: workspace.branch,
+      baseline: workspace.baseCommit, workerId: worker.id, onProgress: step => setSetup(project, { step }) });
+    await assertReadPolicy(git, workspace.path, [workspace.baseCommit]);
+    const inspection = await inspectWorkspace(git, project, workspace);
+    if (inspection.repair) throw Object.assign(new Error(inspection.repair), { statusCode: 409 });
+    workspace.state = 'ready';
+    workspace.readyAt = now();
+    worker.inspection = { repair: null, warnings: inspection.warnings, checkedAt: now() };
+    worker.status = 'offline';
+    worker.activity = 'Ready to start this named conversation.';
+    worker.updatedAt = now();
+    setSetup(project, { step: 'Worktree ready.' });
+  }
+
+  /**
+   * Setup runs in separate, individually retryable parts: workspace
+   * preparation, then game provisioning. It reaches `ready` only when both are.
+   */
+  async function runSetup(project, worker) {
     try {
       assertOpen();
-      setSetup(project, { phase: 'preparing', step: 'Creating the worktree.', error: null, retryable: false });
-      await createWorktree(git, { sourcePath: project.sourcePath, workspacePath: workspace.path, branch: workspace.branch,
-        baseline: workspace.baseCommit, workerId: worker.id, onProgress: step => setSetup(project, { step }) });
-      await assertReadPolicy(git, workspace.path, [workspace.baseCommit]);
-      const inspection = await inspectWorkspace(git, project, workspace);
-      if (inspection.repair) throw Object.assign(new Error(inspection.repair), { statusCode: 409 });
-      workspace.state = 'ready';
-      workspace.readyAt = now();
-      worker.inspection = { repair: null, warnings: inspection.warnings, checkedAt: now() };
-      worker.status = 'offline';
-      worker.activity = 'Ready to start this named conversation.';
-      worker.updatedAt = now();
-      setSetup(project, { phase: project.game ? 'ready' : 'game-pending', step: project.game ? null : 'Worktree ready. Game provisioning is not part of this engine milestone.', error: null, retryable: false });
+      if (worker.workspace.state !== 'ready') await prepareWorkspace(project, worker);
     } catch (error) {
       worker.status = 'setup';
       worker.activity = 'Worktree setup failed. Retry after resolving the problem.';
       worker.updatedAt = now();
-      setSetup(project, { phase: 'failed', step: null, error: String(error.message).slice(0, 1000), retryable: true });
+      setSetup(project, { phase: 'failed', step: null, error: String(error.message).slice(0, 1000), retryable: true, correction: null });
+      return;
     }
+    if (project.game?.status === 'ready') { setSetup(project, { phase: 'ready', step: null, error: null, retryable: false, correction: null }); return; }
+    if (!game) {
+      setSetup(project, { phase: 'game-pending', step: 'Worktree ready. Game provisioning is not configured for this engine.', error: null, retryable: false, correction: null });
+      return;
+    }
+    try {
+      await provisionGame(project, worker);
+      setSetup(project, { phase: 'ready', step: null, error: null, retryable: false, correction: null });
+    } catch (error) {
+      if (closing && !(error instanceof ProvisionError)) return;
+      const message = String(error.message).slice(0, 1000);
+      if (project.game?.source === 'managed') {
+        project.game.status = error.code === 'MISMATCH' ? 'repair' : 'failed';
+        project.game.nameRejected = error.code === 'NAME_REJECTED' && !project.game.puffleId;
+      }
+      setSetup(project, { phase: 'failed', step: null, error: message, retryable: true, correction: error.code === 'NAME_REJECTED' ? 'puffleName' : null });
+    }
+  }
+
+  // ------------------------------------------------------------ game provisioning
+
+  let visitorRun = null;
+  let visitorVerified = false;
+  /** Verify or create only the marked shared visitor; the engine never logs in as it. */
+  function ensureVisitor({ force = false } = {}) {
+    if (!game) return Promise.reject(new ProvisionError('Game provisioning is not configured for this engine.', 'UNAVAILABLE'));
+    if (visitorVerified && !force && state.visitor) return Promise.resolve(state.visitor);
+    visitorRun ??= (async () => {
+      const visitor = await game.ensureVisitor();
+      if (!positiveId(visitor?.penguinId) || visitor.username !== VISITOR_USERNAME) throw new ProvisionError('The provisioner returned an unexpected visitor identity.', 'MISMATCH');
+      if (state.visitor && state.visitor.penguinId !== visitor.penguinId) {
+        throw new ProvisionError(`The ${VISITOR_USERNAME} visitor now has game ID ${visitor.penguinId}, not the recorded ${state.visitor.penguinId}. Refusing to remap it; repair the visitor record explicitly.`, 'MISMATCH');
+      }
+      if (state.projects.some(project => project.game?.ownerId === visitor.penguinId)) throw new ProvisionError('The visitor account is also a project owner.', 'MISMATCH');
+      assertOpen();
+      state.visitor = { penguinId: visitor.penguinId, username: visitor.username, verifiedAt: now() };
+      visitorVerified = true;
+      commit();
+      return state.visitor;
+    })().finally(() => { visitorRun = null; });
+    return visitorRun;
+  }
+
+  function saveCredentials(projectId, credentials) {
+    const secrets = readSecrets(stateDir);
+    secrets.owners[projectId] = credentials;
+    writeSecrets(stateDir, secrets);
+  }
+
+  /** Provision or reconcile one project's dedicated owner, locked igloo, and adopted puffle. */
+  async function provisionGame(project, worker) {
+    const step = text => setSetup(project, { phase: 'preparing', step: text, error: null, retryable: false, correction: null });
+    const mismatch = message => new ProvisionError(message, 'MISMATCH');
+    step('Checking the island visitor.');
+    await ensureVisitor();
+    assertOpen();
+    if (project.game && project.game.source !== 'managed') throw mismatch('This legacy fixture mapping is not ready and is never reprovisioned automatically.');
+    let credentials = readSecrets(stateDir).owners[project.id];
+    if (!credentials) {
+      if (project.game?.ownerId) throw mismatch('This project\'s managed-owner credentials are missing from game-secrets.json. Restore that file; a second owner will not be created.');
+      // The marker and credentials are durable before anything is created.
+      credentials = newOwnerCredentials(now());
+      saveCredentials(project.id, credentials);
+    }
+    if (!project.game) {
+      project.game = { source: 'managed', status: 'provisioning', ownerId: null, iglooId: null, roomId: null, puffleId: null, puffleName: null,
+        fixtureId: null, verifiedAt: null, requestedPuffleName: worker.name, nameRejected: false };
+    } else {
+      project.game.status = 'provisioning';
+      project.game.requestedPuffleName ??= worker.name;
+    }
+    const mapping = project.game;
+    step('Preparing the project owner penguin.');
+
+    let owner;
+    for (let attempt = 1; ; attempt++) {
+      try {
+        owner = await game.ensureOwner({ marker: credentials.marker, username: credentials.username, password: credentials.password, nickname: project.name });
+        break;
+      } catch (error) {
+        if (error.code !== 'USERNAME_TAKEN') throw error;
+        if (mapping.ownerId) throw mismatch('The managed owner\'s username now belongs to another account. Nothing was changed; repair the game mapping explicitly.');
+        if (attempt >= USERNAME_ATTEMPTS) throw new ProvisionError('Could not find an unused managed-owner username.');
+        credentials = { ...credentials, username: generateUsername() };
+        saveCredentials(project.id, credentials);
+      }
+    }
+    assertOpen();
+    if (!positiveId(owner?.ownerId)) throw new ProvisionError('The provisioner returned an invalid owner ID.');
+    if (mapping.ownerId && mapping.ownerId !== owner.ownerId) throw mismatch(`The managed owner is now game ID ${owner.ownerId}, not the recorded ${mapping.ownerId}. Nothing was remapped; repair the game mapping explicitly.`);
+    if (owner.ownerId === state.visitor?.penguinId || state.projects.some(other => other !== project && other.game?.ownerId === owner.ownerId)) throw mismatch('The managed owner is already mapped to the visitor or another project.');
+    mapping.ownerId = owner.ownerId;
+    step(`Adopting ${mapping.puffleName ?? mapping.requestedPuffleName} in the project igloo.`);
+
+    const igloo = await game.prepareIgloo({ username: credentials.username, password: credentials.password, ownerId: mapping.ownerId,
+      requestedName: mapping.requestedPuffleName, recorded: { iglooId: mapping.iglooId, puffleId: mapping.puffleId, puffleName: mapping.puffleName } });
+    assertOpen();
+    if (!['iglooId', 'roomId', 'puffleId'].every(key => positiveId(igloo?.[key])) || typeof igloo.puffleName !== 'string') throw new ProvisionError('The game session returned an incomplete igloo mapping.');
+    if (igloo.roomId !== mapping.ownerId + 2000) throw mismatch('The game entered a room that does not belong to the managed owner.');
+    for (const key of ['iglooId', 'puffleId', 'puffleName']) {
+      if (mapping[key] !== null && mapping[key] !== igloo[key]) throw mismatch(`The managed ${key === 'iglooId' ? 'igloo' : 'puffle'} no longer matches the recorded mapping. Nothing was remapped; repair it explicitly.`);
+    }
+    // Record the server-normalized adopted name (Houdini title-cases it).
+    try { validatePuffleName(igloo.puffleName); } catch { throw new ProvisionError('The game returned a puffle name the engine cannot use.'); }
+    Object.assign(mapping, { iglooId: igloo.iglooId, roomId: igloo.roomId, puffleId: igloo.puffleId, puffleName: igloo.puffleName, nameRejected: false });
+    if (worker.name !== igloo.puffleName) { worker.name = igloo.puffleName; worker.updatedAt = now(); }
+    step('Verifying the owner, igloo, room, and puffle mapping.');
+
+    const [result] = await game.verifyOwners([{ key: project.id, marker: credentials.marker, username: credentials.username,
+      ownerId: mapping.ownerId, iglooId: mapping.iglooId, puffleId: mapping.puffleId, puffleName: mapping.puffleName }]);
+    assertOpen();
+    if (!result?.ok || result.key !== project.id) throw mismatch(`The game mapping did not verify: ${(result?.problems ?? ['no result']).join(' ')}`);
+    mapping.status = 'ready';
+    mapping.verifiedAt = now();
+  }
+
+  /**
+   * Re-verify the visitor and every ready managed mapping (one batched
+   * provisioning run). A mismatch marks the mapping for repair and removes it
+   * from publication; an unavailable stack leaves the last verified state.
+   */
+  async function verifyGameMappings() {
+    if (!game) return { checked: 0, repair: 0 };
+    assertOpen();
+    await ensureVisitor({ force: true });
+    const secrets = readSecrets(stateDir);
+    const ready = state.projects.filter(project => project.game?.source === 'managed' && project.game.status === 'ready');
+    const markRepair = (project, message) => withProjectLock(project.id, async () => {
+      if (project.game?.status !== 'ready') return;
+      project.game.status = 'repair';
+      setSetup(project, { phase: 'failed', step: null, error: message, retryable: true, correction: null });
+    });
+    let repair = 0;
+    const checks = [];
+    for (const project of ready) {
+      const credentials = secrets.owners[project.id];
+      if (!credentials) { repair++; await markRepair(project, 'This project\'s managed-owner credentials are missing from game-secrets.json. Restore that file.'); continue; }
+      const { ownerId, iglooId, puffleId, puffleName } = project.game;
+      checks.push({ project, expected: { ownerId, iglooId, puffleId, puffleName },
+        mapping: { key: project.id, marker: credentials.marker, username: credentials.username, ownerId, iglooId, puffleId, puffleName } });
+    }
+    const results = await game.verifyOwners(checks.map(check => check.mapping));
+    assertOpen();
+    for (const check of checks) {
+      const result = results.find(item => item.key === check.project.id);
+      const unchanged = () => Object.entries(check.expected).every(([key, value]) => check.project.game?.[key] === value);
+      if (result?.ok) {
+        await withProjectLock(check.project.id, async () => { if (unchanged() && check.project.game.status === 'ready') { check.project.game.verifiedAt = now(); commit(); } });
+      } else {
+        repair++;
+        if (unchanged()) await markRepair(check.project, `The game mapping no longer verifies: ${(result?.problems ?? ['no result']).join(' ')}`);
+      }
+    }
+    return { checked: checks.length, repair };
   }
 
   async function createWorker({ projectId, name } = {}) {
@@ -337,14 +541,27 @@ export async function createManager({ stateDir, onEvent = () => {}, claudePath =
     return workerView(created);
   }
 
-  async function retrySetup({ projectId } = {}) {
+  /**
+   * Explicit retry of whichever setup part failed. After the game rejected the
+   * puffle name (and before any adoption), `puffleName` supplies a correction.
+   */
+  async function retrySetup({ projectId, puffleName } = {}) {
     assertOpen();
     const project = projectFor(projectId);
     let worker;
     await withProjectLock(project.id, async () => {
       if (project.setup.phase !== 'failed') fail('Setup is not waiting for a retry.', 409);
       worker = state.workers.find(item => item.id === project.activeWorkerId);
-      if (!worker || worker.workspace.state !== 'reserved') fail('No reserved worktree is waiting for setup.', 409);
+      if (!worker || (worker.workspace.state !== 'reserved' && project.game?.status === 'ready')) fail('No reserved worktree is waiting for setup.', 409);
+      if (puffleName !== undefined && puffleName !== '') {
+        const corrected = validatePuffleName(puffleName);
+        if (!project.game?.nameRejected || project.game.puffleId) fail('The puffle name can be changed only after the game rejected it, before adoption.', 409);
+        project.game.requestedPuffleName = corrected;
+        project.game.nameRejected = false;
+        worker.name = corrected;
+        worker.updatedAt = now();
+        commit();
+      }
     });
     withProjectLock(project.id, () => runSetup(project, worker));
     return projectView(project);
@@ -668,8 +885,14 @@ export async function createManager({ stateDir, onEvent = () => {}, claudePath =
       await runtime?.terminalQueue;
       runtime?.term?.dispose();
     }
+    game?.close?.();
+    // Clean shutdown empties the published list before releasing ownership.
+    publisherClosed = true;
+    try { publisher?.close(state.visitor?.penguinId ?? null); }
+    catch (error) { onWarning(`Native igloo publication could not be cleared: ${error.message}`); }
   }
 
   commit();
-  return { registerProject, createWorker, retrySetup, settled, start, submit, input, resize, interrupt, stop, diff, snapshot, terminal, hook, close };
+  return { registerProject, createWorker, retrySetup, settled, start, submit, input, resize, interrupt, stop, diff, snapshot, terminal, hook, close,
+    ensureVisitor, verifyGameMappings };
 }
