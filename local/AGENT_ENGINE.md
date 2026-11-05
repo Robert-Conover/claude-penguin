@@ -255,10 +255,11 @@ igloo does not terminate a running Claude process.
   is a nested repository also warns (`nestedRepository: true`). That lookup runs
   in the background, so the first event from such a folder may not warn yet.
   Hook events up to 1 MiB are accepted. Worktrees isolate checkouts and indexes, not
-  filesystem access, and Claude keeps manual permissions. Claude documents that permanent
-  repository approvals resolve through worktrees to the main checkout's
-  `.claude/settings.local.json`. See [Claude permissions](https://code.claude.com/docs/en/permissions)
-  and the dated [local observations](VALIDATION.md).
+  filesystem access, and Claude keeps manual permissions. Choosing **Yes, and don't
+  ask again** in a puffle's worktree can write a rule to the source checkout's
+  `.claude/settings.local.json`. We observed this with a Bash rule in Claude
+  Code 2.1.317. See [Claude permissions](https://code.claude.com/docs/en/permissions)
+  and the [local validation record](VALIDATION.md).
 - **Review.** Review shows cumulative committed and uncommitted changes since
   the immutable baseline, previews of untracked files (symlinks, hard-linked
   files, and other non-regular files are skipped; the untracked list stops at

@@ -604,6 +604,7 @@
       "live retry on prepared failed setup keeps identity and visitor login",
       "two independent concurrent manual Claude sessions",
       "worktree folder trust and one-time Write approvals",
+      "resumed Nova and saved the Bash(openssl dgst *) rule through its terminal",
       "Town travel and aggregate attention",
       "native interrupt, inspected terminal and successful retry",
       "changes review and journal",
@@ -621,6 +622,14 @@
       "state_default": ".local/agent-engine",
       "engine_and_stack_stopped": true
     },
+    "lighthouse_permission_followup": {
+      "command": "openssl dgst -sha256 nova.txt",
+      "saved_rule": "Bash(openssl dgst *)",
+      "source_settings_created": ".claude/settings.local.json",
+      "worktree_settings_created": false,
+      "checksum_matches_recorded_file": true,
+      "source_HEAD_index_tracked_files_match": true
+    },
     "migration": {
       "real_state": ".local/agent-engine-demo",
       "previous_revision": 79,
@@ -632,9 +641,8 @@
     },
     "remaining": [
       "Live name rejection unavailable with zero eligible filter words",
-      "Persistent Claude approval location unobserved; no rule saved",
       "Individual real-agent animation frames not visually verified",
-      "GitHub-hosted CI not run on this unpushed branch"
+      "GitHub-hosted CI was outside the initial local acceptance run"
     ],
     "evidence": ".local/stage3-evidence/"
   }

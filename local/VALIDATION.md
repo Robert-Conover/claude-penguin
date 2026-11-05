@@ -596,6 +596,14 @@ a pushed branch and is outside this handoff.
   All three managed projects’ source HEADs, index bytes and tracked-file hashes
   matched the pre-registration fingerprints. No acceptance source gained a
   `.claude/settings.local.json` during these checks.
+- In a follow-up on November 5, resumed Nova and ran
+  `openssl dgst -sha256 nova.txt`. With explicit approval, selected **Yes, and
+  don't ask again** for `openssl dgst *`. Neither Lighthouse checkout had a
+  local settings file beforehand. Claude created `.claude/settings.local.json`
+  in the **source checkout** with the single allow rule `Bash(openssl dgst *)`.
+  The worktree had no local settings file afterward. The checksum matched
+  the recorded hash of Nova's file. All acceptance source HEADs, index bytes
+  and tracked-file hashes matched their values before the follow-up.
 - The visitor traveled between igloos and to Town during concurrent work.
   **Work (2)** reflected both requests for attention. Interrupting Nova from
   the native card left **Needs your help** pending confirmation. Claude's
@@ -639,9 +647,6 @@ available through **Create isolated Atlas**.
 - The local database contained zero filter words matching a valid ASCII
   puffle name. Houdini accepted the candidate `Badword`. Name rejection,
   adoption error 441 and name correction were exercised with doubles.
-- The live terminals used one-time approvals. Claude offered a persistent
-  `openssl dgst *` rule in Lighthouse. It was left unset; where this version
-  actually writes a saved rule was not observed.
 - Room-specific cue routing and the overlay's animation calls passed the
   contract tests. The live run verified attention, card state and travel;
   individual real-agent animation frames were not visually identified.
@@ -650,6 +655,7 @@ Private evidence is under `.local/stage3-evidence/`, including the suite
 logs, `native-igloo-list.jpg`, `live-projects.jpg`, `comet-permission.jpg`,
 `town-attention.jpg`, `nova-changes.jpg`, `interrupted-terminal.jpg`,
 `resumed-comet.jpg`, `after-live-retry.jpg`, `real-atlas-archive.jpg`,
-`worktree-files.json`, before/after source, process, player and migration
+`worktree-files.json`, `lighthouse-rule-result.jpg`,
+`lighthouse-rule-{before,after}.json`, before/after source, process, player and migration
 fingerprints, and the stack shutdown log. The test engines were stopped
 cleanly, the publication emptied, and `./local/stop` preserved the volumes.
