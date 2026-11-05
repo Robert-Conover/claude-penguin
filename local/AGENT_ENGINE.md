@@ -14,6 +14,13 @@ UUID, separate from the fixture ID, and a canonical repository path. Registering
 a symlink to the same repository returns the same project. A second distinct
 repository or worker is refused rather than replacing the saved mapping.
 
+> **In-progress branch.** On the multi-project branch, the engine itself has moved to
+> [state v2 with isolated worktrees](#multi-project-engine-in-progress). Game
+> provisioning and browser integration are not finished there, so `server.mjs`
+> refuses to serve the agent page unless you explicitly opt into the engine
+> preview. Everything below describes the released single-puffle milestone on
+> `dev`.
+
 ## Start
 
 Install Node 22 or newer, npm, and
@@ -157,6 +164,8 @@ Optional host environment variables:
 | `CP_ENGINE_STATE_DIR` | Dedicated state directory; relative values resolve from the repository root. Changing it selects separate engine state, not an automatic migration. |
 | `CP_ENGINE_PORT` | Loopback port, default `8081`. Use the URL printed by the launcher. |
 | `CP_CLAUDE_PATH` | Claude executable path when `claude` is not on `PATH`. |
+| `CP_ENGINE_WORKTREE_ROOT` | Multi-project engine only: absolute root for new puffle worktrees, default `~/.claude-penguin/worktrees`. |
+| `CP_ENGINE_PREVIEW` | Multi-project engine only: `engine-v2` opts into the engine-only preview with a dedicated `CP_ENGINE_STATE_DIR`. |
 
 The engine validates Host/Origin and uses separate browser and per-run hook
 credentials. Game fixture IDs alone do not authorize terminal control. Logs and
@@ -189,3 +198,120 @@ terminal rather than replacing its interaction model.
 
 Multiple project igloos, neighborhood/map changes, concurrent workers with
 isolated worktrees, task boards, and integration actions remain later milestones.
+
+## Multi-project engine (in progress)
+
+Stage 1 of the multi-project milestone changes the host engine only. It is
+covered by automated tests and a migration rehearsal on a private copy. Game
+provisioning, the native igloo list, and the chooser, card, and selection
+surfaces come in later stages. Until then, the real agent page is disabled. For
+engine-only development:
+
+```sh
+CP_ENGINE_PREVIEW=engine-v2 CP_ENGINE_STATE_DIR=.local/engine-preview node local/engine/server.mjs
+```
+
+The preview refuses the default `.local/agent-engine/` directory and never
+migrates saved state implicitly.
+
+What the engine now does:
+
+- **Projects.** It registers up to 32 existing, non-bare Git repositories, each
+  with at least one commit. Projects are deduplicated by canonical Git common
+  directory, so a symlink or linked worktree resolves to the existing project,
+  while unrelated repositories with the same folder name stay separate. The
+  first registered checkout remains the display path. Names are 1–30 ASCII
+  letters, digits, single spaces, `-`, `_`, or `.`, and must begin and end with
+  a letter or digit. The engine rejects names such as `100%`, `A|B`, or `a:b`.
+  The default name is a sanitized repository basename, or `Project`.
+- **Puffles.** Each project has one active puffle named with 1–12 letters. The
+  first defaults to Atlas, and later defaults avoid names already in use. Every
+  action takes an explicit project ID and worker ID. There is no fallback to the
+  first project or worker.
+- **Worktrees.** Each puffle gets one persistent, locked worktree at
+  `~/.claude-penguin/worktrees/<worker-id>/<repo-folder>`, on branch
+  `claude-penguin/<project-id>/<worker-id>`. `CP_ENGINE_WORKTREE_ROOT` (absolute;
+  spaces allowed) changes the root for future puffles only. The engine refuses a
+  root inside any Git repository, so worktrees never inherit Claude Penguin's
+  instructions, and creates new folders with mode `0700`. The worktree starts at
+  the source checkout's exact `HEAD`. Staged, unstaged, untracked, and ignored
+  files stay in the source checkout and are not copied; setup notes when the
+  source was dirty. The path, branch, and baseline are saved before Git runs.
+  Setup runs in the background and records its progress, and a failure offers an
+  explicit retry. A retry adopts only resources that exactly match the saved
+  reservation. Anything conflicting is reported and never deleted or adopted.
+- **Offline Git.** The engine requires Git 2.48 or newer and checks the version
+  at startup. All engine-owned Git calls use argument arrays, bounded output, and
+  per-operation timeouts. They run with an empty private `core.hooksPath`, no
+  fsmonitor, no submodule recursion, no transports, and with
+  `GIT_NO_LAZY_FETCH=1`, `GIT_LFS_SKIP_SMUDGE=1`, and `GIT_TERMINAL_PROMPT=0` set.
+  Before checkout, every baseline path is checked with
+  `git check-attr --source=<baseline> --stdin -z filter`, which also covers
+  repository and user attribute files. Any custom `clean`, `smudge`, or `process`
+  command is refused before it can run. Only the standard installed Git LFS
+  driver is allowed, so LFS files stay pointers; run `git lfs pull` inside the
+  worktree yourself if you need their contents. Repository-local `includeIf` is
+  refused. Conditional includes elsewhere that set filter or attribute
+  configuration fail with an explanation. Before engine-owned status and diff
+  reads, the configuration is checked again, and the current attributes are
+  re-inspected whenever a custom driver is configured. Missing partial-clone
+  objects fail without being fetched. The engine never fetches, installs
+  dependencies, initializes submodules, copies credentials, stashes, commits, or
+  removes worktrees.
+- **Validation.** Before start, resume, task submission, and review, the worktree
+  must still exist, have the same Git top level and common directory, appear in
+  `git worktree list`, and still contain the baseline commit. Otherwise the
+  puffle shows **Needs repair**, and the engine never falls back to the source
+  checkout. A different branch, detached `HEAD`, an unlocked worktree, or
+  history that no longer descends from the baseline produces a warning but still
+  allows work.
+- **Sessions and hooks.** Each puffle runs its own PTY in its worktree, and
+  puffles in different projects can run at the same time. Hooks are
+  authenticated with the per-run token and saved session UUID, so one puffle's
+  token cannot drive another puffle. A startup or resume reported outside the
+  recorded worktree root stops that PTY. Compaction in the same session, for
+  example after `cd src`, counts as ongoing. Authenticated events from outside
+  the worktree are still processed so permission prompts stay visible; they set
+  an outside-workspace warning. Worktrees isolate checkouts and indexes, not
+  filesystem access, and Claude keeps manual permissions. Where Claude Code
+  stores persistent permission approvals (the worktree's or the source
+  checkout's `.claude/settings.local.json`) has not been verified yet; live
+  acceptance will check and report it.
+- **Review.** Review shows cumulative committed and uncommitted changes since
+  the immutable baseline, symlink-safe previews of untracked files, the source
+  and worktree paths, the current and expected branches, the merge base (or a
+  note that histories share none), the dirty state, and any warnings. External
+  Git operations do not reset the baseline. Stop the session before changing the
+  branch outside Claude Penguin.
+
+### State v2, migration, and rollback
+
+State v2 holds multiple projects, one active worker per project, and archived
+workers. The engine refuses version 1 state and never migrates it implicitly.
+Older engine code refuses version 2. The explicit command:
+
+```sh
+node local/engine/migrate.mjs --state-dir <copy> --rehearsal
+```
+
+takes the runtime lock and fails closed if a saved engine or worker process may
+still be alive or a stale `runtime.lock` remains. It writes the original bytes
+to `state.v1-backup-<timestamp>.json` with mode `0600`, never overwriting an
+existing backup, and then replaces `state.json` atomically. The old Atlas
+worker is archived with its IDs, Claude session UUID, task history, original
+folder, and baseline. Execution controls are disabled, and the archive shows
+`cd '<original folder>' && claude --resume <session>` for manual use. The
+project UUID and Atlas game mapping are kept as a ready `legacy-fixture`
+mapping. Creating a new puffle on that project starts a separate isolated Atlas
+with a new conversation. The old conversation and its uncommitted files are not
+moved. If the source checkout is missing, migration still succeeds: the project
+shows as source-unavailable, and its history stays readable.
+
+In this stage the command migrates only rehearsal copies outside the checkout.
+Real Atlas state is migrated once the archive and replacement controls exist.
+
+To roll back, stop the engine, then copy the backup over `state.json` and run
+the older engine. Copy, rather than rename, so the backup stays available.
+Worktrees and branches created by the v2 engine stay in place. They are locked,
+and you can remove them manually with `git worktree unlock` and
+`git worktree remove`.

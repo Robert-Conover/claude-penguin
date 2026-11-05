@@ -1,10 +1,9 @@
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { readFile, mkdir, open, rm } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { WebSocketServer, WebSocket } from 'ws';
 import { createLocalServer } from '../web/server.mjs';
-import { validateFixtures } from '../web/bridge/model.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(here, '../..');
@@ -47,7 +46,7 @@ export function createEngineServer({ manager, publicOrigin = 'http://localhost:8
   const clients = new Set();
   const wsServer = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024, perMessageDeflate: false });
   const actions = new Map([
-    ['register', 'registerProject'], ['create', 'createWorker'], ['start', 'start'],
+    ['register', 'registerProject'], ['create', 'createWorker'], ['retry', 'retrySetup'], ['start', 'start'],
     ['submit', 'submit'], ['input', 'input'], ['resize', 'resize'],
     ['interrupt', 'interrupt'], ['stop', 'stop'], ['diff', 'diff'],
   ]);
@@ -190,46 +189,37 @@ export function createEngineServer({ manager, publicOrigin = 'http://localhost:8
   return { server, publish, close };
 }
 
-export async function acquireLock(stateDir) {
-  await mkdir(stateDir, { recursive: true, mode: 0o700 });
-  const lockPath = path.join(stateDir, 'runtime.lock');
-  const nonce = randomBytes(16).toString('hex');
-  for (let attempt = 0; attempt < 2; attempt++) {
-    try {
-      const file = await open(lockPath, 'wx', 0o600);
-      await file.writeFile(JSON.stringify({ pid: process.pid, nonce }));
-      await file.close();
-      return async () => {
-        const current = JSON.parse(await readFile(lockPath, 'utf8'));
-        if (current.nonce === nonce) await rm(lockPath);
-      };
-    } catch (failure) {
-      if (failure.code !== 'EEXIST') throw failure;
-      let previous;
-      try { previous = JSON.parse(await readFile(lockPath, 'utf8')); }
-      catch { throw error(`Engine lock is unreadable: ${lockPath}. Inspect the previous runtime before removing it.`); }
-      if (!Number.isSafeInteger(previous.pid) || previous.pid <= 0) throw error('Invalid engine lock; inspect it before restarting.');
-      try { process.kill(previous.pid, 0); throw error(`An engine may already be running (PID ${previous.pid}).`); }
-      catch (probe) { if (probe.code !== 'ESRCH') throw probe; }
-      throw error(`A stale engine lock remains at ${lockPath}. Confirm the old runtime and its Claude processes have stopped, then remove this lock explicitly before restarting.`);
-    }
+import { acquireLock } from './lock.mjs';
+export { acquireLock };
+
+/**
+ * Stage 1 of the multi-project milestone changes the engine only. The game
+ * mappings and browser surfaces that consume it arrive in later stages, so the
+ * real agent page stays disabled unless a developer opts in with dedicated state.
+ */
+export function previewGate(env = process.env, root = projectRoot) {
+  const defaultDir = path.join(root, '.local/agent-engine');
+  if (env.CP_ENGINE_PREVIEW !== 'engine-v2') {
+    throw error('This checkout contains the in-progress multi-project engine (state v2, isolated worktrees). Its game and browser integration are incomplete, so the agent page is disabled here. Use the dev branch for the playable single-puffle milestone, or set CP_ENGINE_PREVIEW=engine-v2 with a dedicated CP_ENGINE_STATE_DIR for engine-only development.');
   }
-  throw error('Could not acquire the engine lock.');
+  if (!env.CP_ENGINE_STATE_DIR) throw error('CP_ENGINE_PREVIEW requires a dedicated CP_ENGINE_STATE_DIR so existing agent state is never opened by the preview engine.');
+  const stateDir = path.resolve(root, env.CP_ENGINE_STATE_DIR);
+  if (stateDir === defaultDir) throw error('Choose a CP_ENGINE_STATE_DIR other than the default .local/agent-engine for the preview engine.');
+  return stateDir;
 }
 
 async function main() {
-  if (process.platform !== 'darwin' && process.platform !== 'linux') throw error('This first engine supports macOS and Linux hosts.');
+  if (process.platform !== 'darwin' && process.platform !== 'linux') throw error('This engine supports macOS and Linux hosts.');
   const port = Number(process.env.CP_ENGINE_PORT ?? 8081);
   if (!Number.isInteger(port) || port < 1024 || port > 65535) throw error('Invalid CP_ENGINE_PORT.');
   const publicOrigin = `http://localhost:${port}`;
-  const fixtures = validateFixtures(JSON.parse(await readFile(path.join(projectRoot, '.local/bridge-fixtures.json'), 'utf8')));
-  const stateDir = process.env.CP_ENGINE_STATE_DIR ? path.resolve(process.env.CP_ENGINE_STATE_DIR) : path.join(projectRoot, '.local/agent-engine');
+  const stateDir = previewGate();
   const unlock = await acquireLock(stateDir);
   let manager;
   try {
     const { createManager } = await import('./manager.mjs');
     let publish = () => {};
-    manager = await createManager({ stateDir, fixtures, onEvent: event => publish(event), claudePath: process.env.CP_CLAUDE_PATH ?? 'claude', hookBaseUrl: `${publicOrigin}/engine/hooks` });
+    manager = await createManager({ stateDir, onEvent: event => publish(event), claudePath: process.env.CP_CLAUDE_PATH ?? 'claude', hookBaseUrl: `${publicOrigin}/engine/hooks` });
     const host = createEngineServer({ manager, publicOrigin });
     publish = host.publish;
     const server = host.server;

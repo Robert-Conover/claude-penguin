@@ -6,7 +6,10 @@ import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
 import { WebSocket } from 'ws';
-import { createEngineServer, acquireLock } from './server.mjs';
+import { spawn } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { createEngineServer, acquireLock, previewGate } from './server.mjs';
 
 async function fixture(manager, options = {}) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'penguin-engine-http-'));
@@ -55,9 +58,9 @@ test('engine rejects cross-origin, rebinding, missing authentication, and non-JS
     }
     assert.equal((await request('/engine/action', { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: '{"action":"register"}' })).status, 415);
     assert.equal((await request('/engine/action', { method: 'POST', body: '{"action":"__proto__"}' })).status, 400);
-    assert.equal((await request('/engine/action', { method: 'POST', body: JSON.stringify({ action: 'register', path: '/tmp/fixture', name: 'Fixture', fixtureId: 'bridge-alpha' }) })).status, 200);
+    assert.equal((await request('/engine/action', { method: 'POST', body: JSON.stringify({ action: 'register', path: '/tmp/fixture', name: 'Fixture' }) })).status, 200);
     assert.equal(called.length, 1);
-    assert.equal(called[0].fixtureId, 'bridge-alpha');
+    assert.equal(called[0].path, '/tmp/fixture');
     assert.equal((await request('/engine/hooks', { method: 'POST', body: '{}' })).status, 403);
     const hook = await requestHTTP(f.address + '/engine/hooks', { method: 'POST', headers: { Host: 'localhost:8081', Authorization: `Bearer ${f.token}`, 'Content-Type': 'application/json' }, body: '{}' });
     assert.equal(hook.status, 403, 'browser token cannot authorize a hook');
@@ -142,4 +145,35 @@ test('runtime lock prevents two engines from owning the same state directory', a
     await assert.rejects(acquireLock(dir), /stale engine lock/);
     await assert.rejects(acquireLock(dir), /stale engine lock/);
   } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+test('the real agent runtime stays disabled until a developer opts into dedicated preview state', () => {
+  const root = '/repo';
+  assert.throws(() => previewGate({}, root), /agent page is disabled here/);
+  assert.throws(() => previewGate({ CP_ENGINE_PREVIEW: 'engine-v2' }, root), /dedicated CP_ENGINE_STATE_DIR/);
+  assert.throws(() => previewGate({ CP_ENGINE_PREVIEW: 'engine-v2', CP_ENGINE_STATE_DIR: '.local/agent-engine' }, root), /other than the default/);
+  assert.equal(previewGate({ CP_ENGINE_PREVIEW: 'engine-v2', CP_ENGINE_STATE_DIR: '.local/engine-preview' }, root), '/repo/.local/engine-preview');
+});
+
+test('the preview engine starts, holds its lock, and releases it on a clean shutdown', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'penguin-main-'));
+  const port = 20000 + Math.floor(Math.random() * 20000);
+  const child = spawn(process.execPath, [fileURLToPath(new URL('./server.mjs', import.meta.url))], {
+    env: { ...process.env, CP_ENGINE_PREVIEW: 'engine-v2', CP_ENGINE_STATE_DIR: path.join(dir, 'state'), CP_ENGINE_WORKTREE_ROOT: path.join(dir, 'worktrees'), CP_ENGINE_PORT: String(port) },
+    stdio: ['ignore', 'pipe', 'pipe'] });
+  try {
+    let output = '';
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error(`Engine did not start: ${output}`)), 10000);
+      const read = chunk => { output += chunk; if (output.includes(`http://localhost:${port}/`)) { clearTimeout(timer); resolve(); } };
+      child.stdout.on('data', read);
+      child.stderr.on('data', read);
+      child.on('exit', () => { clearTimeout(timer); reject(new Error(`Engine exited: ${output}`)); });
+    });
+    assert.ok(existsSync(path.join(dir, 'state', 'runtime.lock')));
+    const exit = once(child, 'exit');
+    child.kill('SIGINT');
+    assert.deepEqual(await exit, [0, null]);
+    assert.equal(existsSync(path.join(dir, 'state', 'runtime.lock')), false);
+  } finally { child.kill('SIGKILL'); await rm(dir, { recursive: true, force: true }); }
 });

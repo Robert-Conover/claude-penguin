@@ -287,3 +287,71 @@ host engine remain available; the test Claude process is stopped with its saved
 session and actual changes preserved. Remaining acceptance: the native browser
 loop after browser access is enabled, automatic interrupt confirmation on this
 CLI, running-tool cancellation, animation coverage, and minigame coexistence.
+
+## Multi-project engine, Stage 1 — November 4, 2026
+
+**Engine changes pass automated validation, and migration was rehearsed on a
+private copy. Live Claude, game, and browser acceptance are not part of this
+stage.** The host was macOS with Git 2.54.0 (Apple Git-157), git-lfs 3.8.1, and
+Node 26.13.0. On this branch the real agent page is disabled. `server.mjs` serves
+it only with `CP_ENGINE_PREVIEW=engine-v2` and a dedicated, non-default state
+directory.
+
+Automated checks:
+
+- Engine: 57 tests passed (`npm test --prefix local/engine`): 11 Git policy, 7
+  workspace, 6 state/migration, 27 manager, and 6 server tests. They use
+  temporary repositories, isolated Git global configuration, real `git worktree`
+  operations, and fake PTYs.
+- Web/UI: 11 passed. Client contract: 9 passed. Synthetic SWF preservation: 5
+  passed. Launcher syntax checks passed.
+- Coverage includes multiple repositories, equal basenames, symlink and
+  linked-worktree deduplication, the 32-project limit, and explicit-ID routing
+  with no fallback. It includes worktree placement, sanitized leaf names, a root
+  containing spaces, refusal of a root inside Git, and unchanged source files,
+  index, and `HEAD` with staged, unstaged, untracked, and ignored edits present.
+  Git policy cases cover refused custom `clean`, `smudge`, and `process` filters
+  (a sentinel file proves none ran), a fake driver named `lfs`, user attribute
+  files, local and conditional `includeIf`, inactive `post-checkout` hooks, a
+  partial clone failing with "lazy fetching disabled", real Git LFS 3.8.1 leaving
+  pointers, locked worktrees, and the 2.48 version floor. Recovery cases cover
+  setup failure and retry with no duplicate branch or worktree, reconciliation
+  after a simulated crash, and concurrent or duplicate creation. Workspace cases
+  cover missing, replaced, and pruned worktrees, an unavailable baseline,
+  branch/detached/unlocked/unrelated-history warnings, and review against the
+  baseline. Hook cases cover cross-worker tokens, startup and resume outside the
+  worktree, `cd src` followed by compaction, attention outside the workspace, and
+  session mismatch. Ported PR #5 interruption regressions also pass. Migration
+  cases cover byte preservation, a missing source, archived execution refusal,
+  the retained mapping, and an isolated Atlas replacement.
+- A preview-engine HTTP smoke test registered a disposable repository whose path
+  contains a space, created a puffle, and reached a ready, locked worktree on
+  its `claude-penguin/<project>/<worker>` branch. Review data came back, and the
+  engine released its lock on SIGINT. It also exposed a missing local binding
+  for `acquireLock` in `server.mjs`. That bug is fixed and covered by a new
+  start/stop test.
+
+Migration rehearsal (copy of `.local/agent-engine-demo/` in a private folder
+outside the checkout):
+
+- The copy kept the real stale `runtime.lock`, so migration first refused with
+  the stale-lock message. PID 9967 was confirmed not running and the saved worker
+  PID was `null`. The lock was then removed from the copy only.
+- Migration produced v2 state. The backup is byte-identical to the original
+  4,481-byte file, mode `0600`. The project UUID `e7c554c7-…` and its
+  owner/igloo/room/puffle mapping 105/4/2105/4 are kept as `legacy-fixture`.
+  Atlas is archived with session `c6b60407-…`, all 7 tasks, original folder
+  `/private/tmp/claude-penguin-session-a_k41ydy`, baseline `dc4eefb…`, and a
+  manual resume command.
+- The previous engine's `readState` (from f86a615) rejects the migrated file.
+  Loading the copy in the v2 engine showed the archived worker, and start,
+  submit, and review returned 409.
+- SHA-256 hashes of the real `.local/agent-engine-demo/` files match before and
+  after, and the source repository gained no branch or worktree. The real state
+  remains version 1. Its source repository lives under `/private/tmp`, which
+  macOS may clean, so migration's missing-source path is likely to be needed.
+
+Not verified in this stage: real Claude tasks in worktrees, folder-trust prompts
+in a new worktree, where persistent permission approvals are written, game
+provisioning, the native igloo list, browser UI, and GitHub-hosted CI on this
+branch. Evidence is in the ignored `.local/stage1-engine-2026-11-04/`.

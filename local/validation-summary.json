@@ -362,5 +362,48 @@
     "evidence_directory": ".local/acceptance-2026-11-03/",
     "handoff": "Host engine on 8081; test Claude stopped; same saved session and generated changes retained",
     "idle_interrupt_no_op_live": true
+  },
+  "multi_project_engine_stage1": {
+    "date": "2026-11-04",
+    "status": "engine_automated_validation_passed_live_acceptance_pending",
+    "runtime_gate": "agent page disabled unless CP_ENGINE_PREVIEW=engine-v2 with a dedicated non-default CP_ENGINE_STATE_DIR",
+    "git_version": "2.54.0 (Apple Git-157)",
+    "git_lfs_version": "3.8.1",
+    "node_version": "26.13.0",
+    "regression_tests": {
+      "engine": 57,
+      "web_and_ui": 11,
+      "client_contract": 9,
+      "swf_preservation": 5
+    },
+    "preview_http_smoke": {
+      "passed": true,
+      "bug_found_and_fixed": "server.mjs main() lacked a local acquireLock binding"
+    },
+    "migration_rehearsal": {
+      "on_private_copy": true,
+      "stale_lock_refused_first": true,
+      "backup_byte_identical": true,
+      "backup_mode": "0600",
+      "previous_engine_rejects_v2": true,
+      "archived_execution_rejected": true,
+      "legacy_mapping": {
+        "ownerId": 105,
+        "iglooId": 4,
+        "roomId": 2105,
+        "puffleId": 4
+      },
+      "real_state_unchanged": true,
+      "real_state_version": 1
+    },
+    "remaining": [
+      "Real Claude tasks in isolated worktrees",
+      "Folder-trust prompt in a new worktree",
+      "Where persistent permission approvals are written",
+      "Game provisioning and native igloo publication (Stage 2)",
+      "Chooser, cards, selection, drafts, and browser acceptance (Stage 3)",
+      "Real Atlas migration (Stage 3)",
+      "GitHub-hosted CI run for this branch"
+    ]
   }
 }
