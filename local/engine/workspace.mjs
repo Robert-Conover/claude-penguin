@@ -8,6 +8,7 @@ import { GitError, PolicyError, TIMEOUTS, assertReadPolicy, inspectBaseline, spl
 export const MAX_PROJECTS = 32;
 const MAX_DIFF = 200000;
 const MAX_UNTRACKED = 20;
+const MAX_UNTRACKED_LIST = 1024 * 1024;
 const MAX_FILE = 32000;
 const PUFFLE_SUGGESTIONS = ['Atlas', 'Comet', 'Nova', 'Pixel', 'Juniper', 'Echo', 'Maple', 'Orbit', 'Pebble', 'Biscuit', 'Clover', 'Marble',
   'Sprocket', 'Willow', 'Domino', 'Rocket', 'Sunny', 'Quill', 'Basil', 'Indigo', 'Fable', 'Tango', 'Ziggy', 'Bramble', 'Puddle', 'Cosmo',
@@ -97,11 +98,19 @@ export function resolveWorktreeRoot(value = process.env.CP_ENGINE_WORKTREE_ROOT,
   return path.resolve(value);
 }
 
+// Only Git's own "not a git repository" result means outside. Anything else
+// (a stale or malformed .git file, dubious ownership) cannot be classified, so
+// the root is refused. Discovery crosses filesystems so a mount point does not
+// end the search early.
 async function enclosingRepository(git, dir) {
   let probe = dir;
   while (!fs.existsSync(probe)) probe = path.dirname(probe);
-  const result = await git.raw(probe, ['rev-parse', '--path-format=absolute', '--git-dir'], { allowExit: [0, 128] });
-  return result.code === 0 ? result.stdout.toString('utf8').trim() : null;
+  const result = await git.raw(probe, ['rev-parse', '--path-format=absolute', '--git-dir'],
+    { allowExit: [0, 128], env: { LC_ALL: 'C', LANGUAGE: '', GIT_DISCOVERY_ACROSS_FILESYSTEM: '1' } });
+  if (result.code === 0) return result.stdout.toString('utf8').trim();
+  if (/^fatal: not a git repository \(or any of the parent directories\)/m.test(result.stderr)) return null;
+  const detail = result.stderr.trim().split('\n').filter(Boolean).slice(-2).join(' ').slice(0, 400);
+  throw new PolicyError(`Claude Penguin could not confirm that the worktree root ${dir} is outside every Git repository (${detail || `Git exited with code ${result.code}`}). Fix or remove the Git metadata it names, such as a stale .git file in a parent folder, or set CP_ENGINE_WORKTREE_ROOT to a folder outside Git.`);
 }
 
 /** Create the root privately and refuse locations inside any Git repository. */
@@ -160,9 +169,34 @@ async function branchCommit(git, cwd, branch) {
   return result.code === 0 ? result.stdout.toString('utf8').trim() : null;
 }
 
+const isFile = file => { try { return fs.lstatSync(file).isFile(); } catch { return false; } };
+
+/**
+ * Git records the branch, HEAD, and lock before the checkout fills the
+ * worktree, so a matching entry can be an interrupted (or still running)
+ * checkout. It is complete only when its index is written, no index.lock
+ * remains, and tracked files match HEAD. Returns the problem, or null.
+ */
+async function incompleteCheckout(git, sourcePath, workspacePath, baseline) {
+  let top, gitDir, common;
+  try {
+    [top, gitDir, common] = (await git.text(workspacePath, ['rev-parse', '--path-format=absolute', '--show-toplevel', '--git-dir', '--git-common-dir'])).split('\n');
+    top = realpath(top); common = realpath(common);
+  } catch { return 'Git cannot open it as a checkout'; }
+  if (top !== realpath(workspacePath)) return 'Git does not see it as the top of a checkout';
+  if (common !== realpath(await git.line(sourcePath, ['rev-parse', '--path-format=absolute', '--git-common-dir']))) return 'it belongs to a different repository';
+  if (!isFile(path.join(gitDir, 'index'))) return 'its index was never written';
+  if (fs.existsSync(path.join(gitDir, 'index.lock'))) return 'an index.lock remains, so a Git process may still be writing it';
+  await assertReadPolicy(git, workspacePath, [baseline]);
+  const status = await git.raw(workspacePath, ['status', '--porcelain=v1', '-z', '--untracked-files=no', '--ignore-submodules=all'],
+    { timeout: TIMEOUTS.status, maxBuffer: 64 * 1024, truncate: true });
+  return status.stdout.length ? 'its tracked files do not match the baseline' : null;
+}
+
 /**
  * Create the reserved worktree, or reconcile a previous attempt that matches
- * the reservation exactly. Conflicting resources are never deleted or adopted.
+ * the reservation exactly and finished its checkout. Conflicting or incomplete
+ * resources are never deleted or adopted.
  */
 export async function createWorktree(git, { sourcePath, workspacePath, branch, baseline, workerId, onProgress = () => {} }) {
   const reason = `Claude Penguin worker ${workerId}`;
@@ -170,6 +204,10 @@ export async function createWorktree(git, { sourcePath, workspacePath, branch, b
   const existing = (await listWorktrees(git, sourcePath)).find(entry => entry.path === workspacePath || entry.realPath === workspacePath);
   if (existing) {
     if (existing.branch !== ref || existing.head !== baseline) throw new PolicyError(`A worktree already exists at ${workspacePath} but does not match this reservation (expected ${branch} at ${baseline.slice(0, 12)}). It was not adopted or removed; inspect it manually.`);
+    const problem = await incompleteCheckout(git, sourcePath, workspacePath, baseline);
+    if (problem) {
+      throw new PolicyError(`The reserved worktree at ${workspacePath} is incomplete: ${problem}. An earlier checkout was interrupted or may still be running. It was not adopted or removed. Make sure no Git process is still using it, inspect the folder and copy out anything you need, then remove it with \`git -C ${shellQuote(sourcePath)} worktree remove --force --force ${shellQuote(workspacePath)}\` and retry.`);
+    }
     if (!existing.locked) await git.raw(sourcePath, ['worktree', 'lock', '--reason', reason, workspacePath]);
     onProgress('Reconciled the reserved worktree from an earlier attempt.');
     return { reconciled: true };
@@ -188,20 +226,22 @@ export async function createWorktree(git, { sourcePath, workspacePath, branch, b
 }
 
 /** Hard failures need repair; warnings permit operation. Never falls back to the source checkout. */
-export async function inspectWorkspace(git, { commonDir }, workspace) {
+export async function inspectWorkspace(git, { commonDir, sourcePath }, workspace) {
   const result = { repair: null, warnings: [], branch: null, head: null, locked: false, descendsFromBaseline: null };
   const repair = message => { result.repair = message; return result; };
   if (!workspace?.path) return repair('This worker has no recorded worktree.');
+  const repairCommand = `git -C ${shellQuote(sourcePath ?? '<source checkout>')} worktree repair ${shellQuote(workspace.path)}`;
+  const manual = 'Claude Penguin does not repair worktrees automatically.';
   let real;
   try { real = realpath(workspace.path); } catch { return repair(`The worktree folder is missing: ${workspace.path}`); }
   let top, common;
   try { [top, common] = (await git.text(real, ['rev-parse', '--path-format=absolute', '--show-toplevel', '--git-common-dir'])).split('\n'); }
-  catch { return repair(`The worktree folder is no longer a Git checkout: ${workspace.path}`); }
+  catch { return repair(`The worktree folder is no longer a Git checkout: ${workspace.path}. If its .git file was removed or damaged, run \`${repairCommand}\` (Git may report the broken .git file while it rewrites it), then check again. If the folder was replaced, restore the original folder; if Git pruned the worktree's record, repair cannot restore it, so copy out any work you need. ${manual}`); }
   try { top = realpath(top); common = realpath(common); } catch { return repair('The worktree Git metadata cannot be resolved.'); }
   if (top !== workspace.path || real !== workspace.path) return repair(`The worktree's Git top level (${top}) differs from the recorded path.`);
   if (common !== commonDir) return repair('The worktree now belongs to a different repository.');
   const entry = (await listWorktrees(git, real)).find(item => item.realPath === workspace.path);
-  if (!entry) return repair('Git no longer lists this worktree. It may have been pruned or moved.');
+  if (!entry) return repair(`Git no longer lists this worktree at ${workspace.path}. It may have been pruned or moved. If Git's record points to another location, run \`${repairCommand}\` to point it back to this folder. ${manual}`);
   const base = await git.raw(real, ['cat-file', '-e', `${workspace.baseCommit}^{commit}`], { allowExit: [0, 1, 128] });
   if (base.code !== 0) return repair(`The baseline commit ${workspace.baseCommit.slice(0, 12)} is unavailable in this repository.`);
   result.head = entry.head ?? null;
@@ -233,11 +273,14 @@ function previewUntracked(root, names) {
     try {
       const stats = fs.lstatSync(full);
       if (!stats.isFile() || !inside(root, realpath(full))) { item.skipped = 'Not a regular file inside this worktree.'; continue; }
+      // Another name for the same inode may live outside the worktree.
+      if (stats.nlink > 1) { item.skipped = 'File has another hard link, possibly outside this worktree.'; continue; }
       item.size = stats.size;
-      const fd = fs.openSync(full, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+      // O_NONBLOCK: a FIFO or device swapped in after lstat must not block the engine.
+      const fd = fs.openSync(full, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
       try {
         const opened = fs.fstatSync(fd);
-        if (!opened.isFile() || opened.dev !== stats.dev || opened.ino !== stats.ino) { item.skipped = 'File changed while opening it; request changes again.'; continue; }
+        if (!opened.isFile() || opened.dev !== stats.dev || opened.ino !== stats.ino || opened.nlink > 1) { item.skipped = 'File changed while opening it; request changes again.'; continue; }
         const bytes = Buffer.alloc(Math.min(stats.size, MAX_FILE));
         const prefix = bytes.subarray(0, fs.readSync(fd, bytes, 0, bytes.length, 0));
         if (prefix.includes(0)) item.skipped = 'Binary file.';
@@ -257,7 +300,9 @@ export async function reviewWorkspace(git, { sourcePath, workspace, inspection }
     { timeout: TIMEOUTS.diff, maxBuffer: MAX_DIFF, truncate: true });
   const status = (await git.raw(cwd, ['status', '--porcelain=v1', '--untracked-files=normal', '--ignore-submodules=dirty'],
     { timeout: TIMEOUTS.status, maxBuffer: MAX_DIFF, truncate: true }));
-  const names = splitNul((await git.raw(cwd, ['ls-files', '--others', '--exclude-standard', '-z'], { timeout: TIMEOUTS.status, maxBuffer: 16 * 1024 * 1024 })).stdout);
+  const listing = await git.raw(cwd, ['ls-files', '--others', '--exclude-standard', '-z'], { timeout: TIMEOUTS.status, maxBuffer: MAX_UNTRACKED_LIST, truncate: true });
+  // A truncated listing ends in a partial name; keep complete entries only.
+  const names = splitNul(listing.truncated ? listing.stdout.subarray(0, listing.stdout.lastIndexOf(0) + 1) : listing.stdout);
   let mergeBase = null;
   if (inspection.head) {
     const result = await git.raw(cwd, ['merge-base', workspace.baseCommit, inspection.head], { allowExit: [0, 1] });
@@ -267,7 +312,9 @@ export async function reviewWorkspace(git, { sourcePath, workspace, inspection }
   if (inspection.descendsFromBaseline) commitsSinceBaseline = Number(await git.line(cwd, ['rev-list', '--count', `${workspace.baseCommit}..${inspection.head}`]));
   return {
     diff: diffResult.stdout.toString('utf8'), status: status.stdout.toString('utf8'), untracked: previewUntracked(cwd, names),
-    truncated: diffResult.truncated || status.truncated || names.length > MAX_UNTRACKED,
+    // untrackedListed counts every untracked path read; when the listing was cut off it is a lower bound.
+    untrackedListed: names.length, untrackedListTruncated: listing.truncated,
+    truncated: diffResult.truncated || status.truncated || listing.truncated || names.length > MAX_UNTRACKED,
     sourcePath, worktreePath: cwd, branch: inspection.branch, expectedBranch: workspace.branch,
     baseCommit: workspace.baseCommit, head: inspection.head, mergeBase, sharedHistory: Boolean(mergeBase),
     commitsSinceBaseline, dirty: status.stdout.length > 0 || names.length > 0, warnings: inspection.warnings,

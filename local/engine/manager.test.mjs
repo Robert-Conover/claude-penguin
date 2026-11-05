@@ -376,6 +376,18 @@ test('cd into a subfolder then compaction is ongoing; outside-workspace events s
   assert.equal(e.processFor(item.worker.id).proc.kills.length, 0);
   assert.equal(e.worker(item.worker.id).outsideWorkspace, null);
   assert.match(e.worker(item.worker.id).activity, /compacted/);
+  // A nested repository inside the worktree is outside its Git top level, so it warns once the lookup resolves.
+  const nested = path.join(item.worker.workspace.path, 'vendor', 'other');
+  fs.mkdirSync(nested, { recursive: true });
+  e.git(nested, 'init', '-q');
+  await e.hook(item.worker, 'PreToolUse', { tool_name: 'Bash', prompt_id: 'p1', cwd: nested });
+  assert.equal(e.worker(item.worker.id).status, 'working', 'the lookup never delays status handling');
+  for (let waited = 0; !e.worker(item.worker.id).outsideWorkspace && waited < 5000; waited += 5) await new Promise(resolve => setTimeout(resolve, 5));
+  assert.deepEqual([e.worker(item.worker.id).outsideWorkspace?.cwd, e.worker(item.worker.id).outsideWorkspace?.nestedRepository], [nested, true]);
+  assert.equal((await e.hook(item.worker, 'PostToolUse', { tool_name: 'Bash', prompt_id: 'p1', cwd: nested })).outsideWorkspace, true, 'the cached top level applies immediately');
+  await e.hook(item.worker, 'PostToolUse', { tool_name: 'Bash', prompt_id: 'p1', cwd: src });
+  await new Promise(resolve => setTimeout(resolve, 200));
+  assert.equal(e.worker(item.worker.id).outsideWorkspace, null, 'an ordinary subfolder of the worktree does not warn');
   const result = await e.hook(item.worker, 'PermissionRequest', { tool_name: 'Bash', prompt_id: 'p1', cwd: item.repo });
   assert.equal(result.outsideWorkspace, true);
   let worker = e.worker(item.worker.id);
@@ -547,6 +559,32 @@ test('interrupt racing an already ended turn preserves readiness and does not se
   }
 });
 
+test('card submission re-checks the turn after workspace inspection and before pressing Enter', async t => {
+  const e = await engine(t);
+  const item = await e.add('submit-race');
+  const proc = await e.started(item);
+  // A prompt typed in the terminal starts a turn while the card's workspace inspection runs.
+  const typed = e.manager.submit({ ...item.target, text: 'card task' });
+  await e.hook(item.worker, 'UserPromptSubmit', { prompt: 'typed in terminal', prompt_id: 'p1' });
+  await assert.rejects(typed, error => error.statusCode === 409 && /Nothing was sent/.test(error.message));
+  assert.deepEqual(proc.writes, [], 'nothing is pasted into a running turn');
+  // An unconfirmed interrupt during inspection also keeps card submission disabled (PR #5).
+  await e.hook(item.worker, 'Stop', { prompt_id: 'p1' });
+  const interrupted = e.manager.submit({ ...item.target, text: 'card task 2' });
+  await e.hook(item.worker, 'UserPromptSubmit', { prompt: 'typed again', prompt_id: 'p2' });
+  e.manager.interrupt(item.target);
+  await assert.rejects(interrupted, /Nothing was sent/);
+  assert.deepEqual(proc.writes, ['\x1b']);
+  assert.equal(e.worker(item.worker.id).status, 'needs-you');
+  // A turn that starts after the paste but before Enter leaves the text unsubmitted.
+  await e.hook(item.worker, 'Stop', { prompt_id: 'p2' });
+  const pasted = e.manager.submit({ ...item.target, text: 'card task 3' });
+  for (let waited = 0; proc.writes.length < 2 && waited < 5000; waited += 5) await new Promise(resolve => setTimeout(resolve, 5));
+  await e.hook(item.worker, 'UserPromptSubmit', { prompt: 'typed once more', prompt_id: 'p3' });
+  await assert.rejects(pasted, error => error.statusCode === 409 && /pasted into the terminal but not submitted/.test(error.message));
+  assert.deepEqual(proc.writes.slice(1), ['\x1b[200~card task 3\x1b[201~'], 'Enter is never sent into a running turn');
+});
+
 // ------------------------------------------------------------ restart and recovery
 
 test('runtime restart resumes each exact established session and a failed resume never replaces it', async t => {
@@ -583,6 +621,47 @@ test('an alive saved PID blocks restart without killing an unowned process', asy
   assert.equal(e.processes.length, 0);
 });
 
+test('saved state with inconsistent identities or records is refused before anything starts', async t => {
+  const e = await engine(t);
+  await e.add('one');
+  await e.add('two', { puffle: 'Comet' });
+  await e.manager.close();
+  e.manager = null;
+  const file = path.join(e.stateDir, 'state.json');
+  const good = fs.readFileSync(file, 'utf8');
+  const game = ownerId => ({ source: 'managed', status: 'ready', ownerId, iglooId: 9, roomId: ownerId + 2000, puffleId: 31, puffleName: 'Atlas', fixtureId: null, verifiedAt: null });
+  const cases = [
+    ['duplicate project IDs', s => { s.projects[1].id = s.projects[0].id; }, /project identity is missing or duplicated/],
+    ['duplicate worker IDs', s => { s.workers[1].id = s.workers[0].id; }, /worker identity is missing, duplicated/],
+    ['two active puffles in one project', s => { Object.assign(s.workers[1], { projectId: s.projects[0].id }).workspace.repoCommonDir = s.projects[0].commonDir; }, /more than one active puffle/],
+    ['an activeWorkerId that names another project\'s puffle', s => { s.projects[0].activeWorkerId = s.workers[1].id; }, /does not reference its active puffle/],
+    ['an igloo room that is not the owner\'s', s => { s.projects[0].game = { ...game(201), roomId: 2999 }; }, /invalid igloo room address/],
+    ['a project owner that is the visitor', s => { s.visitor = { penguinId: 201, username: 'bridgecheck' }; s.projects[0].game = game(201); }, /shares its game owner/],
+    ['two projects with one repository', s => { s.projects[1].commonDir = s.projects[0].commonDir; }, /share one repository/],
+    ['two workers with one Claude session', s => { s.workers[1].sessionId = s.workers[0].sessionId; }, /share one Claude session/],
+    ['two active puffles with one worktree', s => { s.workers[1].workspace.path = s.workers[0].workspace.path; }, /share one worktree/],
+    ['a worktree from another repository', s => { s.workers[0].workspace.repoCommonDir = '/elsewhere/.git'; }, /different repository than its project/],
+    ['a null project entry', s => { s.projects.push(null); }, /project record is not an object/],
+    ['a null worker entry', s => { s.workers.push(null); }, /worker record is not an object/],
+    ['a null task entry', s => { s.workers[0].taskHistory.push(null); }, /is incomplete/],
+    ['an unknown setup phase', s => { s.projects[0].setup.phase = 'banana'; }, /unknown setup phase/],
+  ];
+  for (const [label, mutate, pattern] of cases) {
+    const saved = JSON.parse(good);
+    mutate(saved);
+    fs.writeFileSync(file, JSON.stringify(saved));
+    await assert.rejects(createManager(e.options), error => error.statusCode === 500 && /^Saved agent state is invalid: /.test(error.message) && pattern.test(error.message), label);
+  }
+  for (const phase of ['registered', 'needs-worker', 'preparing', 'game-pending', 'failed', 'ready']) {
+    const saved = JSON.parse(good);
+    saved.projects[0].setup.phase = phase;
+    fs.writeFileSync(file, JSON.stringify(saved));
+    await (await createManager(e.options)).close();
+  }
+  fs.writeFileSync(file, good);
+  e.manager = await createManager(e.options);
+});
+
 test('identities and secrets stay out of snapshots and state; hook settings stay observational', async t => {
   const e = await engine(t);
   const item = await e.add('secrets');
@@ -609,7 +688,7 @@ test('a migrated Atlas is archived read-only; an isolated replacement reuses onl
   const e = await engine(t);
   const source = e.repo('legacy');
   await e.manager.close();
-  fs.writeFileSync(path.join(e.stateDir, 'state.json'), JSON.stringify(legacyState(source)));
+  fs.writeFileSync(path.join(e.stateDir, 'state.json'), JSON.stringify(legacyState(source, { baseCommit: e.git(source, 'rev-parse', 'HEAD').trim() })));
   await assert.rejects(createManager(e.options), /migrate it explicitly/, 'the engine never migrates implicitly');
   migrateStateDir(e.stateDir);
   e.manager = await createManager(e.options);
@@ -635,16 +714,28 @@ test('a migrated Atlas is archived read-only; an isolated replacement reuses onl
 
 test('migration with a missing source keeps readable history and blocks new puffles', async t => {
   const e = await engine(t);
+  const original = e.repo('original-history');
+  const sourcePath = path.join(e.dir, 'deleted-source');
   await e.manager.close();
-  fs.writeFileSync(path.join(e.stateDir, 'state.json'), JSON.stringify(legacyState(path.join(e.dir, 'deleted-source'))));
+  fs.writeFileSync(path.join(e.stateDir, 'state.json'), JSON.stringify(legacyState(sourcePath, { baseCommit: e.git(original, 'rev-parse', 'HEAD').trim() })));
   migrateStateDir(e.stateDir);
   e.manager = await createManager(e.options);
   const project = e.view().projects[0];
   assert.equal(project.sourceAvailable, false);
   assert.equal(e.view().archivedWorkers[0].taskHistory.length, 2);
   await assert.rejects(e.manager.createWorker({ projectId: project.id }), /source checkout is unavailable/);
-  const restored = e.repo('deleted-source');
-  assert.equal((await e.manager.registerProject({ path: restored })).id, project.id, 'a restored source rejoins its legacy project');
+  // An unrelated repository at the old path never inherits the legacy project or its game mapping.
+  e.repo('deleted-source', { 'other.txt': 'unrelated\n' });
+  assert.equal((await e.manager.registerProject({ path: sourcePath })).id, project.id, 'the old path still names the legacy project');
+  const unrelated = error => error.statusCode === 409 && /does not contain the archived puffle Atlas's history \(baseline [0-9a-f]{12}\)/.test(error.message);
+  await assert.rejects(e.manager.createWorker({ projectId: project.id }), unrelated);
+  await e.restart();
+  await assert.rejects(e.manager.createWorker({ projectId: project.id }), unrelated, 'startup does not adopt it either');
+  assert.equal(e.view().workers.length, 0);
+  // The original repository, restored at that path, rejoins its legacy project.
+  fs.rmSync(sourcePath, { recursive: true, force: true });
+  e.git(e.dir, 'clone', '-q', original, sourcePath);
+  assert.equal((await e.manager.registerProject({ path: sourcePath })).id, project.id, 'a restored source rejoins its legacy project');
   assert.equal(e.projectView(project.id).sourceAvailable, true);
   await e.manager.createWorker({ projectId: project.id });
   assert.equal((await e.manager.settled(project.id)).setup.phase, 'ready');

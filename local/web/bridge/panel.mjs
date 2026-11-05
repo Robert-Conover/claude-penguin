@@ -1,4 +1,4 @@
-import { states, validateFixtures, projectAtSnapshot, projectForClick, waitForArrival, agentMappings, mappingKey,
+import { BRIDGE_CONTRACT_VERSION, states, validateFixtures, projectAtSnapshot, projectForClick, waitForArrival, agentMappings, mappingKey,
   flashConfiguration, freshSnapshot, selectionForClick, roomAnimation, activeMappingsFor, needsConfiguration } from './model.mjs';
 import { nativeMenuState, allowedNativeAction, attentionTotal } from './native-menu.mjs';
 
@@ -69,7 +69,7 @@ if (agentMode) {
   window.addEventListener('cp-engine-native-return', event => {
     if (!selection || event.detail?.projectId !== selection.projectId || event.detail?.workerId !== selection.workerId) return;
     event.preventDefault();
-    openWork(selection.projectId);
+    openWork();
   });
 }
 
@@ -113,30 +113,37 @@ function syncNativeMenu() {
   } catch { nativeMenuReady = false; }
   document.body.classList.toggle('cp-native-agent-menu', nativeMenuReady);
 }
-// Opens the explicitly selected puffle's native card, or the browser project
-// list when nothing is selected. Never chooses a worker on the user's behalf.
-function openWork(projectId) {
+// The panel's selection is authoritative. Work opens the selected puffle's
+// native card, or the browser card for exactly that project and worker when the
+// game cannot show it. With nothing selected it asks the browser card for its
+// list, so the card's own earlier choice never stands in. Never picks a worker.
+function openWork() {
+  const engine = window.ClaudePenguinEngine;
+  const target = selection ? { ...selection } : null;
   syncNativeMenu();
-  const state = nativeMenuState(engineState, activeMappings(), selection);
-  if (nativeMenuReady && state.projectId && (!projectId || state.projectId === projectId)) {
+  const state = nativeMenuState(engineState, activeMappings(), target);
+  if (target && nativeMenuReady && state.projectId === target.projectId) {
     try {
       panel.hidden = true;
-      window.ClaudePenguinEngine?.close();
+      engine?.close();
       call('cpBridgeShowAgentMenu');
       return;
     } catch { /* Keep the browser card available when the game menu cannot open. */ }
   }
-  if (projectId) window.ClaudePenguinEngine?.openForProject(projectId, selection?.projectId === projectId ? selection.workerId : null);
-  else window.ClaudePenguinEngine?.open();
+  if (target) engine?.openForProject(target.projectId, target.workerId);
+  else engine?.openList();
 }
 
+const outOfDate = () => Object.assign(new Error('The client bridge is out of date. Run python3 local/client-bridge/build.py, then reload.'), { code: 'contract-mismatch' });
+// Every result of the current contract carries its version, refusals included.
+// A missing or different version is refused before the answer is interpreted.
 function call(name, ...args) {
   const player = document.querySelector('ruffle-object, ruffle-embed, ruffle-player');
   if (!player?.ruffle) throw new Error('Waiting for the game client.');
   const result = player.ruffle(1).callExternalInterface(name, ...args);
   if (!result || typeof result !== 'object') throw new Error('Waiting for the client bridge. Build the extension and log in.');
+  if (result.version !== BRIDGE_CONTRACT_VERSION) throw outOfDate();
   if (!result.ok) throw Object.assign(new Error(result.error || 'The game is not ready for this action.'), { code: result.error });
-  if (result.version !== undefined && result.version !== 2) throw new Error('The client bridge is out of date. Run python3 local/client-bridge/build.py, then reload.');
   return result;
 }
 function connection(message) {
@@ -258,18 +265,29 @@ for (const [state, text] of agentMode ? [] : Object.entries(states)) {
   panel.querySelector('.cp-states').append(button);
 }
 
+// Native HUD and card actions. One the browser refuses (stale generation,
+// travel, no explicit selection, or engine rules) is reported back so the
+// overlay releases a task it did not send; the overlay keeps the draft.
+function nativeAction(event) {
+  let allowed = false;
+  try {
+    snapshot = call('cpBridgeSnapshot');
+    const context = { mappings: activeMappings(), game: snapshot, generation: currentGeneration(), engineState, target: selection };
+    allowed = !navigating && allowedNativeAction(context, event);
+  } catch (error) { report(error); }
+  if (!allowed) {
+    try { call('cpBridgeRejectAgentAction', String(event.action), typeof event.projectId === 'string' ? event.projectId : ''); }
+    catch { /* The overlay is not ready; closing the card also releases the task. */ }
+    return;
+  }
+  if (event.action === 'work') openWork();
+  else if (event.action === 'igloos') showPanel(panel.hidden);
+  else window.ClaudePenguinEngine?.handleNativeAction({ projectId: selection.projectId, workerId: selection.workerId, action: event.action, text: event.text });
+}
 window.addEventListener('claude-penguin-bridge', ({ detail }) => {
   try {
     const event = typeof detail === 'string' ? JSON.parse(detail) : detail;
-    if (agentMode && event?.type === 'agent-menu-action') {
-      snapshot = call('cpBridgeSnapshot');
-      const context = { mappings: activeMappings(), game: snapshot, generation: currentGeneration(), engineState, target: selection };
-      if (navigating || !allowedNativeAction(context, event)) return;
-      if (event.action === 'work') openWork();
-      else if (event.action === 'igloos') showPanel(panel.hidden);
-      else window.ClaudePenguinEngine?.handleNativeAction({ projectId: selection.projectId, workerId: selection.workerId, action: event.action, text: event.text });
-      return;
-    }
+    if (agentMode && event?.type === 'agent-menu-action') return nativeAction(event);
     if (event?.type !== 'puffle-click') return;
     // A click is accepted only against a fresh snapshot of the current generation.
     snapshot = call('cpBridgeSnapshot');
@@ -281,7 +299,7 @@ window.addEventListener('claude-penguin-bridge', ({ detail }) => {
       if (!target) return;
       selection = target;
       showPanel(false);
-      openWork(target.projectId);
+      openWork();
       return;
     }
     const project = freshSnapshot(active, snapshot, generation) && event.generation === generation ? projectForClick(active, snapshot, event) : null;
@@ -306,13 +324,15 @@ function forgetSession() {
 }
 // Applies the browser's mappings to the overlay when the overlay reports a
 // different generation (including an overlay that was never configured).
+// More mappings than the overlay accepts throw here, so nothing is sent and the
+// error stays visible until the mapping set changes.
 function reconfigure() {
   if (configuring) return;
   configuring = true;
   try {
     const config = flashConfiguration(mappings);
     const result = call('cpBridgeConfigure', config.visitorId, config.projects);
-    if (!Number.isSafeInteger(result.generation)) throw new Error('The client bridge is out of date. Run python3 local/client-bridge/build.py, then reload.');
+    if (!Number.isSafeInteger(result.generation)) throw outOfDate();
     configured = { key: desiredKey, generation: result.generation, mappings };
     configError = '';
   } catch (error) {

@@ -7,13 +7,19 @@ stay in the container environment and managed-owner credentials never appear
 in command arguments or output.
 
 Operations:
-  {"op": "visitor"}
+  {"op": "visitor", "penguinId", "password"}
       Verify or create only the marked `bridgecheck` visitor (shared with
       bridge_seed.py through game_accounts.py). Never changes an existing one.
-  {"op": "owner", "marker", "username", "password", "nickname"}
+      With a recorded `penguinId` it only verifies that visitor: a missing one
+      returns MISSING and a different one MISMATCH; nothing is created. The
+      optional fixture `password` is used only for creation; without it,
+      CLUB_PENGUIN_TEST_PASSWORD or the shared default applies.
+  {"op": "owner", "marker", "username", "password", "nickname", "ownerId"}
       Create or accept one dedicated managed owner. The UUID marker (stored as
       the account email) proves ownership; a username taken by any other
       account returns USERNAME_TAKEN; duplicated or mismatched markers fail.
+      With a recorded `ownerId` it only verifies that owner: no marked account
+      returns MISSING and a different ID MISMATCH; nothing is created.
   {"op": "verify", "mappings": [{key, marker, username, ownerId, iglooId, puffleId, puffleName}]}
       Check complete owner/layout/puffle mappings, including that the managed
       igloo is still locked in the database.
@@ -74,19 +80,43 @@ def owner_request(request):
     if not isinstance(nickname, str) or not 1 <= len(nickname) <= 30 or not PROJECT_NAME.match(nickname) \
             or not nickname[-1].isalnum():
         raise RequestError('The owner nickname must be a valid project name')
-    return marker, username, password, nickname
+    return marker, username, password, nickname, recorded_id(request, 'ownerId')
 
 
-async def visitor(connection, environ=os.environ):
+def recorded_id(request, key):
+    value = request.get(key)
+    if value is not None and not positive(value):
+        raise RequestError(f'A recorded {key} must be a positive integer')
+    return value
+
+
+async def visitor(connection, request, environ=os.environ):
+    recorded = recorded_id(request, 'penguinId')
+    password = request.get('password')
+    if password is None:
+        password = game_accounts.test_password(environ)
+    elif not isinstance(password, str) or not 1 <= len(password) <= 128:
+        raise RequestError('The visitor password must be 1 to 128 characters')
     async with connection.transaction():
+        if recorded is not None:
+            # Verify only: a recorded visitor is never recreated or remapped.
+            existing = await connection.fetchrow(
+                'SELECT id, email FROM penguin WHERE lower(username) = $1', VISITOR_USERNAME)
+            if existing is None:
+                return failure('MISSING', f'No {VISITOR_USERNAME} account exists.')
+            if existing['email'] != game_accounts.fixture_marker(VISITOR_USERNAME):
+                return failure('MISMATCH', f'The {VISITOR_USERNAME} account is not the marked fixture visitor. Nothing was changed.')
+            if existing['id'] != recorded:
+                return failure('MISMATCH', f'The {VISITOR_USERNAME} visitor has game ID {existing["id"]}, not the recorded '
+                                           f'{recorded}. Refusing to remap it; repair the visitor record explicitly.')
+            return {'status': 'ok', 'penguinId': recorded, 'username': VISITOR_USERNAME, 'created': False}
         penguin_id, created = await game_accounts.ensure_fixture_account(
-            connection, VISITOR_USERNAME, VISITOR_NICKNAME,
-            game_accounts.test_password(environ), game_accounts.auth_key(environ))
+            connection, VISITOR_USERNAME, VISITOR_NICKNAME, password, game_accounts.auth_key(environ))
     return {'status': 'ok', 'penguinId': penguin_id, 'username': VISITOR_USERNAME, 'created': created}
 
 
 async def owner(connection, request, environ=os.environ):
-    marker, username, password, nickname = owner_request(request)
+    marker, username, password, nickname, recorded = owner_request(request)
 
     async def reconcile_or_create():
         async with connection.transaction():
@@ -96,7 +126,16 @@ async def owner(connection, request, environ=os.environ):
             if marked:
                 if marked[0]['username'].lower() != username:
                     return failure('MISMATCH', 'This project\'s ownership marker belongs to an account with a different username.')
+                if recorded is not None and marked[0]['id'] != recorded:
+                    return failure('MISMATCH', f'The marked owner has game ID {marked[0]["id"]}, not the recorded {recorded}. '
+                                               'Nothing was remapped.')
                 return {'status': 'ok', 'ownerId': marked[0]['id'], 'created': False}
+            if recorded is not None:
+                # Verify only: never create a second owner for a project that already recorded one.
+                exists = await connection.fetchval('SELECT id FROM penguin WHERE id = $1', recorded)
+                detail = 'still exists but no longer carries this project\'s ownership marker' if exists is not None \
+                    else 'no longer exists'
+                return failure('MISSING', f'Game ID {recorded} {detail}.')
             taken = await connection.fetchval('SELECT id FROM penguin WHERE lower(username) = $1', username)
             if taken is not None:
                 return failure('USERNAME_TAKEN', 'The generated username belongs to another account.')
@@ -171,7 +210,7 @@ async def handle(request, connection, environ=os.environ):
         raise RequestError('Expected a JSON object')
     operation = request.get('op')
     if operation == 'visitor':
-        return await visitor(connection, environ)
+        return await visitor(connection, request, environ)
     if operation == 'owner':
         return await owner(connection, request, environ)
     if operation == 'verify':

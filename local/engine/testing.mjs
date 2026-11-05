@@ -55,13 +55,16 @@ export class FakePty {
 }
 
 /**
- * An in-memory stand-in for createGameProvisioner (game.mjs): marked owners,
+ * An in-memory stand-in for createGameProvisioner (game.mjs) that mirrors the
+ * provisioning service: marked owners, a recorded ID that is only verified and
+ * never recreated (MISSING), usernames held by any account (USERNAME_TAKEN),
  * Houdini's name filter and title-casing, locked igloos, and verification.
- * `fake.fail[op]` (a function or ProvisionError) injects one failure;
- * `fake.before[op]` runs a check at call time.
+ * `db.visitorId = null` means no visitor account exists; `db.taken` holds
+ * usernames of other accounts. `fake.fail[op]` (a function or ProvisionError)
+ * injects one failure; `fake.before[op]` runs a check at call time.
  */
 export function fakeGame({ visitorId = 107, filtered = ['Badword'] } = {}) {
-  const db = { visitorId, owners: [], nextOwner: 201, nextIgloo: 9, nextPuffle: 31, taken: new Set(), filtered: new Set(filtered.map(name => name.toLowerCase())) };
+  const db = { visitorId, nextVisitor: 300, owners: [], nextOwner: 201, nextIgloo: 9, nextPuffle: 31, taken: new Set(), filtered: new Set(filtered.map(name => name.toLowerCase())) };
   const calls = [];
   const fake = { db, calls, fail: {}, before: {} };
   const title = name => name.slice(0, 1).toUpperCase() + name.slice(1).toLowerCase();
@@ -71,14 +74,33 @@ export function fakeGame({ visitorId = 107, filtered = ['Badword'] } = {}) {
     const failure = fake.fail[op];
     if (failure) { delete fake.fail[op]; throw typeof failure === 'function' ? failure(args) : failure; }
   }
-  fake.ensureVisitor = async () => { await step('visitor', {}); return { penguinId: db.visitorId, username: 'bridgecheck', created: false }; };
+  fake.ensureVisitor = async (args = {}) => {
+    await step('visitor', args);
+    const recorded = args.penguinId ?? null;
+    if (recorded !== null) {
+      if (db.visitorId === null) throw new ProvisionError('No bridgecheck account exists.', 'MISSING');
+      if (db.visitorId !== recorded) throw new ProvisionError(`The bridgecheck visitor has game ID ${db.visitorId}, not the recorded ${recorded}. Refusing to remap it; repair the visitor record explicitly.`, 'MISMATCH');
+      return { penguinId: recorded, username: 'bridgecheck', created: false };
+    }
+    const created = db.visitorId === null;
+    if (created) db.visitorId = db.nextVisitor++;
+    return { penguinId: db.visitorId, username: 'bridgecheck', created };
+  };
   fake.ensureOwner = async args => {
     await step('owner', args);
-    if (db.taken.has(args.username)) throw new ProvisionError('taken', 'USERNAME_TAKEN');
-    let owner = db.owners.find(item => item.marker === args.marker);
-    if (owner && owner.username !== args.username) throw new ProvisionError('marker mismatch', 'MISMATCH');
-    if (!owner) { owner = { ...args, ownerId: db.nextOwner++, iglooId: null, pets: [], locked: true }; db.owners.push(owner); }
-    return { ownerId: owner.ownerId, created: false };
+    const marked = db.owners.filter(item => item.marker === args.marker);
+    if (marked.length > 1) throw new ProvisionError('Several accounts carry this marker.', 'MISMATCH');
+    let [owner] = marked;
+    if (owner) {
+      if (owner.username !== args.username) throw new ProvisionError('marker mismatch', 'MISMATCH');
+      if (args.ownerId && owner.ownerId !== args.ownerId) throw new ProvisionError(`The marked owner has game ID ${owner.ownerId}, not the recorded ${args.ownerId}. Nothing was remapped.`, 'MISMATCH');
+      return { ownerId: owner.ownerId, created: false };
+    }
+    if (args.ownerId) throw new ProvisionError(`Game ID ${args.ownerId} no longer carries this project's ownership marker.`, 'MISSING');
+    if (db.taken.has(args.username) || db.owners.some(item => item.username === args.username)) throw new ProvisionError('taken', 'USERNAME_TAKEN');
+    owner = { ...args, ownerId: db.nextOwner++, iglooId: null, pets: [], locked: true };
+    db.owners.push(owner);
+    return { ownerId: owner.ownerId, created: true };
   };
   fake.prepareIgloo = async args => {
     await step('igloo', args);
@@ -117,13 +139,13 @@ export function checkoutFingerprint(s, root) {
 }
 
 /** A v1 single-project state matching the shape written by the previous milestone. */
-export function legacyState(sourcePath) {
+export function legacyState(sourcePath, { baseCommit = 'dc4eefbdb2af3038c1298490e06538096444e4b8' } = {}) {
   return { version: 1, revision: 79,
     projects: [{ id: 'e7c554c7-88e3-4c1f-9125-3261283a4393', name: 'Puffle Test', path: sourcePath, fixtureId: 'bridge-alpha',
       createdAt: '2026-11-03T21:43:40.950Z', ownerId: 105, iglooId: 4, roomId: 2105, puffleId: 4 }],
     workers: [{ id: '34a60f4a-0c2b-4ab8-af20-c3156de19ffd', projectId: 'e7c554c7-88e3-4c1f-9125-3261283a4393', name: 'Atlas',
       sessionId: 'c6b60407-ead8-4488-b8cb-281936dca777', status: 'interrupted', activity: 'stopped', established: true, cols: 101, rows: 20,
-      createdAt: '2026-11-03T21:43:50.761Z', updatedAt: '2026-11-03T23:04:44.571Z', pid: null, baseCommit: 'dc4eefbdb2af3038c1298490e06538096444e4b8',
+      createdAt: '2026-11-03T21:43:50.761Z', updatedAt: '2026-11-03T23:04:44.571Z', pid: null, baseCommit,
       dirtyAtStart: false, exitCode: 143, taskHistory: [
         { id: 't1', prompt: 'first', startedAt: '2026-11-03T21:50:00.000Z', status: 'turn-ended', endedAt: '2026-11-03T21:51:00.000Z' },
         { id: 't2', prompt: 'unfinished', startedAt: '2026-11-03T22:50:00.000Z', status: 'working' }] }] };

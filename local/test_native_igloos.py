@@ -130,6 +130,27 @@ class NativeIglooHostTests(unittest.TestCase):
         self.assertTrue(any('ignoring invalid' in note for note in self.notes))
         self.assertTrue(any('no longer uses published igloo 99' in note for note in self.notes))
 
+    def test_a_parse_failure_fails_closed_once_and_never_affects_other_penguins(self):
+        self.publish(published())
+        self.assertEqual(len(self.call(self.gr, VISITOR)[0]), 7)
+        baseline = self.call(OPEN_LIST, VISITOR)
+        self.publish('[' * 20000 + ']' * 20000)  # json raises RecursionError here, not ValueError
+        for _ in range(2):
+            self.assertEqual(self.call(self.gr, PLAYER), self.call(OPEN_LIST, PLAYER))
+            self.assertEqual(self.call(self.pio, PLAYER, MANAGED), [('pio', 0)])
+            self.assertEqual(self.call(self.gr, VISITOR), baseline, 'the previously published list is not kept')
+            self.assertEqual(self.call(self.pio, VISITOR, MANAGED), [('pio', 0)])
+        self.assertEqual(sum('ignoring invalid' in note for note in self.notes), 1, 'an unchanged invalid file is reported once')
+        with patch.object(houdini_bootstrap, 'parse_publication', side_effect=TypeError('unexpected shape')):
+            self.publish(published())
+            self.assertEqual(self.call(self.gr, VISITOR), baseline)
+            self.assertEqual(self.call(self.gr, PLAYER), self.call(OPEN_LIST, PLAYER))
+        self.publish(' ' * (houdini_bootstrap.MAX_PUBLICATION_BYTES + 1) + json.dumps(published()))
+        self.assertEqual(self.call(self.gr, VISITOR), baseline, 'an oversized file is not read')
+        self.assertTrue(any('too large' in note for note in self.notes))
+        self.publish(published())
+        self.assertEqual(len(self.call(self.gr, VISITOR)[0]), 7, 'a later valid file is picked up again')
+
     def test_publication_parser_is_strict(self):
         self.assertIsNone(parse_publication({'version': 1, 'visitorId': None, 'igloos': []}))
         value = parse_publication(published())

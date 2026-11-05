@@ -98,6 +98,9 @@ function select(target) {
 // There is no fixture lookup and no fallback to another project's worker.
 window.ClaudePenguinEngine = {
   open(target, view = 'task') { nativeReturn = null; if (target) select(target); visibility(true); showView(view); render(); },
+  // Shows the puffle list with nothing selected. The game bridge uses this when
+  // its own selection is empty, so an earlier choice here never reopens.
+  openList() { nativeReturn = null; select(null); visibility(true); showView('task'); render(); },
   toggle() { visibility(panel.hidden); render(); },
   close() { visibility(false); },
   openForProject(projectId, workerId = null, view = 'task') {

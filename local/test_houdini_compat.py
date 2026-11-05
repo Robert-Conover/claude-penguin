@@ -203,6 +203,21 @@ class NativeIglooTests(unittest.IsolatedAsyncioTestCase):
         await self.gr(p)
         self.assertEqual(len(p.send_xt.await_args.args), 7, 'a replaced file is picked up without restart')
 
+    async def test_unparseable_publication_fails_closed_without_affecting_other_penguins(self):
+        self.publish(published())
+        p = world_penguin(VISITOR)
+        await self.gr(p)
+        self.assertEqual(len(p.send_xt.await_args.args), 7)
+        self.publish('[' * 20000 + ']' * 20000)  # json raises RecursionError here, not ValueError
+        for penguin_id in (PLAYER, VISITOR, PLAYER, VISITOR):
+            expected, actual = await self.upstream_and_adapted(penguin_id)
+            self.assertEqual(actual, expected, 'nothing is published and the previous list is not kept')
+        self.assertEqual(sum('ignoring invalid' in note for note in self.notes), 1, 'reported once')
+        self.publish(published())
+        p = world_penguin(VISITOR)
+        await self.gr(p)
+        self.assertEqual(len(p.send_xt.await_args.args), 7, 'a later valid file is picked up again')
+
     async def test_install_keeps_listener_metadata(self):
         listeners = (igloo.handle_get_open_igloo_list, igloo.handle_is_player_igloo_open)
         before = [(listener, listener.callback, listener.cooldown, listener._signature, listener.client_type) for listener in listeners]

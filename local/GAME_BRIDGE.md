@@ -116,19 +116,27 @@ workers, and isolated worktrees remain later milestones.
 
 Stage 2 of the multi-project milestone moves agent mode off the fixture manifest.
 The bridge lab on this page is unchanged: it still loads `/bridge/fixtures.json`,
-requires Bridge Alpha and Bridge Beta, and plays explicitly simulated cues.
+requires Bridge Alpha and Bridge Beta, and plays explicitly simulated cues. While
+a multi-project engine is publishing, though, the `bridgecheck` visitor's igloo
+map and player cards list the published project igloos as open on either page,
+because the world adapter keys on the visitor, not on the page.
 
 In agent mode (`?bridge=1&agents=1`), the browser derives game mappings from the
 engine snapshot with `agentMappings()` in the [identity model](web/bridge/model.mjs).
 It uses only:
 
 - the engine's verified `visitor` (`penguinId`, `username`, `verifiedAt`); without
-  one, no mapping is usable and the native HUD stays off;
+  one, no mapping is usable and the native HUD stays off. A visitor that failed
+  this engine run's verification is reported as `visitor: null` with a
+  `visitorProblem` message;
 - projects whose `game.status` is `ready`. Provisioning, failed, and repair
   mappings are skipped. A mapping is also rejected if its project ID is not a
-  UUID, its room is not `ownerId + 2000`, its owner is the visitor, or another
-  ready project claims the same owner, igloo, room, or puffle. Every claimant of a
-  shared identity is excluded, and the panel reports how many are hidden.
+  UUID, its room is not `ownerId + 2000`, its owner is the visitor, a game ID is
+  outside the overlay's range (1 to 999,999,999), or another ready project claims
+  the same owner, igloo, room, or puffle. Every claimant of a shared identity is
+  excluded, and the panel reports how many are hidden. With more than 32 ready
+  mappings the panel configures none and shows an error rather than dropping
+  some.
 
 The project UUID is the mapping identity. Flash receives `{projectId, ownerId,
 puffleId}` per project, and a bounded display card (project and puffle names,
@@ -146,7 +154,12 @@ Afterwards, only snapshots and events carrying that generation are accepted.
 A puffle click selects that project and its engine-recorded `activeWorkerId`,
 validated against the current owner, room, and rendered puffle. If the project has
 no active worker, the browser card opens for that project only. **Work** opens the
-selected puffle's card, or the project list when nothing is selected. Attention
+selected puffle's card, or the project list when nothing is selected. The panel's
+selection decides: the browser card's own earlier choice never stands in for it.
+When the browser refuses a native card action (for example one prepared against
+an older generation, or sent during travel), it tells the overlay through
+`cpBridgeRejectAgentAction`. The card then releases a pending task, keeps the
+draft, and shows "Task not sent. Try again." Attention
 counts all active workers; animation plays only for the mapped puffle in the
 current room, from its own worker's state. Travel and closing menus never stop a
 started PTY.
@@ -155,8 +168,9 @@ Not in this stage (Stage 3): the game-styled project chooser, Add project form,
 archive view, native card setup, repair, and archived states, per-worker drafts,
 and sharing one selection across the terminal, journal, and changes views. The
 browser card still uses its Stage 1 forms. Without a requested project, its create
-form targets the first project without a puffle. `agent-start` still requires the
-fixture manifest, and the real agent page stays gated, as described in the
+form targets the first project without a puffle. `agent-start` no longer needs the
+fixture manifest, but the real agent page stays gated, as described in the
 [engine guide](AGENT_ENGINE.md#multi-project-engine-in-progress). The overlay must
 be rebuilt with `python3 local/client-bridge/build.py`, because the browser
-refuses an older contract version. Interactive verification in Ruffle is pending.
+refuses any overlay result that does not carry contract version 3. Interactive
+verification in Ruffle is pending.

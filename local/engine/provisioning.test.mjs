@@ -128,7 +128,7 @@ test('mismatched identities need repair, are never remapped, and leave publicati
   assert.deepEqual(e.published().igloos, [{ ownerId: 201, iglooId: 9 }]);
   // The game database changed behind the engine: the marked owner now has another puffle.
   e.game.db.owners[0].pets.push({ id: 99, name: 'Intruder' });
-  assert.deepEqual(await e.manager.verifyGameMappings(), { checked: 1, repair: 1 });
+  assert.deepEqual(await e.manager.verifyGameMappings(), { checked: 1, repair: 1, visitorProblem: null });
   let view = e.project(project.id);
   assert.equal(view.game.status, 'repair');
   assert.equal(view.setup.phase, 'failed');
@@ -143,20 +143,84 @@ test('mismatched identities need repair, are never remapped, and leave publicati
   assert.match(view.setup.error, /not the recorded 201/);
 });
 
-test('a changed visitor identity fails explicitly; other projects still publish only verified owners', async t => {
+test('a changed visitor withdraws publication and is reported unverified until it verifies again; nothing is remapped', async t => {
   const e = await engine(t);
-  await e.add('zeta', 'Orbit');
-  e.game.db.visitorId = 999;
-  await assert.rejects(e.manager.verifyGameMappings(), /not the recorded 107/);
+  const { project } = await e.add('zeta', 'Orbit');
+  const published = { version: 1, visitorId: 107, igloos: [{ ownerId: 201, iglooId: 9 }] };
+  // An unavailable stack keeps the last verified state.
+  e.game.fail.visitor = new ProvisionError('The game stack is not running.', 'UNAVAILABLE');
+  await assert.rejects(e.manager.verifyGameMappings(), /not running/);
   assert.equal(e.view().visitor.penguinId, 107);
-  assert.deepEqual(e.published(), { version: 1, visitorId: 107, igloos: [{ ownerId: 201, iglooId: 9 }] });
+  assert.deepEqual(e.published(), published);
+  e.game.db.visitorId = 999;
+  const result = await e.manager.verifyGameMappings();
+  assert.match(result.visitorProblem, /not the recorded 107/);
+  assert.deepEqual([result.checked, result.repair], [1, 0], 'owner mappings are still verified');
+  assert.equal(e.view().visitor, null, 'the browser builds no mappings for an unverified visitor');
+  assert.match(e.view().visitorProblem, /not the recorded 107/);
+  assert.deepEqual(e.published(), { version: 1, visitorId: null, igloos: [] }, 'publication is withdrawn');
+  assert.equal(JSON.parse(e.saved()).visitor.penguinId, 107, 'the recorded visitor is never remapped');
+  assert.equal(e.project(project.id).game.status, 'ready', 'project mappings do not move for a visitor problem');
+  assert.deepEqual(e.game.calls.filter(([op]) => op === 'visitor').at(-1)[1], { penguinId: 107 }, 'the recorded visitor ID is sent so the service only verifies');
+  e.game.fail.visitor = new ProvisionError('The game stack is not running.', 'UNAVAILABLE');
+  await assert.rejects(e.manager.verifyGameMappings(), /not running/);
+  assert.equal(e.view().visitor, null, 'an unavailable stack keeps the unverified state');
+  e.game.db.visitorId = 107;
+  assert.equal((await e.manager.verifyGameMappings()).visitorProblem, null);
+  assert.equal(e.view().visitor.penguinId, 107);
+  assert.equal(e.view().visitorProblem, null);
+  assert.deepEqual(e.published(), published, 'publication returns once the visitor verifies');
+});
+
+test('a recorded visitor or owner that disappeared needs repair; retries never create a second account', async t => {
+  const e = await engine(t);
+  const { project } = await e.add('vanished', 'Nova');
+  // The marked owner lost its marker (for example, a reset database or an edited email).
+  e.game.db.owners[0].marker = 'changed';
+  await e.manager.verifyGameMappings();
+  assert.equal(e.project(project.id).game.status, 'repair');
+  await e.manager.retrySetup({ projectId: project.id });
+  let view = await e.manager.settled(project.id);
+  assert.equal(view.game.status, 'repair');
+  assert.equal(view.game.ownerId, 201);
+  assert.match(view.setup.error, /recorded managed owner \(game ID 201\)[^]*Nothing was created or remapped/);
+  assert.deepEqual(e.game.db.owners.map(owner => owner.ownerId), [201], 'no second owner account');
+  assert.equal(e.game.calls.filter(([op]) => op === 'owner').at(-1)[1].ownerId, 201, 'the recorded owner ID is sent so the service only verifies');
+  // The recorded visitor was deleted: it is reported, never recreated.
+  e.game.db.visitorId = null;
+  assert.match((await e.manager.verifyGameMappings()).visitorProblem, /visitor recorded as game ID 107[^]*Nothing was created/);
+  assert.equal(e.game.db.visitorId, null, 'no replacement visitor was created');
+  assert.equal(e.view().visitor, null);
+  assert.deepEqual(e.published(), { version: 1, visitorId: null, igloos: [] });
+  await e.manager.retrySetup({ projectId: project.id });
+  view = await e.manager.settled(project.id);
+  assert.match(view.setup.error, /visitor recorded as game ID 107/);
+  assert.equal(e.game.db.visitorId, null);
+});
+
+test('a project set up while provisioning was off becomes retryable once provisioning is configured', async t => {
+  const e = await engine(t, { game: null });
+  const { project } = await e.add('pending-app', 'Pip');
+  assert.equal(project.setup.phase, 'game-pending');
+  await e.manager.close();
+  const game = fakeGame();
+  e.manager = await createManager({ ...e.options(), game });
+  let view = e.project(project.id);
+  assert.deepEqual([view.setup.phase, view.setup.retryable, view.game], ['failed', true, null]);
+  assert.match(view.setup.error, /provisioning was off when this project was set up\. Retry to provision its igloo/);
+  assert.deepEqual(game.calls, [], 'nothing is provisioned automatically');
+  await e.manager.retrySetup({ projectId: project.id });
+  view = await e.manager.settled(project.id);
+  assert.equal(view.setup.phase, 'ready');
+  assert.equal(view.game.status, 'ready');
+  assert.equal(view.game.puffleName, 'Pip');
 });
 
 test('the legacy Atlas fixture mapping is published and needs no provisioning; clean shutdown empties the list', async t => {
   const e = await engine(t);
   const source = e.repo('legacy');
   await e.manager.close();
-  fs.writeFileSync(path.join(e.stateDir, 'state.json'), JSON.stringify(legacyState(source)));
+  fs.writeFileSync(path.join(e.stateDir, 'state.json'), JSON.stringify(legacyState(source, { baseCommit: e.git(source, 'rev-parse', 'HEAD').trim() })));
   migrateStateDir(e.stateDir);
   await e.open();
   assert.deepEqual(e.published(), { version: 1, visitorId: null, igloos: [] }, 'nothing is published before the visitor is verified');

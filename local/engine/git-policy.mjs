@@ -1,7 +1,8 @@
 // Offline Git execution for engine-owned operations. Every call uses an
 // argument array, a sanitized environment, bounded output, and a timeout.
-// Repository hooks, fsmonitor, lazy fetching, transports, and unsupported
-// filter commands must never run on the engine's behalf.
+// Repository hooks (including config-defined hooks), fsmonitor, lazy fetching,
+// transports, aliases, and unsupported filter commands must never run on the
+// engine's behalf.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -10,10 +11,27 @@ import { spawn } from 'node:child_process';
 export const MIN_GIT_VERSION = Object.freeze([2, 48, 0]);
 export const TIMEOUTS = Object.freeze({ quick: 15000, status: 60000, diff: 60000, attributes: 120000, worktree: 600000 });
 const MIB = 1024 * 1024;
+const KILL_GRACE_MS = 2000;
+// Per-protocol settings override protocol.allow, so each is pinned on the command line too.
+const TRANSPORTS = ['file', 'git', 'ssh', 'http', 'https', 'ext', 'ftp', 'ftps'];
+// Config-defined hooks run even with an empty core.hooksPath, and attr.tree
+// makes checkout read attributes from a tree other than the inspected baseline.
+const REFUSED_CONFIG = '^(hook\\.|attr\\.tree$)';
+const CONDITIONAL_SENSITIVE_CONFIG = '^(hook\\.|attr\\.tree$|filter\\.|core\\.attributesfile$)';
 
-// Repository-location and injected-configuration variables would let the
-// caller's environment redirect engine reads to another repository or policy.
-const STRIPPED_GIT_ENV = /^GIT_(DIR|WORK_TREE|INDEX_FILE|OBJECT_DIRECTORY|ALTERNATE_OBJECT_DIRECTORIES|COMMON_DIR|NAMESPACE|CEILING_DIRECTORIES|DISCOVERY_ACROSS_FILESYSTEM|CONFIG_PARAMETERS|CONFIG_COUNT|CONFIG_KEY_\d+|CONFIG_VALUE_\d+|EXTERNAL_DIFF|DIFF_OPTS|PAGER|EDITOR|SEQUENCE_EDITOR|ASKPASS|SSH|SSH_COMMAND|PROXY_COMMAND|EXEC_PATH|TRACE\w*|REPLACE_REF_BASE|NO_REPLACE_OBJECTS|SHALLOW_FILE|QUARANTINE_PATH|PREFIX|INTERNAL_\w*)$/;
+// Each command leads its own process group so a timeout or engine exit also
+// stops the children it spawns (the checkout behind `git worktree add`).
+const liveGroups = new Set();
+let exitHookInstalled = false;
+function signalGroup(pid, signal) { try { process.kill(-pid, signal); } catch { /* The group has already exited. */ } }
+function trackGroup(pid) {
+  if (!exitHookInstalled) {
+    exitHookInstalled = true;
+    // SIGTERM lets Git remove its lock files and a half-created worktree on the way out.
+    process.on('exit', () => { for (const group of liveGroups) signalGroup(group, 'SIGTERM'); });
+  }
+  liveGroups.add(pid);
+}
 
 // The standard Git LFS driver values written by `git lfs install`, with and
 // without `--skip-smudge`. Any other command is a custom filter.
@@ -59,9 +77,13 @@ export function assertGitVersion(text) {
   return version;
 }
 
+// No GIT_* variable is inherited: location, configuration (GIT_CONFIG,
+// GIT_CONFIG_PARAMETERS), attribute (GIT_ATTR_SOURCE), and protocol
+// (GIT_ALLOW_PROTOCOL) variables would each bypass part of this policy.
+// Callers pass any Git variables they need explicitly.
 function sanitizedEnvironment(extra = {}) {
   const env = {};
-  for (const [key, value] of Object.entries(process.env)) if (!STRIPPED_GIT_ENV.test(key)) env[key] = value;
+  for (const [key, value] of Object.entries(process.env)) if (!key.startsWith('GIT_')) env[key] = value;
   return { ...env, ...extra, GIT_NO_LAZY_FETCH: '1', GIT_LFS_SKIP_SMUDGE: '1', GIT_TERMINAL_PROMPT: '0',
     GIT_OPTIONAL_LOCKS: '0', GIT_ASKPASS: '', SSH_ASKPASS: '', GIT_PAGER: 'cat', GIT_EDITOR: 'false' };
 }
@@ -80,16 +102,29 @@ export function createGit({ hooksDir, env: extraEnv = {}, binary = 'git' } = {})
   if (typeof hooksDir !== 'string' || !path.isAbsolute(hooksDir)) throw new Error('An absolute empty hooks directory is required.');
   const env = sanitizedEnvironment(extraEnv);
   const policyArgs = ['-c', `core.hooksPath=${hooksDir}`, '-c', 'core.fsmonitor=false', '-c', 'submodule.recurse=false',
-    '-c', 'protocol.allow=never', '-c', 'core.sshCommand=false', '-c', 'credential.helper='];
+    '-c', 'protocol.allow=never', ...TRANSPORTS.flatMap(name => ['-c', `protocol.${name}.allow=never`]),
+    '-c', 'core.sshCommand=false', '-c', 'credential.helper='];
 
-  /** Returns { stdout: Buffer, stderr, code, truncated }. Throws GitError unless allowExit includes the exit code. */
-  function raw(cwd, args, { timeout = TIMEOUTS.quick, maxBuffer = MIB, input, allowExit = [0], truncate = false } = {}) {
+  /**
+   * Run `file` in its own process group with the sanitized environment (plus
+   * per-call `env`). Returns { stdout: Buffer, stderr, code, truncated }.
+   * Throws GitError unless allowExit includes the exit code.
+   */
+  function run(label, file, argv, cwd, { timeout = TIMEOUTS.quick, maxBuffer = MIB, input, allowExit = [0], truncate = false, env: callEnv } = {}) {
     return new Promise((resolve, reject) => {
-      const child = spawn(binary, [...policyArgs, ...args], { cwd, env, stdio: ['pipe', 'pipe', 'pipe'] });
+      const child = spawn(file, argv, { cwd, env: callEnv ? { ...env, ...callEnv } : env, stdio: ['pipe', 'pipe', 'pipe'], detached: true });
+      const group = child.pid;
+      if (group) trackGroup(group);
       const out = [];
-      let outBytes = 0, errText = '', truncated = false, settled = false, timedOut = false;
-      const timer = setTimeout(() => { timedOut = true; child.kill('SIGKILL'); }, timeout);
+      let outBytes = 0, errText = '', truncated = false, settled = false, timedOut = false, grace = null;
+      const timer = setTimeout(() => {
+        timedOut = true;
+        signalGroup(group, 'SIGTERM');
+        grace = setTimeout(() => signalGroup(group, 'SIGKILL'), KILL_GRACE_MS);
+      }, timeout);
       timer.unref?.();
+      // When the leader exits, nothing it started may keep running in its group.
+      child.on('exit', () => { clearTimeout(grace); liveGroups.delete(group); signalGroup(group, 'SIGKILL'); });
       const finish = (error, value) => {
         if (settled) return;
         settled = true;
@@ -102,7 +137,7 @@ export function createGit({ hooksDir, env: extraEnv = {}, binary = 'git' } = {})
           out.push(chunk.subarray(0, maxBuffer - outBytes));
           outBytes = maxBuffer;
           truncated = true;
-          if (!truncate) child.kill('SIGKILL');
+          if (!truncate) signalGroup(group, 'SIGKILL');
           else child.stdout.destroy();
           return;
         }
@@ -110,25 +145,28 @@ export function createGit({ hooksDir, env: extraEnv = {}, binary = 'git' } = {})
         outBytes += chunk.length;
       });
       child.stderr.on('data', chunk => { if (errText.length < 16384) errText += chunk.toString('utf8'); });
-      child.on('error', error => finish(new GitError(`Git could not run: ${error.message}`, { code: error.code })));
+      child.on('error', error => finish(new GitError(`${label} could not run: ${error.message}`, { code: error.code })));
       child.stdin.on('error', () => {});
       child.on('close', code => {
         const stdout = Buffer.concat(out);
-        if (timedOut) return finish(new GitError(`Git ${args[0]} timed out after ${Math.round(timeout / 1000)} seconds.`, { stderr: errText }));
-        if (truncated && !truncate) return finish(new GitError(`Git ${args[0]} produced more output than the engine allows.`, { stderr: errText }));
+        if (timedOut) return finish(new GitError(`${label} timed out after ${Math.round(timeout / 1000)} seconds.`, { stderr: errText }));
+        if (truncated && !truncate) return finish(new GitError(`${label} produced more output than the engine allows.`, { stderr: errText }));
         if (truncated) return finish(null, { stdout, stderr: errText, code, truncated: true });
         if (!allowExit.includes(code)) {
           const detail = errText.trim().split('\n').filter(Boolean).slice(-3).join(' ').slice(0, 600);
-          return finish(new GitError(`Git ${args[0]} failed${detail ? `: ${detail}` : ` with exit code ${code}.`}`, { code, stderr: errText }));
+          return finish(new GitError(`${label} failed${detail ? `: ${detail}` : ` with exit code ${code}.`}`, { code, stderr: errText }));
         }
         finish(null, { stdout, stderr: errText, code, truncated: false });
       });
       if (input !== undefined) child.stdin.end(input); else child.stdin.end();
     });
   }
+  const raw = (cwd, args, options) => run(`Git ${args[0]}`, binary, [...policyArgs, ...args], cwd, options);
+  /** Run a helper executable (never through `git <name>`, which could resolve to an alias). */
+  const tool = (file, args, cwd, options) => run(path.basename(file), file, args, cwd, options);
   async function text(cwd, args, options) { return (await raw(cwd, args, options)).stdout.toString('utf8'); }
   async function line(cwd, args, options) { return (await text(cwd, args, options)).trim(); }
-  return { raw, text, line, env, policyArgs };
+  return { raw, text, line, tool, env, policyArgs };
 }
 
 export const splitNul = value => value.toString('utf8').split('\0').filter(Boolean);
@@ -151,10 +189,31 @@ export async function filterDrivers(git, cwd) {
   return drivers;
 }
 
-let lfsProbe;
-async function lfsInstalled(git, cwd) {
-  lfsProbe ??= git.raw(cwd, ['lfs', 'version'], { timeout: TIMEOUTS.quick }).then(result => /^git-lfs\//.test(result.stdout.toString('utf8')), () => false);
-  return lfsProbe;
+/** An executable `name` in an absolute PATH entry; relative entries would resolve inside the repository. */
+function findExecutable(name, searchPath = '') {
+  for (const dir of searchPath.split(path.delimiter)) {
+    if (!path.isAbsolute(dir)) continue;
+    const candidate = path.join(dir, name);
+    try {
+      if (!fs.statSync(candidate).isFile()) continue;
+      fs.accessSync(candidate, fs.constants.X_OK);
+      return candidate;
+    } catch { /* Not here. */ }
+  }
+  return null;
+}
+
+// `git lfs` would fall through to a repository alias when git-lfs is not on
+// PATH, so the executable is located and run directly.
+const lfsProbes = new WeakMap();
+function lfsInstalled(git) {
+  if (!lfsProbes.has(git)) {
+    const binary = findExecutable('git-lfs', git.env.PATH);
+    lfsProbes.set(git, binary
+      ? git.tool(binary, ['version'], path.parse(process.cwd()).root, { timeout: TIMEOUTS.quick }).then(result => /^git-lfs\//.test(result.stdout.toString('utf8')), () => false)
+      : Promise.resolve(false));
+  }
+  return lfsProbes.get(git);
 }
 
 /** Classify every configured driver as inert (no command), standard LFS, or custom. */
@@ -165,7 +224,7 @@ export async function classifyDrivers(git, cwd) {
     const commands = FILTER_COMMANDS.filter(key => typeof config[key] === 'string' && config[key].trim());
     if (!commands.length) { result.set(name, 'inert'); continue; }
     const standard = name === 'lfs' && commands.every(key => LFS_COMMANDS[key].includes(config[key].trim()));
-    result.set(name, standard && await lfsInstalled(git, cwd) ? 'lfs' : 'custom');
+    result.set(name, standard && await lfsInstalled(git) ? 'lfs' : 'custom');
   }
   return result;
 }
@@ -178,12 +237,26 @@ function expandIncludePath(value, origin) {
 }
 
 /**
- * Repository-local conditional includes are refused outright. Conditional
- * includes elsewhere are acceptable only when the included file cannot change
- * the filter policy, because their conditions differ between the source
- * checkout and the engine worktree (gitdir, branch, remotes).
+ * Config-defined hooks and attr.tree are refused in every scope, including
+ * included files. Repository-local conditional includes are refused outright.
+ * Conditional includes elsewhere are acceptable only when the included file
+ * cannot change the hook, filter, or attribute policy, because their
+ * conditions differ between the source checkout and the engine worktree
+ * (gitdir, branch, remotes).
  */
 export async function assertConfigPolicy(git, cwd) {
+  const refused = await git.raw(cwd, ['config', '-z', '--show-origin', '--name-only', '--get-regexp', REFUSED_CONFIG], { allowExit: [0, 1] });
+  const entries = [];
+  const pairs = refused.stdout.toString('utf8').split('\0');
+  for (let index = 0; index + 1 < pairs.length; index += 2) if (pairs[index + 1]) entries.push({ origin: pairs[index], key: pairs[index + 1] });
+  const describe = items => `${items.slice(0, 3).map(item => `${item.key} from ${item.origin}`).join(', ')}${items.length > 3 ? `, and ${items.length - 3} more` : ''}`;
+  const hooks = entries.filter(item => item.key.startsWith('hook.'));
+  if (hooks.length) {
+    throw new PolicyError(`Git configuration defines hooks (${describe(hooks)}). Claude Penguin refuses config-defined hooks because core.hooksPath does not disable them, and no hook may run for engine-owned Git operations. Remove the hook.* settings from that configuration, then retry.`);
+  }
+  if (entries.length) {
+    throw new PolicyError(`Git configuration sets attr.tree (${describe(entries)}), so checkout and status would read attributes from a tree other than the one Claude Penguin inspects for filters. Remove attr.tree, then retry.`);
+  }
   const result = await git.raw(cwd, ['config', '-z', '--show-scope', '--show-origin', '--get-regexp', '^includeif\\.'], { allowExit: [0, 1] });
   const fields = result.stdout.toString('utf8').split('\0');
   for (let index = 0; index + 2 < fields.length; index += 3) {
@@ -199,9 +272,9 @@ export async function assertConfigPolicy(git, cwd) {
     const included = expandIncludePath(value, origin);
     if (!included) throw new PolicyError(`Conditional configuration ${key} from ${origin} cannot be resolved, so the worktree filter policy is unknown. Use an absolute include path, then retry.`);
     if (!fs.existsSync(included)) continue;
-    const contents = await git.raw(cwd, ['config', '--file', included, '--includes', '-z', '--name-only', '--get-regexp', '^(filter\\.|core\\.attributesfile$)'], { allowExit: [0, 1] });
+    const contents = await git.raw(cwd, ['config', '--file', included, '--includes', '-z', '--name-only', '--get-regexp', CONDITIONAL_SENSITIVE_CONFIG], { allowExit: [0, 1] });
     if (splitNul(contents.stdout).length) {
-      throw new PolicyError(`Conditional configuration ${key} (${included}) changes Git filter or attribute settings. Its condition may differ between the source checkout and the engine worktree, so Claude Penguin cannot establish the effective filter policy. Move those settings out of the conditional include, then retry.`);
+      throw new PolicyError(`Conditional configuration ${key} (${included}) changes Git hook, filter, or attribute settings. Its condition may differ between the source checkout and the engine worktree, so Claude Penguin cannot establish the effective hook and filter policy. Move those settings out of the conditional include, then retry.`);
     }
   }
 }

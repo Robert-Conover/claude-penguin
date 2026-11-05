@@ -3,17 +3,28 @@ export const states = Object.freeze({
   interrupted: 'Interrupted', failed: 'Failed',
 });
 
+// The overlay contract this browser speaks, and the identity bounds bridge.as
+// enforces (`version`, `maxGameId`, `maxProjects`). bridge.test.mjs checks that
+// both sides agree; change them together and rebuild the overlay.
+export const BRIDGE_CONTRACT_VERSION = 3;
+export const MAX_GAME_ID = 999999999;
+export const MAX_MAPPINGS = 32;
+
 const positiveId = value => Number.isSafeInteger(value) && value > 0;
+// Visitor, owner, room, and puffle IDs reach the overlay, which refuses a whole
+// configuration for one out-of-range ID. Checking its bound here excludes only
+// that mapping. Layout (igloo) IDs stay in the browser.
+const gameId = value => positiveId(value) && value <= MAX_GAME_ID;
+const gameIds = item => ['ownerId', 'roomId', 'puffleId'].every(key => gameId(item[key])) && positiveId(item.iglooId);
 const label = value => typeof value === 'string' && value.length > 0 && value.length <= 80;
 
 export function validateFixtures(input) {
   if (input?.version !== 1 || input.kind !== 'game-bridge-fixture' ||
-      input.visitor?.username !== 'bridgecheck' || !positiveId(input.visitor.penguinId) ||
+      input.visitor?.username !== 'bridgecheck' || !gameId(input.visitor.penguinId) ||
       !Array.isArray(input.projects) || input.projects.length !== 2) throw new Error('Invalid bridge fixture manifest.');
   const seen = { projectId: new Set(), ownerId: new Set(), iglooId: new Set(), puffleId: new Set() };
   const projects = input.projects.map(project => {
-    if (!/^bridge-(alpha|beta)$/.test(project.projectId) || !label(project.name) || !label(project.puffleName) ||
-        !['ownerId', 'iglooId', 'roomId', 'puffleId'].every(key => positiveId(project[key])) ||
+    if (!/^bridge-(alpha|beta)$/.test(project.projectId) || !label(project.name) || !label(project.puffleName) || !gameIds(project) ||
         project.roomId !== project.ownerId + 2000 || project.ownerId === input.visitor.penguinId) {
       throw new Error('Invalid project/igloo/puffle mapping.');
     }
@@ -71,7 +82,7 @@ const mappingKeys = ['projectId', 'name', 'ownerId', 'iglooId', 'roomId', 'puffl
 
 export function agentMappings(engineSnapshot) {
   const visitor = engineSnapshot?.visitor;
-  if (!visitor || !positiveId(visitor.penguinId) || !label(visitor.username) || typeof visitor.verifiedAt !== 'string' || !visitor.verifiedAt) return null;
+  if (!visitor || !gameId(visitor.penguinId) || !label(visitor.username) || typeof visitor.verifiedAt !== 'string' || !visitor.verifiedAt) return null;
   const candidates = [];
   const rejected = [];
   for (const project of Array.isArray(engineSnapshot.projects) ? engineSnapshot.projects : []) {
@@ -79,8 +90,7 @@ export function agentMappings(engineSnapshot) {
     if (!game || game.status !== 'ready') continue;
     const candidate = { projectId: project.id, name: project.name, ownerId: game.ownerId, iglooId: game.iglooId,
       roomId: game.roomId, puffleId: game.puffleId, puffleName: game.puffleName };
-    if (!uuid(candidate.projectId) || !label(candidate.name) || !label(candidate.puffleName) ||
-        !['ownerId', 'iglooId', 'roomId', 'puffleId'].every(key => positiveId(candidate[key])) ||
+    if (!uuid(candidate.projectId) || !label(candidate.name) || !label(candidate.puffleName) || !gameIds(candidate) ||
         candidate.roomId !== candidate.ownerId + 2000 || candidate.ownerId === visitor.penguinId) {
       rejected.push({ projectId: uuid(project.id) ? project.id : null, reason: 'invalid-mapping' });
       continue;
@@ -112,8 +122,14 @@ export function mappingKey(mappings) {
 
 // Exactly what `cpBridgeConfigure` receives: public game IDs and the mapping
 // identity. Display names travel separately through the bounded menu payload.
+// More mappings than the overlay accepts are refused, never truncated, so no
+// project silently disappears from the neighborhood.
 export function flashConfiguration(mappings) {
   if (!mappings) return null;
+  const count = mappings.projects.length;
+  if (count > MAX_MAPPINGS) {
+    throw Object.assign(new Error(`${count} project igloos are ready, but the game can show at most ${MAX_MAPPINGS}, so none are shown.`), { code: 'too-many-projects' });
+  }
   return { visitorId: mappings.visitor.penguinId,
     projects: mappings.projects.map(project => ({ projectId: project.projectId, ownerId: project.ownerId, puffleId: project.puffleId })) };
 }

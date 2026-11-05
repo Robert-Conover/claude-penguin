@@ -12,7 +12,7 @@ const data = () => {
 const state = (snapshot = data()) => ({ connected: true, token: 'private-browser-token', snapshot });
 const mappings = agentMappings(data());
 const target = { projectId: PROJECT_A, workerId: 'worker-a' };
-const game = { ok: true, version: 2, configured: true, generation: 4, playerId: 107, ownerId: 0, roomId: 100, puffles: [] };
+const game = { ok: true, version: 3, configured: true, generation: 4, playerId: 107, ownerId: 0, roomId: 100, puffles: [] };
 const context = (extra = {}) => ({ mappings, game, generation: 4, engineState: state(), target, ...extra });
 const action = (extra = {}) => ({ type: 'agent-menu-action', projectId: PROJECT_A, action: 'submit', text: 'A task', generation: 4, ...extra });
 

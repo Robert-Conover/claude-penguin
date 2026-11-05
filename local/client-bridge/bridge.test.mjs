@@ -1,55 +1,16 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
-import vm from 'node:vm';
 import { agentMappings, mappingKey, flashConfiguration, selectionForClick, activeMappingsFor, needsConfiguration } from '../web/bridge/model.mjs';
+import * as contract from '../web/bridge/model.mjs';
 import { nativeMenuState, allowedNativeAction } from '../web/bridge/native-menu.mjs';
-import { engineSnapshot, PROJECT_A, PROJECT_B, PRIVATE } from '../web/bridge/testing.mjs';
+import { engineSnapshot, overlayDouble, PROJECT_A, PROJECT_B, PRIVATE } from '../web/bridge/testing.mjs';
 
 // bridge.as deliberately uses the common ES3 subset. This harness verifies the
 // adapter's identity/state decisions; the live Ruffle check verifies AVM1 itself.
 const source = readFileSync(new URL('./bridge.as', import.meta.url), 'utf8');
 
-function fixture() {
-  const context = vm.createContext({});
-  vm.runInContext(`
-    var events = [], navigations = [], animations = [];
-    var playerId = 107, roomId = 2105, ownerId = 105, roomReady = true, inIgloo = true, gameRoom;
-    var originalPress = function() { events.push({type:'original'}); };
-    var puffle = {id:4, clip:{_visible:true, _x:200, _y:200, onPress:originalPress}, _artClip:{_totalframes:35}};
-    var shell = {
-      getMyPlayerId:function(){return playerId;}, getCurrentRoomId:function(){return roomId;},
-      // The newer IglooContext uses getIglooPlayerID, not the legacy stored igloo object.
-      getPlayerIglooObject:function(){return undefined;}, getIglooPlayerID:function(){return ownerId;},
-      getCurrentGameRoomId:function(){return gameRoom;}, getRoomNameById:function(){return 'town';},
-      sendJoinPlayerIgloo:function(id){navigations.push(id);}, sendJoinRoom:function(name){navigations.push(name);},
-      hideCount:0, hideTriggers:function(){this.hideCount++;}, showTriggers:function(){this.hideCount--;}
-    };
-    var engine = {
-      isRoomReady:function(){return roomReady;}, isInAnIgloo:function(){return inIgloo;},
-      puffleManager:{_puffles:[puffle],getPuffleByID:function(id){return id==4?puffle:undefined;},
-        updatePuffleFrameByID:function(id,frame){animations.push({id:id,frame:frame});}}
-    };
-    function Clip(parent, name) { this._parent=parent; this._name=name; this.depth=0; this._visible=true; }
-    Clip.prototype.getNextHighestDepth=function(){return ++this.depth;};
-    Clip.prototype.createEmptyMovieClip=function(name){var clip=new Clip(this,name);this[name]=clip;return clip;};
-    Clip.prototype.removeMovieClip=function(){if(this._parent)delete this._parent[this._name];this.removed=true;};
-    Clip.prototype.createTextField=function(name){this[name]={text:'',setTextFormat:function(){},setNewTextFormat:function(){}};};
-    Clip.prototype.lineStyle=Clip.prototype.beginFill=Clip.prototype.moveTo=Clip.prototype.lineTo=Clip.prototype.curveTo=Clip.prototype.endFill=function(){};
-    var TextFormat=function(){};
-    var MovieClipLoader=function(){};
-    MovieClipLoader.prototype.addListener=function(listener){this.listener=listener;};
-    MovieClipLoader.prototype.loadClip=function(url,clip){clip.url=url;clip._width=366;clip._height=319;this.listener.onLoadInit(clip);};
-    var Selection={setFocus:function(value){this.focus=value;}};
-    var ui={interface_mc:new Clip(null,'interface'),is_quick_keys_active:true,widgets:false,
-      getWidgetsActive:function(){return this.widgets;},setWidgetsActive:function(value){this.widgets=value;},
-      stopQuickKeys:function(){this.is_quick_keys_active=false;},startQuickKeys:function(){this.is_quick_keys_active=true;}};
-    var _global = {getCurrentShell:function(){return shell;},getCurrentEngine:function(){return engine;},getCurrentInterface:function(){return ui;}};
-    var flash = {external:{ExternalInterface:{addCallback:function(){},call:function(name,event){events.push(event);}}}};
-    var setInterval=function(){return 1;},clearInterval=function(){};
-  ` + source, context);
-  return expression => vm.runInContext(expression, context);
-}
+const fixture = () => overlayDouble().run;
 
 const configure = 'cpBridge.configure(107,[{projectId:"one",ownerId:105,puffleId:4},{projectId:"two",ownerId:106,puffleId:5}])';
 
@@ -256,17 +217,150 @@ test('a card for a project that stays mapped survives reconfiguration and report
   assert.equal(run('events[events.length-1].generation'), 2);
 });
 
-test('overlay source stays in the AVM1-compatible subset and documents every callback', () => {
-  // The harness runs on V8; this guards against syntax JPEXS cannot compile to AVM1.
-  const code = source.replace(/"(?:[^"\\\n]|\\.)*"/g, '""').replace(/\/\/[^\n]*/g, '');
-  for (const pattern of [/=>/, /`/, /\blet\b/, /\bconst\b/, /\?\./, /\?\?/, /\.\.\./, /\bclass\b/, /\bof\b/, /'/]) {
-    assert.doesNotMatch(code, pattern);
+test('a native action the browser refuses releases a pending task, keeps its draft, and says it was not sent', () => {
+  const run = fixture();
+  run(configure + ';cpBridge.setAgentMenu(' + nativePayload + ');cpBridge.showAgentMenu()');
+  run('cpBridge.agentMenu.card.taskInput.text="Fix the greeting";cpBridge.menuAction("submit")');
+  assert.equal(run('cpBridge.agentSubmitPending'), true);
+  assert.equal(run('cpBridge.rejectAgentAction("submit","two").ok'), true);
+  assert.equal(run('cpBridge.agentSubmitPending'), true, 'another project’s refusal does not release this task');
+  assert.equal(run('cpBridge.rejectAgentAction("submit","one").ok'), true);
+  assert.equal(run('cpBridge.agentSubmitPending'), false);
+  assert.equal(run('cpBridge.agentMenu.card.sendButton.allowed'), true, 'Send follows the host-reported state again');
+  assert.equal(run('cpBridge.agentMenu.card.taskInput.text'), 'Fix the greeting');
+  run('cpBridge.tick()');
+  assert.match(run('cpBridge.agentMenu.card.taskLabel.text'), /not sent/i, 'the notice survives polling');
+  // The unsent text is no longer treated as submitted, so a later working state keeps it.
+  run('var working=' + nativePayload + ';working.status="working";working.canSubmit=false;cpBridge.setAgentMenu(working)');
+  assert.equal(run('cpBridge.agentMenu.card.taskInput.text'), 'Fix the greeting');
+  // Sending again or closing the card clears the notice.
+  run('cpBridge.setAgentMenu(' + nativePayload + ');cpBridge.menuAction("submit");cpBridge.tick()');
+  assert.equal(run('cpBridge.agentMenu.card.taskLabel.text'), 'Give Atlas a task');
+  run('cpBridge.rejectAgentAction("submit","one");cpBridge.hideAgentMenu();cpBridge.showAgentMenu()');
+  assert.equal(run('cpBridge.agentMenu.card.taskLabel.text'), 'Give Atlas a task');
+  assert.equal(run('cpBridge.agentMenu.card.taskInput.text'), 'Fix the greeting', 'the draft survives closing');
+  // Refusing a project action while no card is open changes nothing.
+  run('cpBridge.hideAgentMenu()');
+  assert.equal(run('cpBridge.rejectAgentAction("start","one").menuVisible'), false);
+  assert.equal(run('cpBridge.rejectAgentAction(1,"one").error'), 'invalid-rejection');
+});
+
+test('overlay and browser share the contract version and identity bounds', () => {
+  const overlay = overlayDouble();
+  assert.ok(Number.isSafeInteger(contract.BRIDGE_CONTRACT_VERSION), 'the browser exports its contract version');
+  assert.deepEqual(overlay.read('events[0]'), { type: 'ready', version: contract.BRIDGE_CONTRACT_VERSION });
+  assert.equal(overlay.read('cpBridge.version'), contract.BRIDGE_CONTRACT_VERSION);
+  assert.equal(overlay.read('cpBridge.maxGameId'), contract.MAX_GAME_ID);
+  assert.equal(overlay.read('cpBridge.maxProjects'), contract.MAX_MAPPINGS);
+  const configure = projects => overlay.callExternalInterface('cpBridgeConfigure', 107, projects);
+  const mapping = index => ({ projectId: 'p' + index, ownerId: 200 + index, puffleId: 900 + index });
+  assert.equal(configure([{ projectId: 'edge', ownerId: contract.MAX_GAME_ID - 2000, puffleId: contract.MAX_GAME_ID }]).ok, true);
+  assert.equal(configure([{ projectId: 'over', ownerId: contract.MAX_GAME_ID + 1, puffleId: 4 }]).error, 'invalid-project');
+  assert.equal(configure(Array.from({ length: contract.MAX_MAPPINGS }, (_, index) => mapping(index))).ok, true);
+  assert.equal(configure(Array.from({ length: contract.MAX_MAPPINGS + 1 }, (_, index) => mapping(index))).error, 'invalid-configuration');
+});
+
+test('every callback result carries the contract version, refusals included', () => {
+  const overlay = overlayDouble();
+  const used = new Set();
+  const call = (name, ...args) => { used.add(name); return overlay.callExternalInterface(name, ...args); };
+  const results = [
+    call('cpBridgeSnapshot'), call('cpBridgeJoinIgloo', 105), call('cpBridgeAnimate', 4, 'working'),
+    call('cpBridgeSetAgentMenu', null), call('cpBridgeShowAgentMenu'), call('cpBridgeHideAgentMenu'),
+    call('cpBridgeConfigure', 0, []), call('cpBridgeConfigure', 107, [{ projectId: 'one', ownerId: 105, puffleId: 4 }]),
+    call('cpBridgeJoinIgloo', 105), call('cpBridgeJoinRoom', 1), call('cpBridgeJoinRoom', 100), call('cpBridgeAnimate', 4, 'working'),
+    call('cpBridgeSetAgentMenu', { enabled: true, connected: true, projectId: 'missing' }),
+    call('cpBridgeSetAgentMenu', { enabled: true, connected: true, projectId: 'one' }), call('cpBridgeShowAgentMenu'),
+    call('cpBridgeRejectAgentAction', 'submit', 'one'), call('cpBridgeRejectAgentAction', 1, 'one'), call('cpBridgeHideAgentMenu'),
+    call('cpBridgeSetAgentMenu', { enabled: false }),
+  ];
+  for (const result of results) assert.equal(result?.version, contract.BRIDGE_CONTRACT_VERSION, JSON.stringify(result));
+  assert.ok(results.some(result => result.ok) && results.some(result => !result.ok));
+  assert.deepEqual([...used].sort(), overlay.read('(function(){var names=[];for(var name in callbacks)names.push(name);return names;})()').sort(),
+    'every registered callback is covered');
+});
+
+// The harness runs on V8, so it accepts syntax and library calls that JPEXS
+// cannot compile or AVM1 does not provide. Strings and comments are blanked
+// first. Returns the names of every rule the source breaks. Not detected:
+// destructuring assignment without `var`, a regex literal after `)`, and
+// library calls outside the lists below. `.indexOf(` is refused for every
+// receiver because the guard cannot tell an Array (no indexOf in AS2) from a
+// String (which has one); compare with a loop or `substr` instead.
+function es3Violations(text) {
+  const code = text.replace(/"(?:[^"\\\n]|\\.)*"/g, '""').replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/\/\/[^\n]*/g, '');
+  const rules = {
+    arrow: /=>/, template: /`/, let: /\blet\b/, const: /\bconst\b/, 'optional chaining': /\?\./, 'nullish coalescing': /\?\?/,
+    spread: /\.\.\./, class: /\bclass\b/, 'for-of': /\bof\b/, 'single quote': /'/, exponent: /\*\*/,
+    'regex literal': /(?:^|[=(,:[!&|?{};]|\breturn|\btypeof)\s*\/(?![/*])/m,
+    'optional catch binding': /\bcatch\s*\{/,
+    'default parameter': /\bfunction\b[^(]*\([^)]*=/,
+    destructuring: /\bvar\s*[[{]|\bfunction\b[^(]*\(\s*[[{]/,
+    'generator or async': /\bfunction\s*\*|\b(?:async|await|yield)\b/,
+    'numeric literal form': /\d_\d|\b0[bBoO]\d/,
+    'ES5+ global': /\b(?:JSON|Symbol|Promise|Map|Set|WeakMap|WeakSet|Proxy|Reflect)\b/,
+    'ES5+ static method': /\bObject\s*\.\s*(?!registerClass\b)\w|\bArray\s*\.\s*(?:isArray|from|of)\b|\bNumber\s*\.\s*is\w|\bDate\s*\.\s*now\b/,
+    'ES5+ instance method': /\.\s*(?:indexOf|lastIndexOf|some|every|forEach|map|filter|reduce|reduceRight|find|findIndex|includes|fill|flat|flatMap|trim|trimStart|trimEnd|padStart|padEnd|startsWith|endsWith|repeat|bind|toISOString)\s*\(/,
+  };
+  const found = Object.entries(rules).filter(([, pattern]) => pattern.test(code)).map(([name]) => name);
+  if (objectMemberViolation(code)) found.push('object literal member');
+  return found;
+}
+// ES3 object literal members are `key: value` with an identifier, string, or
+// number key. This rejects shorthand properties, computed keys, accessors, and
+// methods. A `{` counts as a literal only after `= ( , : [ ? ! & |` or `return`;
+// any other brace is treated as a block and left unchecked.
+function objectMemberViolation(code) {
+  const tokens = code.match(/[A-Za-z_$][\w$]*|\d+(?:\.\d+)?|""|\.\.\.|\S/g) ?? [];
+  const stack = [];
+  let expectKey = false;
+  for (let index = 0; index < tokens.length; index++) {
+    const token = tokens[index];
+    if (stack.at(-1) === 'object' && expectKey) {
+      expectKey = false;
+      const key = /^(?:[A-Za-z_$][\w$]*|\d+(?:\.\d+)?|"")$/.test(token) && tokens[index + 1] === ':';
+      if (token !== '}' && !key) return true;
+    }
+    if (token === '{') {
+      const literal = /^(?:[=(,:[?!&|]|return)$/.test(tokens[index - 1] ?? '');
+      stack.push(literal ? 'object' : 'block');
+      expectKey = literal;
+    } else if (token === '(' || token === '[') stack.push(token);
+    else if (token === '}' || token === ')' || token === ']') stack.pop();
+    else if (token === ',' && stack.at(-1) === 'object') expectKey = true;
   }
+  return false;
+}
+
+test('ES3 guard rejects constructs outside the AVM1 subset and accepts the overlay', () => {
+  assert.deepEqual(es3Violations(source), []);
+  const outside = {
+    'shorthand property': 'var v = 1; var o = {v};',
+    'default parameter': 'cpBridge.f = function(a = 1) { return a; };',
+    'destructuring': 'var {visitorId} = cpBridge;',
+    'regex literal': 'var ok = /^[0-9a-f-]+$/.test("ab");',
+    'exponent': 'var n = 2 ** 3;',
+    'optional catch binding': 'try { n = 1; } catch { n = 2; }',
+    'computed key': 'var k = "a"; var c = {[k]: 1};',
+    'getter in literal': 'var g = { get x() { return 1; } };',
+    'setter in literal': 'var g = { set x(value) { this.y = value; } };',
+    'method shorthand': 'var g = { run() { return 1; } };',
+    'Array#indexOf': 'var index = cpBridge.projects.indexOf(1);',
+    'Array#some': 'var hit = cpBridge.projects.some(function(p){ return p.ownerId == 1; });',
+    'Object.keys': 'var keys = Object.keys({a:1});',
+    'JSON': 'var text = JSON.stringify([]);',
+    'String#trim': 'var t = " x ".trim();',
+  };
+  for (const [name, snippet] of Object.entries(outside)) {
+    assert.notDeepEqual(es3Violations(source + '\n' + snippet + '\n'), [], name);
+  }
+});
+
+test('overlay source documents every callback', () => {
   const readme = readFileSync(new URL('./README.md', import.meta.url), 'utf8');
   const callbacks = [...source.matchAll(/addCallback\("(\w+)"/g)].map(match => match[1]);
-  assert.equal(callbacks.length, 8);
-  for (const name of callbacks) assert.match(readme, new RegExp('`' + name + '\\('));
-  assert.match(source, /emit\(\{type:"ready", version:2\}\)/);
+  assert.equal(callbacks.length, 9);
+  for (const name of callbacks) assert.ok(readme.includes('`' + name + '('), `README.md documents ${name}`);
 });
 
 // Drives the overlay with the browser's own mapping functions, crossing the
@@ -285,7 +379,7 @@ test('browser mapping flow: empty neighborhood, dynamic addition, UUID routing, 
       sent.push(config);
       const result = read('cpBridge.configure(' + config.visitorId + ',' + JSON.stringify(config.projects) + ')');
       assert.equal(result.ok, true);
-      assert.equal(result.version, 2);
+      assert.equal(result.version, contract.BRIDGE_CONTRACT_VERSION);
       configured = { key, generation: result.generation, mappings };
     }
     return key;

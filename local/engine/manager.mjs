@@ -23,6 +23,7 @@ const EVENTS = ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse',
 const SCROLLBACK = 3000;
 const MAX_INPUT = 64 * 1024;
 const CWD_CACHE_MS = 5000;
+const TOP_LEVEL_TIMEOUT_MS = 2000;
 const INTERRUPT_ACTIVITY = 'Interrupt requested. Cancellation is not yet confirmed. Check the terminal; Escape may also dismiss a prompt.';
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 const now = () => new Date().toISOString();
@@ -59,17 +60,27 @@ function secretMatches(expected, supplied) {
 const positiveId = value => Number.isSafeInteger(value) && value > 0;
 const GAME_SOURCES = ['managed', 'legacy-fixture'];
 const GAME_STATUSES = ['provisioning', 'ready', 'failed', 'repair'];
+// `needs-worker` comes from migration (state.mjs); the others are set here.
+const SETUP_PHASES = ['registered', 'needs-worker', 'preparing', 'game-pending', 'failed', 'ready'];
+const SUBMITTABLE = ['idle', 'review', 'interrupted'];
 const USERNAME_ATTEMPTS = 5;
 const absolute = value => typeof value === 'string' && path.isAbsolute(value);
+const record = value => Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+// A recorded identity the service could not find: repair it explicitly, never recreate it.
+const REPAIR_CODES = ['MISMATCH', 'MISSING'];
 
 function validateSaved(state) {
   const invalid = message => fail(`Saved agent state is invalid: ${message} Preserve it and repair it before restarting.`, 500);
   const projectIds = new Set();
+  const commonDirs = new Set();
   for (const project of state.projects) {
+    if (!record(project)) invalid('a project record is not an object.');
     if (!UUID.test(project.id) || projectIds.has(project.id)) invalid('a project identity is missing or duplicated.');
     projectIds.add(project.id);
     if (projectNameProblem(project.name)) invalid(`project ${project.id} has an invalid name.`);
     if (!absolute(project.sourcePath) || (project.commonDir !== null && !absolute(project.commonDir))) invalid(`project ${project.id} has an invalid repository path.`);
+    if (project.commonDir !== null && commonDirs.has(project.commonDir)) invalid(`project ${project.id} and another project share one repository.`);
+    commonDirs.add(project.commonDir);
     if (project.game !== null) {
       const game = project.game;
       const ids = ['ownerId', 'iglooId', 'roomId', 'puffleId'];
@@ -80,18 +91,28 @@ function validateSaved(state) {
       if (positiveId(game.ownerId) && positiveId(game.roomId) && game.roomId !== game.ownerId + 2000) invalid(`project ${project.id} has an invalid igloo room address.`);
     }
     if (project.activeWorkerId !== null && !UUID.test(project.activeWorkerId)) invalid(`project ${project.id} has an invalid worker reference.`);
-    if (!project.setup || typeof project.setup !== 'object') invalid(`project ${project.id} has no setup record.`);
+    if (!record(project.setup)) invalid(`project ${project.id} has no setup record.`);
+    if (!SETUP_PHASES.includes(project.setup.phase)) invalid(`project ${project.id} has an unknown setup phase.`);
   }
   if (state.projects.length > MAX_PROJECTS) invalid(`more than ${MAX_PROJECTS} projects are registered.`);
   const workerIds = new Set();
+  const sessionIds = new Set();
+  const worktrees = new Set();
   for (const worker of state.workers) {
+    if (!record(worker)) invalid('a worker record is not an object.');
     if (!UUID.test(worker.id) || workerIds.has(worker.id) || !UUID.test(worker.sessionId) || !projectIds.has(worker.projectId)) invalid('a worker identity is missing, duplicated, or unbound.');
     workerIds.add(worker.id);
-    if (typeof worker.established !== 'boolean' || !Array.isArray(worker.taskHistory)) invalid(`worker ${worker.id} is incomplete.`);
+    if (sessionIds.has(worker.sessionId.toLowerCase())) invalid(`worker ${worker.id} and another worker share one Claude session.`);
+    sessionIds.add(worker.sessionId.toLowerCase());
+    if (typeof worker.established !== 'boolean' || !Array.isArray(worker.taskHistory) || !worker.taskHistory.every(record)) invalid(`worker ${worker.id} is incomplete.`);
     const workspace = worker.workspace;
-    if (!workspace || !absolute(workspace.path) || !COMMIT.test(workspace.baseCommit ?? '')) invalid(`worker ${worker.id} has no valid workspace record.`);
+    if (!record(workspace) || !absolute(workspace.path) || !COMMIT.test(workspace.baseCommit ?? '')) invalid(`worker ${worker.id} has no valid workspace record.`);
     if (worker.archived) { if (typeof worker.archived !== 'object') invalid(`worker ${worker.id} has an invalid archive record.`); continue; }
     if (workspace.kind !== 'worktree' || typeof workspace.branch !== 'string' || !['reserved', 'ready'].includes(workspace.state)) invalid(`active worker ${worker.id} must use an engine worktree.`);
+    if (worktrees.has(workspace.path)) invalid(`worker ${worker.id} and another active worker share one worktree.`);
+    worktrees.add(workspace.path);
+    const commonDir = state.projects.find(project => project.id === worker.projectId).commonDir;
+    if (commonDir !== null && workspace.repoCommonDir !== commonDir) invalid(`worker ${worker.id} records a different repository than its project.`);
     try { validatePuffleName(worker.name); } catch { invalid(`worker ${worker.id} has an invalid puffle name.`); }
     if (worker.pid !== null && worker.pid !== undefined && !positiveId(worker.pid)) invalid(`worker ${worker.id} has an invalid process identity.`);
   }
@@ -142,17 +163,44 @@ export async function createManager({ stateDir, onEvent = () => {}, claudePath =
     type: 'command', command: process.execPath, args: [helper], timeout: 3,
   }] }]])) });
 
+  /**
+   * A legacy project (no recorded repository identity) binds only to a
+   * repository that still contains its archived puffles' baseline commits, so
+   * an unrelated repository at the old path never inherits its history or game
+   * mapping. Returns the reason it cannot bind, or null.
+   */
+  async function legacyIdentityProblem(project, identity) {
+    if (state.projects.some(other => other !== project && other.commonDir === identity.commonDir)) return `The repository at ${identity.sourcePath} is already registered as another project.`;
+    for (const worker of state.workers) {
+      if (worker.projectId !== project.id || !worker.archived) continue;
+      const found = await git.raw(identity.sourcePath, ['cat-file', '-e', `${worker.workspace.baseCommit}^{commit}`], { allowExit: [0, 1, 128] });
+      if (found.code !== 0) {
+        return `The repository at ${identity.sourcePath} does not contain the archived puffle ${worker.name}'s history (baseline ${worker.workspace.baseCommit.slice(0, 12)}), so it was not bound to this legacy project. Restore the original repository at that path; nothing was changed.`;
+      }
+    }
+    return null;
+  }
+
   const startedAt = now();
   for (const project of state.projects) {
     project.sourceAvailable = fs.existsSync(project.sourcePath);
     if (project.sourceAvailable && project.commonDir === null) {
-      // Legacy projects learn their repository identity once their source is reachable.
-      try { project.commonDir = (await identifyRepository(git, project.sourcePath)).commonDir; } catch { /* Stay unresolved; registration then cannot deduplicate it. */ }
+      // Legacy projects learn their repository identity once their own source is reachable.
+      try {
+        const identity = await identifyRepository(git, project.sourcePath);
+        if (!await legacyIdentityProblem(project, identity)) project.commonDir = identity.commonDir;
+      } catch { /* Stay unresolved; registration then cannot deduplicate it. */ }
     }
     if (project.game?.source === 'managed' && project.game.status === 'provisioning') project.game.status = 'failed';
     if (project.setup.phase === 'preparing') {
       project.setup = { ...project.setup, phase: 'failed', retryable: true, updatedAt: startedAt,
         error: 'Setup stopped when the engine stopped. Retry to reconcile the reserved worktree and game identities; nothing was removed.' };
+    }
+    const worker = state.workers.find(item => item.id === project.activeWorkerId);
+    if (game && project.setup.phase === 'game-pending' && worker?.workspace.state === 'ready') {
+      // Provisioning is configured now; the existing Retry path provisions it. Nothing is provisioned automatically.
+      project.setup = { ...project.setup, phase: 'failed', step: null, retryable: true, correction: null, updatedAt: startedAt,
+        error: 'Game provisioning was off when this project was set up. Retry to provision its igloo.' };
     }
   }
   for (const worker of state.workers) {
@@ -219,8 +267,9 @@ export async function createManager({ stateDir, onEvent = () => {}, claudePath =
       resumeCommand: worker.established ? `cd ${shellQuote(worker.workspace.path)} && claude --resume ${worker.sessionId}` : null };
   }
   function snapshot() {
-    const visitor = state.visitor ? { penguinId: state.visitor.penguinId, username: state.visitor.username, verifiedAt: state.visitor.verifiedAt ?? null } : null;
-    return { revision: state.revision, limits: { maxProjects: MAX_PROJECTS }, worktreeRoot, visitor,
+    // A visitor that failed this run's verification is reported unverified, so the browser builds no mappings for it.
+    const visitor = state.visitor && !visitorProblem ? { penguinId: state.visitor.penguinId, username: state.visitor.username, verifiedAt: state.visitor.verifiedAt ?? null } : null;
+    return { revision: state.revision, limits: { maxProjects: MAX_PROJECTS }, worktreeRoot, visitor, visitorProblem,
       projects: state.projects.map(projectView),
       workers: state.workers.filter(worker => !worker.archived).map(workerView),
       archivedWorkers: state.workers.filter(worker => worker.archived).map(archivedView) };
@@ -228,10 +277,12 @@ export async function createManager({ stateDir, onEvent = () => {}, claudePath =
   function notify(event) { try { onEvent(event); } catch { /* A disconnected UI must not stop the agent. */ } }
   let publicationProblem = null;
   let publisherClosed = false;
+  let visitorProblem = null; // Set when this run's visitor verification failed; cleared when it verifies again.
+  const withdrawn = { version: 1, visitorId: null, igloos: [] };
   /** Rewrites the native igloo publication when ready mappings or the visitor change. */
   function publish() {
     if (!publisher || publisherClosed) return;
-    try { publisher.update(publicationFor(state)); publicationProblem = null; }
+    try { publisher.update(visitorProblem ? withdrawn : publicationFor(state)); publicationProblem = null; }
     catch (error) {
       if (publicationProblem !== error.message) { publicationProblem = error.message; onWarning(`Native igloo publication failed: ${error.message}`); }
     }
@@ -298,7 +349,8 @@ export async function createManager({ stateDir, onEvent = () => {}, claudePath =
       const existing = state.projects.find(project => project.commonDir === identity.commonDir) ??
         state.projects.find(project => project.commonDir === null && project.sourcePath === identity.sourcePath);
       if (existing) {
-        if (existing.commonDir === null) { existing.commonDir = identity.commonDir; existing.sourceAvailable = true; commit(); }
+        // An unrelated repository at a legacy project's old path stays unbound; createWorker explains why.
+        if (existing.commonDir === null && !await legacyIdentityProblem(existing, identity)) { existing.commonDir = identity.commonDir; existing.sourceAvailable = true; commit(); }
         return projectView(existing);
       }
       if (state.projects.length >= MAX_PROJECTS) fail(`Claude Penguin supports at most ${MAX_PROJECTS} registered projects.`, 409);
@@ -362,7 +414,7 @@ export async function createManager({ stateDir, onEvent = () => {}, claudePath =
       if (closing && !(error instanceof ProvisionError)) return;
       const message = String(error.message).slice(0, 1000);
       if (project.game?.source === 'managed') {
-        project.game.status = error.code === 'MISMATCH' ? 'repair' : 'failed';
+        project.game.status = REPAIR_CODES.includes(error.code) ? 'repair' : 'failed';
         project.game.nameRejected = error.code === 'NAME_REJECTED' && !project.game.puffleId;
       }
       setSetup(project, { phase: 'failed', step: null, error: message, retryable: true, correction: error.code === 'NAME_REJECTED' ? 'puffleName' : null });
@@ -373,22 +425,43 @@ export async function createManager({ stateDir, onEvent = () => {}, claudePath =
 
   let visitorRun = null;
   let visitorVerified = false;
-  /** Verify or create only the marked shared visitor; the engine never logs in as it. */
+  /**
+   * Verify or create only the marked shared visitor; the engine never logs in
+   * as it. A recorded visitor is only verified, never recreated. A visitor
+   * that fails verification (not an unavailable stack) is reported unverified
+   * and publication is withdrawn until it verifies again; it is never remapped.
+   */
   function ensureVisitor({ force = false } = {}) {
     if (!game) return Promise.reject(new ProvisionError('Game provisioning is not configured for this engine.', 'UNAVAILABLE'));
     if (visitorVerified && !force && state.visitor) return Promise.resolve(state.visitor);
     visitorRun ??= (async () => {
-      const visitor = await game.ensureVisitor();
-      if (!positiveId(visitor?.penguinId) || visitor.username !== VISITOR_USERNAME) throw new ProvisionError('The provisioner returned an unexpected visitor identity.', 'MISMATCH');
-      if (state.visitor && state.visitor.penguinId !== visitor.penguinId) {
-        throw new ProvisionError(`The ${VISITOR_USERNAME} visitor now has game ID ${visitor.penguinId}, not the recorded ${state.visitor.penguinId}. Refusing to remap it; repair the visitor record explicitly.`, 'MISMATCH');
+      const recorded = state.visitor?.penguinId ?? null;
+      try {
+        let visitor;
+        try { visitor = await game.ensureVisitor({ penguinId: recorded }); }
+        catch (error) {
+          if (error.code !== 'MISSING') throw error;
+          throw new ProvisionError(`The ${VISITOR_USERNAME} visitor recorded as game ID ${recorded} is missing from the game database: ${String(error.message).slice(0, 300)} Nothing was created; restore that account or repair the visitor record explicitly.`, 'MISSING');
+        }
+        if (!positiveId(visitor?.penguinId) || visitor.username !== VISITOR_USERNAME) throw new ProvisionError('The provisioner returned an unexpected visitor identity.', 'MISMATCH');
+        if (recorded !== null && recorded !== visitor.penguinId) {
+          throw new ProvisionError(`The ${VISITOR_USERNAME} visitor now has game ID ${visitor.penguinId}, not the recorded ${recorded}. Refusing to remap it; repair the visitor record explicitly.`, 'MISMATCH');
+        }
+        if (state.projects.some(project => project.game?.ownerId === visitor.penguinId)) throw new ProvisionError('The visitor account is also a project owner.', 'MISMATCH');
+        assertOpen();
+        state.visitor = { penguinId: visitor.penguinId, username: visitor.username, verifiedAt: now() };
+        visitorVerified = true;
+        visitorProblem = null;
+        commit();
+        return state.visitor;
+      } catch (error) {
+        if (REPAIR_CODES.includes(error.code) && !closing) {
+          visitorVerified = false;
+          visitorProblem = String(error.message).slice(0, 600);
+          try { commit(); } catch { /* The verification failure below is what the caller reports. */ }
+        }
+        throw error;
       }
-      if (state.projects.some(project => project.game?.ownerId === visitor.penguinId)) throw new ProvisionError('The visitor account is also a project owner.', 'MISMATCH');
-      assertOpen();
-      state.visitor = { penguinId: visitor.penguinId, username: visitor.username, verifiedAt: now() };
-      visitorVerified = true;
-      commit();
-      return state.visitor;
     })().finally(() => { visitorRun = null; });
     return visitorRun;
   }
@@ -427,9 +500,14 @@ export async function createManager({ stateDir, onEvent = () => {}, claudePath =
     let owner;
     for (let attempt = 1; ; attempt++) {
       try {
-        owner = await game.ensureOwner({ marker: credentials.marker, username: credentials.username, password: credentials.password, nickname: project.name });
+        // With a recorded owner ID the service only verifies that owner and never creates another.
+        owner = await game.ensureOwner({ marker: credentials.marker, username: credentials.username, password: credentials.password, nickname: project.name,
+          ownerId: mapping.ownerId ?? null });
         break;
       } catch (error) {
+        if (error.code === 'MISSING') {
+          throw new ProvisionError(`The recorded managed owner (game ID ${mapping.ownerId}) is missing from the game database: ${String(error.message).slice(0, 300)} Nothing was created or remapped; restore that account or repair the mapping explicitly, then retry.`, 'MISSING');
+        }
         if (error.code !== 'USERNAME_TAKEN') throw error;
         if (mapping.ownerId) throw mismatch('The managed owner\'s username now belongs to another account. Nothing was changed; repair the game mapping explicitly.');
         if (attempt >= USERNAME_ATTEMPTS) throw new ProvisionError('Could not find an unused managed-owner username.');
@@ -469,12 +547,15 @@ export async function createManager({ stateDir, onEvent = () => {}, claudePath =
   /**
    * Re-verify the visitor and every ready managed mapping (one batched
    * provisioning run). A mismatch marks the mapping for repair and removes it
-   * from publication; an unavailable stack leaves the last verified state.
+   * from publication; a visitor that fails verification withdraws the whole
+   * publication (see ensureVisitor) while owner mappings are still checked. An
+   * unavailable stack leaves the last verified state.
    */
   async function verifyGameMappings() {
-    if (!game) return { checked: 0, repair: 0 };
+    if (!game) return { checked: 0, repair: 0, visitorProblem: null };
     assertOpen();
-    await ensureVisitor({ force: true });
+    try { await ensureVisitor({ force: true }); }
+    catch (error) { if (!REPAIR_CODES.includes(error.code)) throw error; }
     const secrets = readSecrets(stateDir);
     const ready = state.projects.filter(project => project.game?.source === 'managed' && project.game.status === 'ready');
     const markRepair = (project, message) => withProjectLock(project.id, async () => {
@@ -503,7 +584,7 @@ export async function createManager({ stateDir, onEvent = () => {}, claudePath =
         if (unchanged()) await markRepair(check.project, `The game mapping no longer verifies: ${(result?.problems ?? ['no result']).join(' ')}`);
       }
     }
-    return { checked: checks.length, repair };
+    return { checked: checks.length, repair, visitorProblem };
   }
 
   async function createWorker({ projectId, name } = {}) {
@@ -518,7 +599,12 @@ export async function createManager({ stateDir, onEvent = () => {}, claudePath =
       const fallback = project.game?.puffleName ?? suggestPuffleName(state.workers.map(worker => worker.name));
       const puffleName = validatePuffleName(name === undefined || name === '' ? fallback : name);
       const identity = await identifyRepository(git, project.sourcePath);
-      project.commonDir ??= identity.commonDir; // A legacy project whose source returned after startup.
+      if (project.commonDir === null) {
+        // A legacy project whose source returned after startup.
+        const problem = await legacyIdentityProblem(project, identity);
+        if (problem) fail(problem, 409);
+        project.commonDir = identity.commonDir;
+      }
       if (identity.commonDir !== project.commonDir) fail('The source checkout now belongs to a different repository. Repair the project before continuing.', 409);
       const dirty = await sourceDirty(git, project.sourcePath);
       const root = await prepareWorktreeRoot(git, worktreeRoot);
@@ -583,7 +669,7 @@ export async function createManager({ stateDir, onEvent = () => {}, claudePath =
     if (pidAlive(worker.pid)) fail('The saved process may still be alive. Stop it manually before resuming; refusing to duplicate the session.', 409);
     const previous = runtimes.get(worker.id);
     const runtime = { starting: true, token: randomBytes(32).toString('hex'), pty: null, stopping: false, fatal: null,
-      started: false, lastNeedsYouAt: 0, promptId: null, terminalQueue: Promise.resolve(), cwdCache: new Map(),
+      started: false, lastNeedsYouAt: 0, promptId: null, terminalQueue: Promise.resolve(), cwdCache: new Map(), topCache: new Map(),
       sequence: previous?.sequence ?? 0, renderedSequence: previous?.sequence ?? 0 };
     runtimes.set(worker.id, runtime);
     let term;
@@ -676,7 +762,11 @@ export async function createManager({ stateDir, onEvent = () => {}, claudePath =
     assertOpen();
     const worker = activeWorkerFor(target);
     const runtime = activeRuntime(worker);
-    if (!runtime.started || !['idle', 'review', 'interrupted'].includes(worker.status)) fail('Use the live terminal to answer prompts, or wait until the current turn ends.', 409);
+    // The turn can change while the workspace is inspected and during the paste
+    // pause (a prompt typed in the terminal, or an unconfirmed interrupt), so
+    // readiness is checked again before each write.
+    const ready = () => runtimes.get(worker.id) === runtime && runtime.started && SUBMITTABLE.includes(worker.status);
+    if (!runtime.started || !SUBMITTABLE.includes(worker.status)) fail('Use the live terminal to answer prompts, or wait until the current turn ends.', 409);
     if (runtime.submitting) fail('A task is already being submitted.', 409);
     if (typeof text !== 'string' || !text.trim() || Buffer.byteLength(text) > MAX_INPUT || /[\x00\x1b]/.test(text)) fail('Task text must be nonempty, at most 64 KiB, and contain no terminal escape sequences.');
     runtime.submitting = true;
@@ -684,9 +774,11 @@ export async function createManager({ stateDir, onEvent = () => {}, claudePath =
       await checkWorkspace(worker);
       const proc = runtime.pty;
       if (!proc) fail('Claude exited before the task could be submitted.', 409);
+      if (!ready()) fail('Claude started another turn or needs attention while the task was being checked. Nothing was sent; use the live terminal or wait until the turn ends.', 409);
       proc.write(`\x1b[200~${text.replace(/\r\n?/g, '\n')}\x1b[201~`);
       await pause(120);
       if (runtime.pty !== proc) fail('Claude exited before the task could be submitted.', 409);
+      if (!ready()) fail('The task text was pasted into the terminal but not submitted, because Claude started another turn or needs attention. Review or clear it in the live terminal.', 409);
       proc.write('\r');
     } finally { runtime.submitting = false; }
     return workerView(worker);
@@ -772,6 +864,29 @@ export async function createManager({ stateDir, onEvent = () => {}, claudePath =
     return real;
   }
 
+  /**
+   * Whether a resolved directory inside the worktree belongs to a nested
+   * repository (its canonical Git top level is not the worktree). Returns the
+   * cached answer, or undefined while one bounded lookup runs in the
+   * background, so hook handling never waits for Git; `onNested` runs if the
+   * lookup finds one. A failed lookup keeps the containment-only result.
+   */
+  function nestedRepository(runtime, root, real, onNested) {
+    const cached = runtime.topCache.get(real);
+    if (cached && Date.now() - cached.at < CWD_CACHE_MS) return cached.nested;
+    if (runtime.topCache.size > 64) runtime.topCache.clear();
+    const entry = { nested: undefined, at: Date.now() };
+    runtime.topCache.set(real, entry);
+    git.line(real, ['rev-parse', '--path-format=absolute', '--show-toplevel'], { timeout: TOP_LEVEL_TIMEOUT_MS })
+      .then(top => fs.realpathSync.native(top) !== root)
+      .catch(() => false)
+      .then(nested => {
+        Object.assign(entry, { nested, at: Date.now() });
+        if (nested && runtime.topCache.get(real) === entry) onNested();
+      });
+    return undefined;
+  }
+
   function stopForFatal(runtime, message) {
     runtime.fatal = message;
     runtime.stopping = true;
@@ -790,6 +905,7 @@ export async function createManager({ stateDir, onEvent = () => {}, claudePath =
     }
     const root = worker.workspace.path;
     const cwd = resolveCwd(runtime, event.cwd);
+    runtime.lastCwd = cwd;
     let warningChanged = false;
     const initialStart = type === 'SessionStart' && event.source !== 'compact' && (['startup', 'resume'].includes(event.source) || !runtime.started);
     if (initialStart) {
@@ -799,10 +915,20 @@ export async function createManager({ stateDir, onEvent = () => {}, claudePath =
       }
     } else {
       // Ongoing events stay visible even outside the workspace so permission
-      // requests and attention are never silently suppressed.
-      const outside = !cwd || !inside(root, cwd);
+      // requests and attention are never silently suppressed. A folder inside
+      // the worktree whose Git top level is a nested repository also warns.
+      const warning = nested => ({ cwd: typeof event.cwd === 'string' ? event.cwd.slice(0, 1024) : null, resolved: Boolean(cwd),
+        ...(nested ? { nestedRepository: true } : {}), at: now() });
+      const contained = Boolean(cwd) && inside(root, cwd);
+      const nested = contained && cwd !== root && nestedRepository(runtime, root, cwd, () => {
+        if (closing || runtimes.get(worker.id) !== runtime || !runtime.pty || runtime.lastCwd !== cwd || worker.outsideWorkspace) return;
+        worker.outsideWorkspace = warning(true);
+        worker.updatedAt = now();
+        try { commit(); } catch (error) { callbackFailure(worker, error); }
+      }) === true;
+      const outside = !contained || nested;
       const previous = worker.outsideWorkspace;
-      worker.outsideWorkspace = outside ? { cwd: typeof event.cwd === 'string' ? event.cwd.slice(0, 1024) : null, resolved: Boolean(cwd), at: now() } : null;
+      worker.outsideWorkspace = outside ? warning(nested) : null;
       if (Boolean(previous) !== outside || (outside && previous?.cwd !== worker.outsideWorkspace.cwd)) { worker.updatedAt = now(); warningChanged = true; }
     }
     const revision = state.revision;
@@ -888,7 +1014,7 @@ export async function createManager({ stateDir, onEvent = () => {}, claudePath =
     game?.close?.();
     // Clean shutdown empties the published list before releasing ownership.
     publisherClosed = true;
-    try { publisher?.close(state.visitor?.penguinId ?? null); }
+    try { publisher?.close(visitorProblem ? null : state.visitor?.penguinId ?? null); }
     catch (error) { onWarning(`Native igloo publication could not be cleared: ${error.message}`); }
   }
 

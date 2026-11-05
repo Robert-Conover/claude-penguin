@@ -452,5 +452,87 @@
       "Real Atlas migration (Stage 3)",
       "GitHub-hosted CI run for this branch"
     ]
+  },
+  "multi_project_review_stage1_2": {
+    "date": "2026-11-05",
+    "status": "review_fixes_automated_container_and_live_provisioning_passed_browser_acceptance_pending",
+    "runtime_gate": "agent page still disabled unless CP_ENGINE_PREVIEW=engine-v2 with a dedicated non-default CP_ENGINE_STATE_DIR",
+    "review": {
+      "reviewers": 4,
+      "areas": [
+        "git_and_worktrees",
+        "state_migration_sessions",
+        "provisioning_publication_adapter",
+        "browser_bridge_overlay"
+      ],
+      "fixed_with_regression_tests": 28,
+      "not_fixed_predating_branch": [
+        "browser token obtainable by local processes",
+        "hook token visible to the puffle's own tools"
+      ],
+      "deferred_to_stage3": [
+        "web/seed container mounts",
+        "legacy mapping re-verification",
+        "publication before startup re-verification",
+        "create-form fallback, per-project drafts, selection upgrade"
+      ]
+    },
+    "regression_tests": {
+      "engine": 98,
+      "web_and_ui": 31,
+      "client_contract": 18,
+      "swf_preservation": 7,
+      "python_provisioning_and_adapter": 14,
+      "houdini_container": 12
+    },
+    "overlay_build": {
+      "passed": true,
+      "contract_version": 3,
+      "extension_sha256": "b23ba52902fc5f44d27bfd28fde58db06539ee7831ee6c21aac27f140f527a75",
+      "generated_overlay_preservation": true
+    },
+    "protocol_verify": true,
+    "http_verify": {
+      "http_checks": 95,
+      "socket_checks": 4,
+      "failures": 0
+    },
+    "live_provisioning": {
+      "passed": true,
+      "visitorId": 107,
+      "ownerId": 109,
+      "iglooId": 7,
+      "roomId": 2109,
+      "puffleId": 7,
+      "puffleName": "Quartz",
+      "rerun_reused_owner": true,
+      "startup_verification": {
+        "checked": 1,
+        "repair": 0,
+        "visitorProblem": null
+      },
+      "publication_emptied_on_shutdown": true
+    },
+    "verify_only_service_paths": {
+      "visitor_recorded_match": "ok",
+      "visitor_recorded_mismatch": "MISMATCH",
+      "owner_recorded_marker_lost": "MISSING",
+      "owner_recorded_absent": "MISSING",
+      "accounts_created": 0
+    },
+    "non_visitor_upstream_behavior": {
+      "account": "localcheck",
+      "penguinId": 102,
+      "managed_igloo_listed": false,
+      "pio": 0
+    },
+    "remaining": [
+      "Visitor igloo map and player card in Ruffle",
+      "Reconfigurable overlay v3, UUID routing, rejected-action notice, travel and animation in Ruffle",
+      "Live puffle-name rejection (error 441)",
+      "Real Claude tasks in isolated worktrees",
+      "Stage 3 experience, migration, and container mounts",
+      "GitHub-hosted CI run for this branch"
+    ]
   }
 }

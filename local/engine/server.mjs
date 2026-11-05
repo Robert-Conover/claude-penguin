@@ -1,4 +1,5 @@
 import { randomBytes, timingSafeEqual } from 'node:crypto';
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readFile } from 'node:fs/promises';
@@ -8,6 +9,8 @@ import { createLocalServer } from '../web/server.mjs';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(here, '../..');
 const MAX_BODY = 256 * 1024;
+// hook-client.mjs forwards events up to 1 MiB, wrapped with the worker ID.
+const MAX_HOOK_BODY = 1024 * 1024 + 1024;
 const MAX_BUFFERED = 2 * 1024 * 1024;
 
 function equalSecret(left, right) {
@@ -22,14 +25,14 @@ function reply(res, status, data, method = 'GET') {
   res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'content-length': bytes.length, 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' });
   res.end(method === 'HEAD' ? undefined : bytes);
 }
-async function jsonBody(req) {
+async function jsonBody(req, limit = MAX_BODY) {
   if (req.headers['content-type']?.split(';')[0].trim().toLowerCase() !== 'application/json') throw error('Expected application/json.', 415);
-  if (Number(req.headers['content-length']) > MAX_BODY) throw error('Request too large.', 413);
+  if (Number(req.headers['content-length']) > limit) throw error('Request too large.', 413);
   let bytes = 0;
   const chunks = [];
   for await (const chunk of req) {
     bytes += chunk.length;
-    if (bytes > MAX_BODY) throw error('Request too large.', 413);
+    if (bytes > limit) throw error('Request too large.', 413);
     chunks.push(chunk);
   }
   let value;
@@ -105,7 +108,7 @@ export function createEngineServer({ manager, publicOrigin = 'http://localhost:8
           // Hook credentials are per Claude process. Never accept a browser origin here.
           if (req.method !== 'POST') throw error('Method not allowed.', 405);
           if (req.headers.origin || !bearer(req)) throw error('Hook authentication required.', 403);
-          const { workerId, event } = await jsonBody(req);
+          const { workerId, event } = await jsonBody(req, MAX_HOOK_BODY);
           const result = await manager.hook({ workerId, event, token: bearer(req) });
           reply(res, 200, result);
         } else {
@@ -199,20 +202,55 @@ export function publicationDir(env = process.env, root = projectRoot) {
   return path.resolve(root, env.CP_NATIVE_IGLOOS_DIR || '.local/native-igloos');
 }
 
+// Folders served over HTTP (local/web/server.mjs) or mounted into containers (compose.yml).
+const EXPOSED_DIRS = ['vanilla-media', 'templates', '.local/ruffle', '.local/client-bridge', '.local/native-igloos', '.local/logs', 'local/web/bridge'];
+// The released single-puffle engine's state. Refused while the preview gate exists (until Stage 3).
+const DEFAULT_STATE_DIR = '.local/agent-engine';
+
+/** Realpath of the nearest existing ancestor plus the missing rest; a dangling link is refused. */
+function canonicalPath(target) {
+  const rest = [];
+  for (let probe = path.resolve(target); ; probe = path.dirname(probe)) {
+    try { return path.join(fs.realpathSync.native(probe), ...rest); }
+    catch (failure) {
+      if (failure.code !== 'ENOENT' || path.dirname(probe) === probe) throw failure;
+      if (fs.lstatSync(probe, { throwIfNoEntry: false })) throw error(`${probe} is a dangling link.`);
+      rest.unshift(path.basename(probe));
+    }
+  }
+}
+
+/**
+ * Private state (sessions, hook settings, game-secrets.json) must never live
+ * where the game serves or mounts files. Compares canonical paths, and on
+ * macOS case-insensitively. main() always runs this, with or without the gate.
+ */
+export function stateDirProblem(dir, { root = projectRoot, platform = process.platform } = {}) {
+  const fold = value => platform === 'darwin' ? value.toLowerCase() : value;
+  const within = (parent, child) => {
+    const relative = path.relative(fold(parent), fold(child));
+    return relative === '' || (relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
+  };
+  const resolved = relative => { try { return canonicalPath(path.join(root, relative)); } catch { return path.resolve(root, relative); } };
+  let chosen;
+  try { chosen = canonicalPath(dir); } catch (failure) { return `CP_ENGINE_STATE_DIR cannot be resolved safely: ${failure.message}`; }
+  if (within(resolved(DEFAULT_STATE_DIR), chosen)) return `Choose a CP_ENGINE_STATE_DIR other than the default ${DEFAULT_STATE_DIR} for the preview engine.`;
+  const exposed = EXPOSED_DIRS.find(relative => within(resolved(relative), chosen));
+  if (exposed) return `CP_ENGINE_STATE_DIR must not be inside ${exposed}/: that folder is served over HTTP or mounted into the game containers, which would expose private engine state.`;
+  return null;
+}
+
 /**
  * Stage 1 of the multi-project milestone changes the engine only. The game
  * mappings and browser surfaces that consume it arrive in later stages, so the
  * real agent page stays disabled unless a developer opts in with dedicated state.
  */
 export function previewGate(env = process.env, root = projectRoot) {
-  const defaultDir = path.join(root, '.local/agent-engine');
   if (env.CP_ENGINE_PREVIEW !== 'engine-v2') {
     throw error('This checkout contains the in-progress multi-project engine (state v2, isolated worktrees). Its game and browser integration are incomplete, so the agent page is disabled here. Use the dev branch for the playable single-puffle milestone, or set CP_ENGINE_PREVIEW=engine-v2 with a dedicated CP_ENGINE_STATE_DIR for engine-only development.');
   }
   if (!env.CP_ENGINE_STATE_DIR) throw error('CP_ENGINE_PREVIEW requires a dedicated CP_ENGINE_STATE_DIR so existing agent state is never opened by the preview engine.');
-  const stateDir = path.resolve(root, env.CP_ENGINE_STATE_DIR);
-  if (stateDir === defaultDir) throw error('Choose a CP_ENGINE_STATE_DIR other than the default .local/agent-engine for the preview engine.');
-  return stateDir;
+  return path.resolve(root, env.CP_ENGINE_STATE_DIR);
 }
 
 async function main() {
@@ -221,6 +259,8 @@ async function main() {
   if (!Number.isInteger(port) || port < 1024 || port > 65535) throw error('Invalid CP_ENGINE_PORT.');
   const publicOrigin = `http://localhost:${port}`;
   const stateDir = previewGate();
+  const problem = stateDirProblem(stateDir);
+  if (problem) throw error(problem);
   const unlock = await acquireLock(stateDir);
   let manager, publisher, provisioner;
   try {
@@ -235,13 +275,6 @@ async function main() {
     publish = host.publish;
     const server = host.server;
     await new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, '127.0.0.1', resolve); });
-    console.log(`Claude Penguin engine: ${publicOrigin}/?bridge=1&agents=1#/login`);
-    if (provisioner) {
-      // Background: confirm the visitor and every ready mapping still match the game database.
-      manager.verifyGameMappings().then(
-        ({ checked, repair }) => console.log(`Game mappings verified: ${checked - repair} of ${checked} ready${repair ? `; ${repair} need repair` : ''}.`),
-        failure => console.error(`Game mapping verification did not complete: ${failure.message}`));
-    } else console.log('Game provisioning is off (CP_ENGINE_GAME_PROVISIONING=off); new projects stop at game-pending.');
     let closing = false;
     const shutdown = async () => {
       if (closing) return;
@@ -251,7 +284,15 @@ async function main() {
       await unlock();
       process.exit(0);
     };
+    // Installed before the address is announced, so a stop request that follows it always shuts down cleanly.
     for (const signal of ['SIGTERM', 'SIGINT']) process.on(signal, shutdown);
+    console.log(`Claude Penguin engine: ${publicOrigin}/?bridge=1&agents=1#/login`);
+    if (provisioner) {
+      // Background: confirm the visitor and every ready mapping still match the game database.
+      manager.verifyGameMappings().then(
+        ({ checked, repair, visitorProblem }) => console.log(`Game mappings verified: ${checked - repair} of ${checked} ready${repair ? `; ${repair} need repair` : ''}.${visitorProblem ? ` The visitor did not verify, so no igloos are published: ${visitorProblem}` : ''}`),
+        failure => console.error(`Game mapping verification did not complete: ${failure.message}`));
+    } else console.log('Game provisioning is off (CP_ENGINE_GAME_PROVISIONING=off); new projects stop at game-pending.');
   } catch (failure) {
     await manager?.close();
     provisioner?.close();

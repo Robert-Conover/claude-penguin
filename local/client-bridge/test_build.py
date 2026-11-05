@@ -1,6 +1,8 @@
 import importlib.util
+import json
 from pathlib import Path
 import struct
+import tempfile
 import unittest
 import zlib
 
@@ -60,20 +62,34 @@ class OverlayTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'ShowFrame'):
             build.overlay(swf(b'\x08\x00\x00\x0c\x01\x00\x00\x00'), b'\x00')
 
-    def test_generated_overlay_preserves_all_pinned_engine_bytes(self):
-        output = build.OUT / 'engine.swf'
-        metadata = build.OUT / 'build.json'
-        if not output.exists() or not metadata.exists():
-            self.skipTest('Run build.py to validate the generated overlay')
-        import json
-        record = json.loads(metadata.read_text())
+    def assert_generated_overlay(self, out):
+        record = json.loads((out / 'build.json').read_text())
+        # A build of an older bridge.as still preserves the engine bytes but
+        # serves a stale contract, so it must fail rather than pass.
+        self.assertEqual(record['extensionSha256'], build.digest((build.HERE / 'bridge.as').read_bytes()),
+                         'The generated overlay is stale; run python3 local/client-bridge/build.py')
         original = build.checked(build.ROOT / record['source'], build.ENGINE_SHA256)
-        changed = output.read_bytes()
+        changed = (out / 'engine.swf').read_bytes()
         self.assertEqual(build.digest(changed), record['outputSha256'])
         body = zlib.decompress(changed[8:])
         start = record['injectedTagOffset']
         end = start + record['injectedTagBytes']
         self.assertEqual(body[:start] + body[end:], zlib.decompress(original[8:]))
+
+    def test_generated_overlay_preserves_all_pinned_engine_bytes(self):
+        if not (build.OUT / 'engine.swf').exists() or not (build.OUT / 'build.json').exists():
+            self.skipTest('Run build.py to validate the generated overlay')
+        self.assert_generated_overlay(build.OUT)
+
+    def test_stale_generated_overlay_fails_instead_of_passing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            out = Path(directory)
+            (out / 'engine.swf').write_bytes(b'CWS\x08')
+            (out / 'build.json').write_text(json.dumps({'extensionSha256': '0' * 64, 'source': 'missing.swf',
+                                                        'outputSha256': '0' * 64, 'injectedTagOffset': 0,
+                                                        'injectedTagBytes': 0}))
+            with self.assertRaisesRegex(AssertionError, 'stale'):
+                self.assert_generated_overlay(out)
 
 
 if __name__ == '__main__':

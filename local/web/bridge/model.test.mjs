@@ -55,7 +55,7 @@ test('arrival waits through loading, stale rooms and absent puffle assets, and r
 
 // ------------------------------------------------------------ agent mode (Stage 2)
 
-const room = (generation, extra = {}) => ({ ok: true, version: 2, configured: true, generation, playerId: 107, ownerId: 105, roomId: 2105, puffles: [{ id: 4 }], ...extra });
+const room = (generation, extra = {}) => ({ ok: true, version: 3, configured: true, generation, playerId: 107, ownerId: 105, roomId: 2105, puffles: [{ id: 4 }], ...extra });
 const agentClick = (generation, extra = {}) => ({ type: 'puffle-click', projectId: PROJECT_A, ownerId: 105, puffleId: 4, generation, ...extra });
 
 test('agent mappings need a verified visitor, allow an empty neighborhood, and ignore the fixture manifest', () => {
@@ -199,4 +199,33 @@ test('the bridge lab keeps its fixture manifest and simulated identities', () =>
   assert.throws(() => validateFixtures(one), 'the lab still requires exactly its two fixtures');
   assert.equal(agentMappings(manifest()), null, 'a fixture manifest carries no verified agent visitor');
   assert.equal(projectForClick(fixtures, snapshot(), click()).projectId, 'bridge-alpha');
+});
+
+test('mappings use the overlay ID bounds, so one out-of-range project is hidden alone', () => {
+  const snapshot = engineSnapshot({ projects: ['a', 'b'] });
+  Object.assign(snapshot.projects[1].game, { ownerId: 1_000_000_000, roomId: 1_000_002_000 });
+  const mappings = agentMappings(snapshot);
+  assert.deepEqual(mappings.projects.map(project => project.projectId), [PROJECT_A]);
+  assert.deepEqual(mappings.rejected, [{ projectId: PROJECT_B, reason: 'invalid-mapping' }]);
+  // The overlay also validates the room, so an owner near the bound is out of range.
+  const nearLimit = engineSnapshot({ projects: ['a'] });
+  Object.assign(nearLimit.projects[0].game, { ownerId: 999_999_000, roomId: 1_000_001_000 });
+  assert.equal(agentMappings(nearLimit).projects.length, 0);
+  const edge = engineSnapshot({ projects: ['a'] });
+  Object.assign(edge.projects[0].game, { ownerId: 999_997_999, roomId: 999_999_999, puffleId: 999_999_999, iglooId: 1_000_000_000 });
+  assert.equal(agentMappings(edge).projects.length, 1, 'the largest IDs the overlay accepts; layouts stay in the browser');
+  const visitor = engineSnapshot();
+  visitor.visitor.penguinId = 1_000_000_000;
+  assert.equal(agentMappings(visitor), null);
+  const fixture = manifest();
+  fixture.projects[1].puffleId = 1_000_000_000;
+  assert.throws(() => validateFixtures(fixture));
+});
+
+test('Flash configuration refuses more mappings than the overlay accepts instead of truncating them', () => {
+  const ready = count => ({ ...engineSnapshot({ projects: [] }), projects: Array.from({ length: count }, (_, index) => ({
+    id: `00000000-0000-4000-8000-${String(index).padStart(12, '0')}`, name: `Project ${index}`,
+    game: { status: 'ready', ownerId: 200 + index, iglooId: 500 + index, roomId: 2200 + index, puffleId: 900 + index, puffleName: 'Atlas' } })) });
+  assert.equal(flashConfiguration(agentMappings(ready(32))).projects.length, 32);
+  assert.throws(() => flashConfiguration(agentMappings(ready(33))), { code: 'too-many-projects', message: /33 project igloos.*at most 32/ });
 });

@@ -69,6 +69,7 @@ def install_compatibility_fix():
 # ---------------------------------------------------------------- native igloo list
 
 MAX_PUBLISHED_IGLOOS = 64
+MAX_PUBLICATION_BYTES = 64 * 1024  # 64 entries need about 2 KiB.
 
 # The pinned vanilla handlers this adapter wraps. Any upstream change to them
 # stops startup so the adapter is reviewed instead of silently misbehaving.
@@ -138,7 +139,12 @@ def parse_publication(data):
 
 
 class NativeIglooPublication:
-    """Reads the engine's publication file on demand; invalid or missing means no extra igloos."""
+    """Reads the engine's publication file on demand; invalid or missing means no extra igloos.
+
+    Any failure to read or parse the file fails closed (nothing is published)
+    and is reported once per file version; it never reaches another penguin's
+    handler. A replaced file is read again.
+    """
 
     def __init__(self, path, report=None):
         self.path = Path(path)
@@ -165,13 +171,17 @@ class NativeIglooPublication:
             return None
         signature = (stat.st_ino, stat.st_mtime_ns, stat.st_ctime_ns, stat.st_size)
         if signature != self._signature:
-            self._signature = signature
-            try:
-                self._value = parse_publication(json.loads(self.path.read_text(encoding='utf-8')))
-            except (OSError, ValueError) as error:
-                self._value = None
-                self.note(f'ignoring invalid {self.path}: {error}; no managed igloos are listed.')
+            # Fail closed first: an earlier list never outlives a file that cannot be parsed.
+            self._signature, self._value = signature, None
+            if stat.st_size > MAX_PUBLICATION_BYTES:
+                self.note(f'ignoring invalid {self.path}: too large ({stat.st_size} bytes); no managed igloos are listed.')
                 return None
+            try:
+                value = parse_publication(json.loads(self.path.read_text(encoding='utf-8')))
+            except Exception as error:  # RecursionError, UnicodeError, ... all mean "publish nothing".
+                self.note(f'ignoring invalid {self.path}: {type(error).__name__}: {str(error)[:200]}; no managed igloos are listed.')
+                return None
+            self._value = value
             if self._value is None:
                 self.note('the publication names no visitor; no managed igloos are listed.')
             else:
@@ -179,7 +189,12 @@ class NativeIglooPublication:
         return self._value
 
     def for_visitor(self, penguin_id):
-        value = self.current()
+        try:
+            value = self.current()
+        except Exception as error:  # Never let the publication break upstream handling for anyone.
+            self._signature = self._value = None
+            self.note(f'could not read {self.path} ({type(error).__name__}); no managed igloos are listed.')
+            return None
         return value if value is not None and value.visitor_id == penguin_id else None
 
 

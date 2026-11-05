@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
-import { mkdtemp, mkdir, writeFile, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, readFile, rm, symlink } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
@@ -9,7 +9,7 @@ import { WebSocket } from 'ws';
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { createEngineServer, acquireLock, previewGate } from './server.mjs';
+import { createEngineServer, acquireLock, previewGate, stateDirProblem } from './server.mjs';
 
 async function fixture(manager, options = {}) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'penguin-engine-http-'));
@@ -151,8 +151,47 @@ test('the real agent runtime stays disabled until a developer opts into dedicate
   const root = '/repo';
   assert.throws(() => previewGate({}, root), /agent page is disabled here/);
   assert.throws(() => previewGate({ CP_ENGINE_PREVIEW: 'engine-v2' }, root), /dedicated CP_ENGINE_STATE_DIR/);
-  assert.throws(() => previewGate({ CP_ENGINE_PREVIEW: 'engine-v2', CP_ENGINE_STATE_DIR: '.local/agent-engine' }, root), /other than the default/);
   assert.equal(previewGate({ CP_ENGINE_PREVIEW: 'engine-v2', CP_ENGINE_STATE_DIR: '.local/engine-preview' }, root), '/repo/.local/engine-preview');
+});
+
+test('state folders that alias the default, are served over HTTP, or are mounted into containers are refused', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'penguin-state-dir-'));
+  try {
+    for (const dir of ['.local/agent-engine', '.local/ruffle', '.local/client-bridge', '.local/native-igloos', '.local/logs', 'vanilla-media/media', 'templates', 'local/web/bridge']) {
+      await mkdir(path.join(root, dir), { recursive: true });
+    }
+    await symlink(path.join(root, '.local/agent-engine'), path.join(root, 'alias'));
+    await symlink(path.join(root, '.local/ruffle'), path.join(root, 'ruffle-link'));
+    const problem = (dir, platform = process.platform) => stateDirProblem(path.resolve(root, dir), { root, platform });
+    for (const dir of ['.local/agent-engine', 'alias', '.local/./agent-engine/']) assert.match(problem(dir), /other than the default/, dir);
+    assert.match(problem('.local/Agent-Engine', 'darwin'), /other than the default/, 'case variants are the same folder on macOS');
+    for (const dir of ['.local/ruffle/x', 'ruffle-link/x', '.local/client-bridge', '.local/native-igloos/state', '.local/logs/engine', 'vanilla-media',
+      'vanilla-media/media/x', 'templates/state', 'local/web/bridge/x']) {
+      assert.match(problem(dir), /served over HTTP or mounted into the game containers/, dir);
+    }
+    assert.match(problem('.local/RUFFLE/new', 'darwin'), /served over HTTP/);
+    for (const dir of ['.local/engine-preview', '.local/agent-engine-preview', '.local/ruffle-state', path.join(root, '..', 'outside-state')]) assert.equal(problem(dir), null, dir);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('hook events up to the hook client limit are accepted; other endpoints keep their smaller limit', async () => {
+  const received = [];
+  const manager = { ...stub(), hook: async ({ event }) => { received.push(event.payload.length); return { accepted: true }; }, registerProject: async () => ({}) };
+  const f = await fixture(manager);
+  try {
+    // hook-client.mjs forwards events up to 1 MiB, wrapped with the worker ID.
+    const shell = JSON.stringify({ hook_event_name: 'PermissionRequest', payload: '' });
+    const event = size => `{"workerId":"34a60f4a-0c2b-4ab8-af20-c3156de19ffd","event":${shell.replace('""', `"${'x'.repeat(size - shell.length)}"`)}}`;
+    const hook = body => requestHTTP(f.address + '/engine/hooks', { method: 'POST', body,
+      headers: { Host: 'localhost:8081', Authorization: 'Bearer run_token', 'Content-Type': 'application/json' } }).then(response => response.status, () => 'reset');
+    assert.equal(await hook(event(1024 * 1024)), 200, 'a large PermissionRequest at the client limit is delivered');
+    assert.deepEqual(received, [1024 * 1024 - shell.length]);
+    assert.ok([413, 'reset'].includes(await hook(event(1024 * 1024 + 64 * 1024))));
+    const action = await requestHTTP(f.address + '/engine/action', { method: 'POST', headers: f.headers, body: JSON.stringify({ action: 'register', path: 'x'.repeat(300 * 1024) }) })
+      .then(response => response.status, () => 'reset');
+    assert.ok([413, 'reset'].includes(action), 'the action endpoint keeps its 256 KiB limit');
+    assert.equal(received.length, 1);
+  } finally { await f.cleanup(); }
 });
 
 test('the preview engine starts, holds its lock, and releases it on a clean shutdown', async () => {

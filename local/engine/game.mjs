@@ -21,7 +21,8 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
  * Error codes: UNAVAILABLE (stack not running; retry later), USERNAME_TAKEN
  * (pick another generated username), NAME_REJECTED (the game refused the
  * puffle name; correct it and retry), MISMATCH (recorded identities disagree
- * with the game; needs repair), FAILED (anything else).
+ * with the game; needs repair), MISSING (a recorded visitor or owner no longer
+ * exists as recorded; needs repair, never recreated), FAILED (anything else).
  */
 export class ProvisionError extends Error {
   constructor(message, code = 'FAILED') { super(message); this.code = code; }
@@ -119,19 +120,24 @@ function lastJson(text) {
  * Real provisioner. `spawn` and `session` are injectable for tests.
  */
 export function createGameProvisioner({ root, compose = path.join(root, 'local/compose'), spawn = spawnProcess, session = worldSession,
-  loginPort = 6112, worldPort = 9875, timeoutMs = 15000, seedTimeoutMs = 120000 } = {}) {
+  loginPort = 6112, worldPort = 9875, timeoutMs = 15000, seedTimeoutMs = 120000, env = process.env } = {}) {
   const children = new Set();
+  // The fixture visitor password travels in the stdin request like owner
+  // credentials, so neither the Compose process nor the container gets it as
+  // an environment variable. Unset, the service applies its own default.
+  const visitorPassword = env.CLUB_PENGUIN_TEST_PASSWORD || null;
+  const composeEnv = Object.fromEntries(Object.entries(env).filter(([key]) => key !== 'CLUB_PENGUIN_TEST_PASSWORD'));
   const lastSession = new Map();
   let closed = false;
 
-  function runSeed(request, { passTestPassword = false, secrets = [] } = {}) {
+  function runSeed(request, { secrets = [] } = {}) {
     if (closed) return Promise.reject(new ProvisionError('The engine is stopping.', 'UNAVAILABLE'));
     const redact = text => secrets.filter(Boolean).reduce((value, secret) => value.split(secret).join('[redacted]'), text);
     return new Promise((resolve, reject) => {
       // Only fixed arguments: requests and credentials travel on stdin.
-      const args = ['run', '--rm', '--no-deps', '-T', ...(passTestPassword ? ['-e', 'CLUB_PENGUIN_TEST_PASSWORD'] : []), 'provision'];
+      const args = ['run', '--rm', '--no-deps', '-T', 'provision'];
       let child;
-      try { child = spawn(compose, args, { cwd: root, stdio: ['pipe', 'pipe', 'pipe'], env: process.env }); }
+      try { child = spawn(compose, args, { cwd: root, stdio: ['pipe', 'pipe', 'pipe'], env: composeEnv }); }
       catch (error) { reject(new ProvisionError(`Could not run the provisioning service: ${error.message}`, 'UNAVAILABLE')); return; }
       children.add(child);
       let stdout = '', stderr = '';
@@ -153,22 +159,28 @@ export function createGameProvisioner({ root, compose = path.join(root, 'local/c
   }
 
   function seedFailure(result) {
-    const code = { USERNAME_TAKEN: 'USERNAME_TAKEN', MISMATCH: 'MISMATCH', UNAVAILABLE: 'UNAVAILABLE' }[result.code] ?? 'FAILED';
+    const code = { USERNAME_TAKEN: 'USERNAME_TAKEN', MISMATCH: 'MISMATCH', MISSING: 'MISSING', UNAVAILABLE: 'UNAVAILABLE' }[result.code] ?? 'FAILED';
     return new ProvisionError(String(result.error ?? 'The provisioning service refused the request.').slice(0, 500), code);
   }
 
-  async function ensureVisitor() {
-    const result = await runSeed({ op: 'visitor' }, { passTestPassword: true });
+  /** With a recorded `penguinId` the service only verifies that visitor and never creates one. */
+  async function ensureVisitor({ penguinId = null } = {}) {
+    const recorded = positive(penguinId) ? penguinId : null;
+    const result = await runSeed({ op: 'visitor', penguinId: recorded, ...(visitorPassword ? { password: visitorPassword } : {}) }, { secrets: [visitorPassword] });
     if (result.status !== 'ok') throw seedFailure(result);
     if (result.username !== VISITOR_USERNAME || !positive(result.penguinId)) throw new ProvisionError('The provisioning service returned an unexpected visitor identity.', 'MISMATCH');
+    if (recorded !== null && result.penguinId !== recorded) throw new ProvisionError(`The ${VISITOR_USERNAME} visitor has game ID ${result.penguinId}, not the recorded ${recorded}.`, 'MISMATCH');
     return { penguinId: result.penguinId, username: result.username, created: Boolean(result.created) };
   }
 
-  async function ensureOwner({ marker, username, password, nickname }) {
+  /** With a recorded `ownerId` the service only verifies that owner and never creates another. */
+  async function ensureOwner({ marker, username, password, nickname, ownerId = null }) {
     if (!MANAGED_USERNAME.test(username)) throw new ProvisionError('Refusing a username outside the managed-owner namespace.');
-    const result = await runSeed({ op: 'owner', marker, username, password, nickname }, { secrets: [password] });
+    const recorded = positive(ownerId) ? ownerId : null;
+    const result = await runSeed({ op: 'owner', marker, username, password, nickname, ownerId: recorded }, { secrets: [password] });
     if (result.status !== 'ok') throw seedFailure(result);
     if (!positive(result.ownerId)) throw new ProvisionError('The provisioning service returned an invalid owner ID.');
+    if (recorded !== null && result.ownerId !== recorded) throw new ProvisionError(`The managed owner has game ID ${result.ownerId}, not the recorded ${recorded}.`, 'MISMATCH');
     return { ownerId: result.ownerId, created: Boolean(result.created) };
   }
 

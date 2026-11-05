@@ -416,3 +416,128 @@ reconfigurable overlay, UUID click routing, travel and animation with real
 clips), a puffle name rejected live by Houdini (error 441 and the failed name
 check are covered only by fakes), real Claude tasks in worktrees, and
 GitHub-hosted CI on this branch.
+
+## Multi-project review of Stages 1 and 2 — November 5, 2026
+
+**Four independent reviews of `dev..multi-project-igloos` led to 28 fixes, each
+with a regression test that failed on the unfixed code first. All offline suites, the Houdini container suite, `./local/verify`, the
+HTTP checks, and a live provisioning rerun pass. Nothing ran in Ruffle, and the
+real agent page is still disabled.** Same host and Colima profile as Stage 2;
+the stack was started with `./local/start` (existing `localcheck` and `player`
+accounts reported unchanged) and stopped again afterwards.
+
+Fixed, by area:
+
+- Git and worktrees:
+  - Config-defined hooks (`hook.<name>.*`) and `attr.tree` are refused. Both
+    previously let repository code run during worktree creation.
+  - `git-lfs` runs directly, so a repository `alias.lfs` cannot run.
+  - No inherited `GIT_*` variable is kept. `GIT_CONFIG` and `GIT_ATTR_SOURCE`
+    previously bypassed the filter check.
+  - Every transport is pinned to `never`.
+  - Hard-linked untracked files are not previewed, and previews open with
+    `O_NONBLOCK`.
+  - Worktree roots that Git cannot classify are refused.
+  - Git runs in its own process group, and a timeout stops the whole group.
+  - A retry no longer adopts an interrupted checkout (missing index, stale
+    `index.lock`, or unfilled tracked files).
+  - Review truncates a very large untracked list instead of failing.
+  - Repair messages give the `git worktree repair` command.
+- Engine state and sessions:
+  - Card submission re-checks the turn after the workspace check and after the
+    paste. A terminal prompt or an unconfirmed Escape during inspection could
+    previously still submit the task, a regression from PR #5's guarantee.
+  - `game-pending` projects become retryable once provisioning is on. They were
+    previously stuck.
+  - Saved-state validation refuses shared repositories, sessions, and worktrees,
+    mismatched repository records, unknown setup phases, and non-object entries.
+  - A legacy project binds only to a repository that contains its archived
+    baseline.
+  - State folders are compared canonically, and served or container-mounted
+    folders are refused. `.local/ruffle/<dir>` previously made
+    `game-secrets.json` downloadable on 8080.
+  - The hooks endpoint accepts 1 MiB, matching the hook client.
+  - Folders inside a nested repository raise the outside-workspace warning.
+- Game provisioning and the adapter:
+  - A recorded owner or visitor ID is only verified, never recreated (code
+    `MISSING`). A deleted owner previously led to a second account on retry.
+  - The visitor password travels on stdin instead of a container environment
+    variable.
+  - A visitor mismatch withdraws the publication and reports `visitor: null`
+    with `visitorProblem`.
+  - An unparseable publication file publishes nothing and cannot break `g#gr`
+    for other penguins, which a deeply nested file previously did.
+- Browser bridge and overlay (contract version 3):
+  - **Work** follows the panel's own selection.
+  - A native action the browser refuses is reported back through the new
+    `cpBridgeRejectAgentAction`, so the card no longer stays locked.
+  - The browser applies the overlay's game ID range and 32-project cap.
+  - Every overlay result carries `version`, and the browser checks it on each
+    one.
+  - The ES3/AS2 guard catches the 12 constructs that previously passed it.
+  - The generated-overlay test fails on a stale build.
+  - `panel.mjs` gained tests that drive the real panel, client, and overlay
+    source.
+
+Found while validating the fixes: `server.mjs` announced its address before
+installing its SIGINT/SIGTERM handlers. In a source-only copy, as on CI, the
+startup test then failed once in 13 full runs, because the signal arrived first
+and the engine died without releasing its locks. This dated from Stage 1. The
+handlers are now installed first, and 14 further runs passed.
+
+Automated checks on the combined tree:
+
+- Engine: 98 passed (77 before the review).
+- Web/UI: 31 passed. Client contract: 18 passed. Python host tests: 14 passed.
+- `python3 local/client-bridge/build.py` compiled the version-3 `bridge.as`
+  (extension SHA-256 `b23ba529…`, overlay `11ef2c54…`, original tags unchanged).
+  All 7 SWF tests passed, including generated-overlay preservation.
+- Houdini container regressions: 12 passed, including the new unparseable
+  publication test. On world startup the adapter installed.
+- `./local/verify`, `npm run verify:http --prefix local/web` (95 HTTP and 4
+  socket checks, no failures), `./local/compose config --quiet`, launcher syntax
+  checks, and `git diff --check` passed.
+
+Live provisioning (scratch state outside the checkout; evidence in
+`.local/stage1-2-review-2026-11-05/`):
+
+- A fresh disposable project reached `ready`. The visitor was verified as 107
+  without logging in as it. The engine created managed owner 109, adopted puffle
+  7 "Quartz" in igloo 7, and entered room 2109. `published.json` listed
+  `{ownerId: 109, iglooId: 7}` while the engine ran, and was emptied on clean
+  shutdown.
+- A rerun on the same state reused owner 109, and `verifyGameMappings` returned
+  1 checked, 0 repair, and no visitor problem. Logged in as `localcheck` (102),
+  `g#gr` listed no managed igloo and `g#pio` returned `0`.
+- Requests sent straight to the provisioning service exercised the new
+  verify-only paths and created nothing; the highest penguin ID stayed 109:
+  - The visitor with recorded ID 107 returned it unchanged; recorded ID 999
+    returned `MISMATCH`.
+  - An owner request with an unknown marker and recorded ID 109 returned
+    `MISSING`, because that account no longer carries the marker; recorded ID
+    99999 returned `MISSING`, because it does not exist.
+
+The game database now also permanently contains managed owner 109 with puffle
+7, a disposable verification identity like owner 108. `player` was not used.
+
+Not fixed in this review, with the reason:
+
+- Any local process can obtain the browser token from `/engine/bootstrap` and
+  send terminal input to any puffle. This predates the branch, and puffles run
+  as the same user. A fix is a design decision, so it is documented in
+  `AGENT_ENGINE.md` instead.
+- Hook tokens are visible to the puffle's own tool commands. This predates the
+  branch; they can forge events only for that same puffle.
+- The `web` and `seed` containers can still read the whole checkout. Nothing
+  under `.local/` is reachable over HTTP (traversal probes returned 403 or 404).
+  Narrowing the mounts is Stage 3 task 10.
+- Smaller gaps, all left to Stage 3:
+  - Startup publishes saved mappings before re-verifying them.
+  - Legacy fixture mappings are not re-verified.
+  - Migration's `--rehearsal` means "outside the checkout".
+  - The browser's create-form fallback, per-project drafts, and selection
+    upgrade gaps remain.
+  - Atomic writes don't `fsync` the folder.
+
+Still unverified: everything in Ruffle, a live puffle-name rejection, real
+Claude tasks in worktrees, and GitHub-hosted CI on this branch.

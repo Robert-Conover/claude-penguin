@@ -177,17 +177,30 @@ test('seed requests and credentials travel on stdin only, with fixed Compose arg
     ? { stdout: `Creating container\n${JSON.stringify({ status: 'ok', ownerId: 201, created: true })}\n` }
     : request.op === 'visitor' ? { stdout: JSON.stringify({ status: 'ok', penguinId: 107, username: 'bridgecheck', created: false }) }
       : { stdout: JSON.stringify({ status: 'ok', results: request.mappings.map(mapping => ({ key: mapping.key, ok: true, problems: [] })) }) });
-  const provisioner = createGameProvisioner({ root: '/repo', spawn });
+  const visitorPassword = 'Visitor-Fixture-Secret-77';
+  const env = { PATH: process.env.PATH, CLUB_PENGUIN_TEST_PASSWORD: visitorPassword };
+  const provisioner = createGameProvisioner({ root: '/repo', spawn, env });
   assert.deepEqual(await provisioner.ensureVisitor(), { penguinId: 107, username: 'bridgecheck', created: false });
-  assert.deepEqual(await provisioner.ensureOwner({ marker: 'f'.repeat(8) + '-0000-4000-8000-' + '0'.repeat(12), username: 'cpabcdefgh12', password, nickname: 'My Project' }), { ownerId: 201, created: true });
+  const marker = 'f'.repeat(8) + '-0000-4000-8000-' + '0'.repeat(12);
+  assert.deepEqual(await provisioner.ensureOwner({ marker, username: 'cpabcdefgh12', password, nickname: 'My Project' }), { ownerId: 201, created: true });
   const verified = await provisioner.verifyOwners([{ key: 'p', username: 'cpabcdefgh12' }]);
   assert.deepEqual(verified, [{ key: 'p', ok: true, problems: [] }]);
-  assert.deepEqual(runs.map(run => [run.command, run.args]), [
-    ['/repo/local/compose', ['run', '--rm', '--no-deps', '-T', '-e', 'CLUB_PENGUIN_TEST_PASSWORD', 'provision']],
-    ['/repo/local/compose', ['run', '--rm', '--no-deps', '-T', 'provision']],
-    ['/repo/local/compose', ['run', '--rm', '--no-deps', '-T', 'provision']]]);
+  assert.deepEqual(runs.map(run => [run.command, run.args]), Array(3).fill(['/repo/local/compose', ['run', '--rm', '--no-deps', '-T', 'provision']]));
   assert.equal(runs[1].request.password, password, 'the credential is in the stdin request');
-  for (const run of runs) assert.equal(run.args.join(' ').includes(password) || run.args.join(' ').includes('cpabcdefgh12'), false);
+  assert.deepEqual(runs[0].request, { op: 'visitor', penguinId: null, password: visitorPassword }, 'the visitor password is in the stdin request, not the container environment');
+  assert.equal(runs[1].request.ownerId, null);
+  for (const run of runs) {
+    assert.equal([password, visitorPassword, 'cpabcdefgh12'].some(secret => run.args.join(' ').includes(secret)), false);
+    assert.equal('CLUB_PENGUIN_TEST_PASSWORD' in run.options.env, false, 'the Compose process does not carry the visitor password');
+  }
+  // Recorded identities are sent so the service only verifies them.
+  await provisioner.ensureVisitor({ penguinId: 107 });
+  await provisioner.ensureOwner({ marker, username: 'cpabcdefgh12', password, nickname: 'My Project', ownerId: 201 });
+  assert.equal(runs[3].request.penguinId, 107);
+  assert.equal(runs[4].request.ownerId, 201);
+  // Without a host override the service applies its own default, as before.
+  await createGameProvisioner({ root: '/repo', spawn, env: { PATH: process.env.PATH } }).ensureVisitor();
+  assert.deepEqual(runs.at(-1).request, { op: 'visitor', penguinId: null });
   await assert.rejects(provisioner.ensureOwner({ marker: 'x', username: 'bridgecheck', password, nickname: 'X' }), /managed-owner namespace/);
   await assert.rejects(provisioner.verifyOwners([{ key: 'p', username: 'player' }]), /non-managed/);
 });
@@ -197,6 +210,7 @@ test('seed failures map to explicit codes and redact credentials from diagnostic
   const outcomes = [
     { stdout: JSON.stringify({ status: 'failed', code: 'USERNAME_TAKEN', error: 'taken' }), code: 1 },
     { stdout: JSON.stringify({ status: 'failed', code: 'MISMATCH', error: 'marker belongs elsewhere' }), code: 1 },
+    { stdout: JSON.stringify({ status: 'failed', code: 'MISSING', error: 'recorded owner is missing' }), code: 1 },
     { stdout: '', stderr: `boom ${password}\n`, code: 1 },
   ];
   const { spawn } = fakeSpawn(() => outcomes.shift());
@@ -204,6 +218,7 @@ test('seed failures map to explicit codes and redact credentials from diagnostic
   const owner = { marker: 'm', username: 'cpabcdefgh12', password, nickname: 'P' };
   await assert.rejects(provisioner.ensureOwner(owner), error => error.code === 'USERNAME_TAKEN');
   await assert.rejects(provisioner.ensureOwner(owner), error => error.code === 'MISMATCH');
+  await assert.rejects(provisioner.ensureOwner({ ...owner, ownerId: 201 }), error => error.code === 'MISSING');
   await assert.rejects(provisioner.ensureOwner(owner), error => error.code === 'UNAVAILABLE' && !error.message.includes(password) && error.message.includes('[redacted]'));
 });
 

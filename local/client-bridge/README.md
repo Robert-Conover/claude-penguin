@@ -35,12 +35,19 @@ on every build. Generated tooling and output stay in ignored `.local/`:
 An upstream engine change fails the build until its shape and compatibility have
 been reviewed. This tool does not update upstream revisions automatically.
 
-## Browser contract, version 2
+## Browser contract, version 3
 
-Version 2 (multi-project Stage 2) allows an empty project list, rejects duplicate
-mapping IDs, and adds a configuration `generation` to configure results,
-snapshots, and events. The browser refuses any overlay result whose version is
-not 2, so an older build must be rebuilt rather than loaded silently. A mapping's
+Version 2 (multi-project Stage 2) allowed an empty project list, rejected
+duplicate mapping IDs, and added a configuration `generation` to configure
+results, snapshots, and events. Version 3 (the Stage 1–2 review, November 5,
+2026) puts `version` on every callback result, refusals included, and adds
+`cpBridgeRejectAgentAction`. The browser checks the version of every result
+before reading it and refuses a missing or different version, so an older build
+must be rebuilt rather than loaded silently. Game IDs (visitor, owner, room,
+puffle) are integers from 1 to 999,999,999, and at most 32 projects are mapped;
+the browser applies the same bounds (`MAX_GAME_ID` and `MAX_MAPPINGS` in
+`web/bridge/model.mjs`). It excludes an out-of-range mapping on its own, and with
+more than 32 ready mappings it configures none and shows an error. A mapping's
 `projectId` is opaque to Flash: the bridge lab sends fixture IDs (`bridge-alpha`),
 and agent mode sends the engine's project UUID.
 
@@ -48,7 +55,7 @@ Callbacks registered through Flash `ExternalInterface`:
 
 | Callback | Result / behavior |
 | --- | --- |
-| `cpBridgeConfigure(visitorId, projects)` | Validate a dedicated visitor and an array of 0–32 `{projectId, ownerId, puffleId}` mappings, then replace every mapping and advance the generation. Returns `{ok:true, version:2, generation}`. Owner IDs must differ from the visitor; project, owner, and puffle IDs must be unique. An empty array is a valid empty neighborhood. A rejected call keeps the previous mapping and generation. Every existing click hook is removed; the next tick hooks only currently mapped puffles. A native card whose project is no longer mapped closes. |
+| `cpBridgeConfigure(visitorId, projects)` | Validate a dedicated visitor and an array of 0–32 `{projectId, ownerId, puffleId}` mappings, then replace every mapping and advance the generation. Returns `{ok:true, version:3, generation}`. Owner IDs must differ from the visitor; project, owner, and puffle IDs must be unique. An empty array is a valid empty neighborhood. A rejected call keeps the previous mapping and generation. Every existing click hook is removed; the next tick hooks only currently mapped puffles. A native card whose project is no longer mapped closes. |
 | `cpBridgeSnapshot()` | `{ok, version, configured, generation, playerId, roomId, ownerId, puffles:[{id,x,y}], nativeMenuReady}`. Room transitions and a different logged-in player return `ok:false` and an `error`. Non-igloo owner is `0`. Coordinates use the game's room coordinate system. `nativeMenuReady` reports whether the native HUD exists. |
 | `cpBridgeJoinIgloo(ownerId)` | Request a mapped owner's igloo via the existing shell navigator. A successful acknowledgement is not arrival; wait for a matching snapshot. |
 | `cpBridgeJoinRoom(100)` | Request Town via the existing shell navigator. Other room IDs are outside this experiment. |
@@ -56,6 +63,7 @@ Callbacks registered through Flash `ExternalInterface`:
 | `cpBridgeSetAgentMenu(payload)` | Cache a bounded, public display summary and enable or disable the native HUD. Accepts only a currently configured project ID, or an empty ID when no puffle is selected. See the payload below. |
 | `cpBridgeShowAgentMenu()` | Open the native task card for the cached project, or emit `work` without a project ID if none is selected. Requires the verified visitor, a ready room, and no active game widget. |
 | `cpBridgeHideAgentMenu()` | Close the owned card and restore its modal state. Safe to call during connection or room changes. |
+| `cpBridgeRejectAgentAction(action, projectId)` | The browser refused a native card action, for example one prepared against an older generation or sent during travel, so nothing reached the engine. A refused `submit` for the same project releases the pending task so Send follows the host-reported state again, and the draft stays in the input. An open card for that project shows "Task not sent. Try again." (or a general notice for other actions) until the next action or until it closes. |
 
 Navigation, animation, and menu actions fail closed before configuration, during
 loading, for a different logged-in player, and for unknown IDs. Travel and menu
@@ -69,7 +77,7 @@ The native menu payload is:
   canStart, canSubmit, running, attention }
 ```
 
-Set/show/hide return `{ok:true, nativeMenu, hudReady, menuVisible}` on success.
+Set/show/hide/reject return `{ok:true, version:3, nativeMenu, hudReady, menuVisible}` on success.
 `nativeMenu` and `hudReady` are true only after the HUD exists in a verified game
 session; the browser retains setup access before that point. Disabling the menu
 removes its owned clips. Names and activity are plain, bounded text. `attention`
@@ -79,7 +87,7 @@ or terminal output is sent to Flash.
 
 The client calls `window.ClaudePenguinBridge.receive(event)` with:
 
-- `{type:"ready", version:2}` when the extension registers callbacks.
+- `{type:"ready", version:3}` when the extension registers callbacks.
 - `{type:"puffle-click", ownerId, puffleId, projectId, generation}` when the actual
   mapped puffle is clicked. A polling hook attaches only to the mapped puffle's clip
   and restores its original press handler when the mapping no longer applies or

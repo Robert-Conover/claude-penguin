@@ -53,6 +53,8 @@ class FakeConnection:
 
     async def fetchval(self, query, *values):
         self.statements.append(query)
+        if 'FROM penguin WHERE id' in query:
+            return next((row['id'] for row in self.penguins if row['id'] == values[0]), None)
         if 'lower(username)' in query:
             row = next((row for row in self.penguins if row['username'].lower() == values[0]), None)
             return row and row['id']
@@ -134,6 +136,65 @@ class ProvisionTests(unittest.TestCase):
         self.assertTrue(any('locked' in problem for problem in problems['problems']))
         self.assertTrue(any('exactly one' in problem for problem in problems['problems']))
 
+    def test_a_recorded_owner_is_only_verified_and_never_recreated(self):
+        db = FakeConnection()
+        missing = run(game_provision.handle(owner_request(ownerId=201), db))
+        self.assertEqual(missing['code'], 'MISSING')
+        self.assertIn('no longer exists', missing['error'])
+        self.assertEqual(db.penguins, [], 'nothing is created for a recorded owner')
+        db.penguins.append({'id': 201, 'username': 'cpabcdefgh12', 'email': 'edited@example.invalid', 'igloo': None})
+        unmarked = run(game_provision.handle(owner_request(ownerId=201), db))
+        self.assertEqual(unmarked['code'], 'MISSING', 'a held username is not USERNAME_TAKEN when an owner is recorded')
+        self.assertIn('no longer carries', unmarked['error'])
+        self.assertEqual(len(db.penguins), 1)
+        db.penguins[0]['email'] = EMAIL
+        self.assertEqual(run(game_provision.handle(owner_request(ownerId=201), db)), {'status': 'ok', 'ownerId': 201, 'created': False})
+        moved = run(game_provision.handle(owner_request(ownerId=202), db))
+        self.assertEqual(moved['code'], 'MISMATCH')
+        self.assertIn('not the recorded 202', moved['error'])
+        for bad in (0, -1, '201', True, 1.5):
+            with self.assertRaises(game_provision.RequestError, msg=bad):
+                run(game_provision.handle(owner_request(ownerId=bad), db))
+        self.assertEqual(len(db.penguins), 1)
+
+    def test_a_recorded_visitor_is_only_verified_and_never_recreated(self):
+        db = FakeConnection()
+        missing = run(game_provision.handle({'op': 'visitor', 'penguinId': 107}, db, {}))
+        self.assertEqual(missing['code'], 'MISSING')
+        self.assertEqual(db.penguins, [], 'a recorded visitor is never recreated')
+        created = run(game_provision.handle({'op': 'visitor', 'penguinId': None}, db, {}))
+        self.assertTrue(created['created'])
+        visitor_id = created['penguinId']
+        self.assertEqual(run(game_provision.handle({'op': 'visitor', 'penguinId': visitor_id}, db, {})),
+                         {'status': 'ok', 'penguinId': visitor_id, 'username': 'bridgecheck', 'created': False})
+        moved = run(game_provision.handle({'op': 'visitor', 'penguinId': 107}, db, {}))
+        self.assertEqual(moved['code'], 'MISMATCH')
+        self.assertIn('not the recorded 107', moved['error'])
+        db.penguins[0]['email'] = 'other@example.invalid'
+        self.assertEqual(run(game_provision.handle({'op': 'visitor', 'penguinId': visitor_id}, db, {}))['code'], 'MISMATCH')
+        for bad in (0, '107', True):
+            with self.assertRaises(game_provision.RequestError, msg=bad):
+                run(game_provision.handle({'op': 'visitor', 'penguinId': bad}, db, {}))
+        self.assertEqual(len(db.penguins), 1)
+
+    def test_the_visitor_password_arrives_in_the_request_with_the_previous_fallbacks(self):
+        used = []
+
+        def record(password, key):
+            used.append(password)
+            return 'hashed'
+
+        cases = ((({'op': 'visitor', 'password': 'FromRequest1!'}, {'CLUB_PENGUIN_TEST_PASSWORD': 'FromEnv1!'}), 'FromRequest1!'),
+                 (({'op': 'visitor'}, {'CLUB_PENGUIN_TEST_PASSWORD': 'FromEnv1!'}), 'FromEnv1!'),
+                 (({'op': 'visitor', 'password': None}, {}), game_accounts.DEFAULT_TEST_PASSWORD))
+        with patch.object(game_accounts, 'stored_password_hash', record):
+            for (request, environ), _ in cases:
+                run(game_provision.handle(request, FakeConnection(), environ))
+        self.assertEqual(used, [expected for _, expected in cases])
+        for bad in ('', 'x' * 129, 7):
+            with self.assertRaises(game_provision.RequestError, msg=bad):
+                run(game_provision.handle({'op': 'visitor', 'password': bad}, FakeConnection(), {}))
+
     def test_main_never_echoes_credentials(self):
         connections = []
 
@@ -144,9 +205,12 @@ class ProvisionTests(unittest.TestCase):
 
         with patch.object(game_accounts, 'connect', connect):
             result = run(game_provision.main(json.dumps(owner_request(password='SecretSecret1234!'))))
+            visitor = run(game_provision.main(json.dumps({'op': 'visitor', 'password': 'VisitorSecret99!'})))
         self.assertEqual(result['status'], 'ok')
         self.assertNotIn('SecretSecret1234!', json.dumps(result))
         self.assertNotIn('SecretSecret1234!', json.dumps(connections[0].penguins), 'only a hash is stored')
+        self.assertEqual(visitor['status'], 'ok')
+        self.assertNotIn('VisitorSecret99!', json.dumps(visitor) + json.dumps(connections[1].penguins))
 
 
 if __name__ == '__main__':
