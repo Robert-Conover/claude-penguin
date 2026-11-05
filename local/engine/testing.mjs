@@ -150,4 +150,3 @@ export function legacyState(sourcePath, { baseCommit = 'dc4eefbdb2af3038c1298490
         { id: 't1', prompt: 'first', startedAt: '2026-11-03T21:50:00.000Z', status: 'turn-ended', endedAt: '2026-11-03T21:51:00.000Z' },
         { id: 't2', prompt: 'unfinished', startedAt: '2026-11-03T22:50:00.000Z', status: 'working' }] }] };
 }
-

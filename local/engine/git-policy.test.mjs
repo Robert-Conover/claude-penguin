@@ -260,8 +260,13 @@ test('a repository alias named lfs never runs when git-lfs is missing from PATH'
   s.git(source, 'config', 'filter.lfs.clean', 'git-lfs clean -- %f');
   s.git(source, 'config', 'filter.lfs.smudge', 'git-lfs smudge -- %f');
   s.git(source, 'config', 'filter.lfs.process', 'git-lfs filter-process');
-  s.git(source, 'config', 'alias.lfs', `!touch ${sentinel}; echo git-lfs/3.9.9`);
-  const git = createGit({ hooksDir: path.join(s.dir, 'empty-hooks'), env: { ...s.gitEnv, PATH: '/usr/bin:/bin' } });
+  s.git(source, 'config', 'alias.lfs', '!echo ran > "$CP_ALIAS_SENTINEL"; echo git-lfs/3.9.9');
+  // Keep the fixture's Git, but exclude all installed helpers from both search paths.
+  const binary = execFileSync('/bin/sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
+  const emptyBin = path.join(s.dir, 'empty-bin');
+  fs.mkdirSync(emptyBin);
+  const env = { ...s.gitEnv, PATH: emptyBin, GIT_EXEC_PATH: emptyBin, CP_ALIAS_SENTINEL: sentinel };
+  const git = createGit({ hooksDir: path.join(s.dir, 'empty-hooks'), binary, env });
   await assert.rejects(createWorktree(git, setupWorktree(s, source)), /Unsupported Git filter command[^]*filter=lfs/);
   assert.equal(fs.existsSync(sentinel), false, 'the repository alias must not execute');
 });
