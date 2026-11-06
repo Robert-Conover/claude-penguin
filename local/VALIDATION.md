@@ -808,3 +808,45 @@ syntax and `git diff --check` all passed. After the live run, the derived
 module's purchase hook was changed to fail closed when the page glue is
 unreachable; that rebuild passed the module invariants but was not re-run in
 the browser.
+
+## Adoption recovery and destination paging — November 6, 2026
+
+Follow-up fixes on `project-adoption-teams`, based on `2ea12da`. This is a new
+working-tree check, not a repeat of the earlier purchases or real-Claude run.
+
+- Unknown purchase outcomes stay pending and recheck the same receipt every
+  20 seconds. Timeout, lookup failure, generic server failure, and expired or
+  missing records never claim no charge or automatically resend a purchase.
+  Late replies resolve the operation, including during a lookup or after closing
+  the module. Confirmed payment is independent of worker setup.
+- The native picker pages through all 32 projects, five per page. Previous/Next,
+  selection by project identity, list changes, and bounds within the 760×480
+  stage have production-source regression coverage.
+- **Check purchase** is available for both reserved and charged operations.
+  The real browser/overlay test harness distinguishes a verified refusal before
+  sending from an exception after dispatch; only the former cancels the unused
+  reservation.
+
+**Automated verification:** web 58, bridge/picker 28, and client-bridge Python 16
+passed. The first web-server test attempt could not bind localhost in the
+sandbox (`listen EPERM`); the permitted rerun passed. The bridge build passed
+its deterministic-output and preservation checks: all 4,360 unrelated method
+bodies remain unchanged and five original methods retain their verified hooks.
+`git diff --check` passed. These checks use doubles for engine/game outcomes;
+they do not establish a new paid adoption or simultaneous coding tasks.
+
+**Ruffle browser check:** the rebuilt module ran in headless Chrome against the
+local stack as `adoptcheck`, with an isolated engine state and no registered
+projects. Page-only fixtures supplied 32 destinations and a pending purchase;
+these were not real project registrations or purchases. The picker rendered
+seven pages, selected destinations 9 and 32 by their IDs, reopened on the
+selected destination's page, and disabled Next on the last page. The pending
+recovery notice was fully readable over the original naming/purchase screen.
+Screenshots and the test script remain ignored under `.local/adoption-review/`.
+
+With the page adoption glue removed, an attempted native Adopt click stayed on
+the naming screen. A database check confirmed `adoptcheck` still had 4,800 coins
+and no owned puffles. Browser WebSocket instrumentation did not capture Ruffle's
+worker game sockets, so this is UI/database evidence, not packet-level proof.
+No real purchases or Claude sessions were created. The temporary engine stopped
+and released its runtime and publication locks.

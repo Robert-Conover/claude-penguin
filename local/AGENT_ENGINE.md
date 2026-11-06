@@ -502,8 +502,8 @@ reproducibly (see the [build notes](client-bridge/README.md#project-adoption-mod
 One purchase runs as follows:
 
 1. **Choose.** The module's destination picker lists every registered igloo with
-   its count. A full igloo, one still being set up, or a legacy igloo is shown
-   with the reason it cannot be chosen.
+   its count, five per page with Previous/Next controls. A full igloo, one still
+   being set up, or a legacy igloo is shown with the reason it cannot be chosen.
 2. **Reserve.** **Adopt** asks the engine for a reservation: an adoption UUID for
    that igloo's owner, the catalog entry, and the name, valid for 10 minutes. The
    engine refuses while the project is busy with setup, when the igloo is full
@@ -528,8 +528,14 @@ One purchase runs as follows:
 
 The receipt always wins. If the page closes, the reply is lost or the engine
 restarts mid-purchase, the engine checks receipts at startup, on **Check
-purchase** in the chooser, and on setup retry: a receipt binds the puffle,
-and an expired reservation without one is withdrawn with nothing charged. The
-visitor's own collection never gets the puffle. Adoption creates the receipt
+purchase** in the chooser (available for reserved and charged operations), and on
+setup retry: a receipt binds the puffle even if its reservation expired or was
+withdrawn. A timeout, failed lookup, or missing receipt does not prove that no
+coins were taken. The page keeps the purchase pending, shows its recovery notice,
+and checks again every 20 seconds without cancelling or sending another purchase.
+Matching late replies still resolve it, including after closing the module. A
+confirmed receipt shows the certificate independently of worktree setup; a
+definitive pre-charge refusal allows another attempt. The visitor's own collection
+never gets the puffle. Adoption creates the receipt
 table `claude_penguin_adoption_receipt` (with `claude_penguin_schema`) in the
 game database when the world server starts.

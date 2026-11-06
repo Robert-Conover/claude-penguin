@@ -41,6 +41,9 @@ package com.claudepenguin.adoption
       private static var model:Object;
       private static var poll:Timer;
       private static var destinationName:String = "";
+      private static const PICKER_PAGE_SIZE:int = 5;
+      private static var pickerPage:int = 0;
+      private static var pendingNotice:String = "";
 
       public static function hook(id:String, target:Object) : Boolean
       {
@@ -59,7 +62,7 @@ package com.claudepenguin.adoption
          catch (error:Error)
          {
             report("hook " + id + " failed: " + error.message);
-            showNotice("Something went wrong. Nothing was charged.");
+            showNotice("Something went wrong. Check Your Igloos for the adoption status.");
          }
          return id != "penReady";
       }
@@ -115,6 +118,7 @@ package com.claudepenguin.adoption
          penView = null;
          picker = banner = notice = null;
          model = null;
+         pendingNotice = "";
          try { call("closed"); } catch (error:Error) { report("closed failed: " + error.message); }
       }
 
@@ -153,6 +157,7 @@ package com.claudepenguin.adoption
             return true;
          }
          model = target;
+         pendingNotice = "";
          showNotice("Sending your puffle to its igloo...");
          poll = new Timer(250);
          poll.addEventListener(TimerEvent.TIMER, checkPurchase);
@@ -163,7 +168,18 @@ package com.claudepenguin.adoption
       private static function checkPurchase(event:TimerEvent) : void
       {
          var status:Object = call("status");
-         if (status == null || status.state == "pending") return;
+         if (status == null) return;
+         if (status.state == "pending")
+         {
+            var message:String = status.message == null ? "" : String(status.message);
+            if (message != "" && message != pendingNotice)
+            {
+               pendingNotice = message;
+               showNotice(message);
+            }
+            return;
+         }
+         pendingNotice = "";
          poll.stop();
          poll = null;
          hideNotice();
@@ -278,16 +294,37 @@ package com.claudepenguin.adoption
          try { Object(penView).modalClip.visible = visible; } catch (ignored:Error) {}
       }
 
-      private static function showPicker() : void
+      private static function showPicker(focusChosen:Boolean = true) : void
       {
          if (penView == null) return;
          hidePicker();
          var session:Object = call("session");
          var destinations:Object = session == null ? [] : session.destinations;
+         var total:int = destinations == null ? 0 : destinations.length;
+         var pages:int = Math.max(1, Math.ceil(total / PICKER_PAGE_SIZE));
+         // Reopening Change follows the chosen identity, even if the list was reordered.
+         if (focusChosen && session != null && session.chosen != null && session.chosen != "")
+         {
+            for (var chosenIndex:int = 0; chosenIndex < total; chosenIndex++)
+            {
+               if (destinations[chosenIndex].projectId == session.chosen)
+               {
+                  pickerPage = Math.floor(chosenIndex / PICKER_PAGE_SIZE);
+                  break;
+               }
+            }
+         }
+         // The list can shrink between button presses; never render an empty stale page.
+         pickerPage = Math.max(0, Math.min(pickerPage, pages - 1));
+         var offset:int = pickerPage * PICKER_PAGE_SIZE;
+         var rows:int = Math.min(PICKER_PAGE_SIZE, total - offset);
+         var message:String = session == null ? "Your puffles are offline." : String(session.message);
+         if (message == "" && total == 0) message = "Add a project in Your Igloos first. Each project gets its own igloo.";
+         var rowTop:int = message == "" ? 96 : 140;
+         // Five rows, notice and both footer rows fit in the native 760 x 480 stage.
+         var height:int = rowTop + Math.max(1, rows) * 44 + 88;
          picker = new Sprite();
          setModal(true);
-         var rows:int = destinations == null ? 0 : Math.min(8, destinations.length);
-         var height:int = 150 + Math.max(1, rows) * 44;
          var card:Sprite = new Sprite();
          box(card, -3, -3, 466, height + 6, 30, 0xFFFFFF, 30);
          box(card, 0, 0, 460, height, BLUE, LIGHT, 26);
@@ -302,8 +339,6 @@ package com.claudepenguin.adoption
          subtitle.x = 24;
          subtitle.y = 52;
          card.addChild(subtitle);
-         var message:String = session == null ? "Your puffles are offline." : String(session.message);
-         if (message == "" && rows == 0) message = "Add a project in Your Igloos first. Each project gets its own igloo.";
          if (message != "")
          {
             var note:TextField = text(message, 13, 0xFFF4B8, true, 410, 40);
@@ -313,7 +348,7 @@ package com.claudepenguin.adoption
          }
          for (var i:int = 0; i < rows; i++)
          {
-            var item:Object = destinations[i];
+            var item:Object = destinations[offset + i];
             var row:Sprite = new Sprite();
             var open:Boolean = item.available == true && session.connected == true;
             box(row, 0, 0, 412, 38, open ? 0xF5FBFE : 0xC9D9E4, 0x00538E, 14);
@@ -325,12 +360,12 @@ package com.claudepenguin.adoption
             count.x = 270;
             count.y = 4;
             row.addChild(count);
-            var detail:TextField = text(open ? "Choose this igloo" : String(item.reason), 10, 0x254356, false, 390, 16);
+            var detail:TextField = text(open ? (item.projectId == session.chosen ? "Selected igloo" : "Choose this igloo") : String(item.reason), 10, 0x254356, false, 390, 16);
             detail.x = 14;
             detail.y = 21;
             row.addChild(detail);
             row.x = 24;
-            row.y = (message == "" ? 96 : 132) + i * 44;
+            row.y = rowTop + i * 44;
             if (open)
             {
                row.buttonMode = true;
@@ -339,11 +374,44 @@ package com.claudepenguin.adoption
             }
             card.addChild(row);
          }
+         var previous:Sprite = button("Previous", 110, previousPickerPage);
+         previous.x = 24;
+         previous.y = height - 78;
+         previous.mouseEnabled = previous.buttonMode = previous.useHandCursor = pickerPage > 0;
+         previous.mouseChildren = false;
+         previous.alpha = pickerPage > 0 ? 1 : 0.45;
+         card.addChild(previous);
+         var pageLabel:TextField = text("Page " + (pickerPage + 1) + " of " + pages, 13, 0xFFFFFF, true, 170, 24);
+         pageLabel.x = 148;
+         pageLabel.y = height - 72;
+         var pageFormat:TextFormat = pageLabel.defaultTextFormat;
+         pageFormat.align = "center";
+         pageLabel.setTextFormat(pageFormat);
+         card.addChild(pageLabel);
+         var next:Sprite = button("Next", 110, nextPickerPage);
+         next.x = 326;
+         next.y = height - 78;
+         next.mouseEnabled = next.buttonMode = next.useHandCursor = pickerPage < pages - 1;
+         next.mouseChildren = false;
+         next.alpha = pickerPage < pages - 1 ? 1 : 0.45;
+         card.addChild(next);
          var close:Sprite = button("Close", 110, closeModule);
-         close.x = 326;
-         close.y = height - 44;
+         close.x = 175;
+         close.y = height - 38;
          card.addChild(close);
          penView.addChild(picker);
+      }
+
+      private static function previousPickerPage(event:MouseEvent) : void
+      {
+         pickerPage--;
+         showPicker(false);
+      }
+
+      private static function nextPickerPage(event:MouseEvent) : void
+      {
+         pickerPage++;
+         showPicker(false);
       }
 
       private static function hidePicker() : void

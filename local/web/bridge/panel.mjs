@@ -141,12 +141,16 @@ function openWork() {
 const outOfDate = () => Object.assign(new Error('The client bridge is out of date. Run python3 local/client-bridge/build.py, then reload.'), { code: 'contract-mismatch' });
 // Every result of the current contract carries its version, refusals included.
 // A missing or different version is refused before the answer is interpreted.
-function call(name, ...args) {
+function bridgeResult(name, ...args) {
   const player = document.querySelector('ruffle-object, ruffle-embed, ruffle-player');
   if (!player?.ruffle) throw new Error('Waiting for the game client.');
   const result = player.ruffle(1).callExternalInterface(name, ...args);
   if (!result || typeof result !== 'object') throw new Error('Waiting for the client bridge. Build the extension and log in.');
   if (result.version !== BRIDGE_CONTRACT_VERSION) throw outOfDate();
+  return result;
+}
+function call(name, ...args) {
+  const result = bridgeResult(name, ...args);
   if (!result.ok) throw Object.assign(new Error(result.error || 'The game is not ready for this action.'), { code: result.error });
   return result;
 }
@@ -267,7 +271,8 @@ async function travelToNewPuffle(projectId, { force, puffleId }) {
 const adoption = agentMode ? (await import('./adoption.mjs')).createAdoption({
   getEngine: () => engineState,
   request: (name, values) => window.ClaudePenguinEngine.request(name, values),
-  overlay: (name, ...args) => call(name, ...args),
+  // A current-contract refusal proves no packet was sent; exceptions cannot.
+  overlay: bridgeResult,
   travel: travelToNewPuffle,
 }) : null;
 if (adoption) window.ClaudePenguinAdoption = adoption;

@@ -27,7 +27,7 @@ npm ci --ignore-scripts --prefix local/web
 | Browser wrapper, routing, templates, socket bridge | `npm test --prefix local/web` |
 | Agent engine, persistence, hooks, terminal control | `npm ci --ignore-scripts --prefix local/engine` when needed; `npm test --prefix local/engine`; web tests including `bridge/panel.test.mjs` for chooser, selection, drafts and lifecycle; disposable repositories and dedicated state for real-Claude checks |
 | Launcher or Compose configuration | Shell syntax checks below; validate Compose and exercise the affected startup/stop path when the local runtime is available |
-| Flash overlay or bridge contract (`client-bridge/`) | `node --test local/client-bridge/bridge.test.mjs`; `python3 -m unittest discover -s local/client-bridge -p 'test_*.py'` (the generated-overlay test skips until `python3 local/client-bridge/build.py` has run) |
+| Flash overlay or bridge contract (`client-bridge/`) | `node --test local/client-bridge/*.test.mjs`; `python3 -m unittest discover -s local/client-bridge -p 'test_*.py'` (the generated-overlay test skips until `python3 local/client-bridge/build.py` has run) |
 | Houdini compatibility adapter | Container regression command below; `./local/verify` when the stack is running |
 | Client/config serving, Ruffle version, game socket endpoints | `npm run verify:http --prefix local/web` against the running stack; browser checks for affected rendering/interaction |
 | Database seeding, game protocol, persistence | `./local/verify`; confirm existing player progress survives the affected lifecycle operation |

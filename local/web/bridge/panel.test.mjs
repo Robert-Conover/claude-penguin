@@ -133,7 +133,7 @@ let pages = 0;
 
 // `transform` rewrites each overlay result, standing in for an older overlay
 // build; `prepare` runs inside the overlay before the panel loads.
-async function openPage({ agentMode = true, snapshot = engineSnapshot(), transform = result => result, prepare = '' } = {}) {
+async function openPage({ agentMode = true, snapshot = engineSnapshot(), transform = result => result, prepare = '', respond = () => ({}) } = {}) {
   const page = ++pages;
   const document = createDocument();
   const window = new EventTarget();
@@ -148,14 +148,18 @@ async function openPage({ agentMode = true, snapshot = engineSnapshot(), transfo
   const player = document.createElement('ruffle-player');
   player.ruffle = () => ({ callExternalInterface(name, ...args) {
     calls.push({ name, args });
-    return transform(overlay.callExternalInterface(name, ...args));
+    return transform(overlay.callExternalInterface(name, ...args), name);
   } });
   document.body.append(player);
 
   const actions = [], sockets = [];
   globalThis.fetch = async (url, options = {}) => {
     if (url === '/engine/bootstrap') return reply({ token: 'private-browser-token', snapshot });
-    if (url === '/engine/action') { actions.push(JSON.parse(options.body)); return reply({ result: {} }); }
+    if (url === '/engine/action') {
+      const action = JSON.parse(options.body);
+      actions.push(action);
+      return reply({ result: await respond(action) });
+    }
     if (url === '/bridge/fixtures.json') return reply(labManifest());
     throw new Error(`Unexpected request ${url}`);
   };
@@ -301,6 +305,73 @@ test('an overlay result without a contract version is refused before configurati
   await page.flush();
 });
 
+// ------------------------------------------------------------ adoption transport
+const ADOPTION_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+const reserveAdoption = ({ action }) => action === 'adopt' ? { id: ADOPTION_ID, ownerId: 105 } : {};
+const adoptionSuccess = { type: 'adoption-result', ok: true, adoptionId: ADOPTION_ID, puffleId: 41,
+  typeId: 0, subtypeId: 0, name: 'Atlas', coins: 4600, cost: 400, createdAt: 1 };
+
+test('the real panel preserves an explicit current-contract adoption refusal before dispatch', async () => {
+  const page = await openPage({ respond: reserveAdoption });
+  const adoption = page.window.ClaudePenguinAdoption;
+  // The visitor was verified, but the game connection disappears before Buy.
+  page.overlay.run('shell.AIRTOWER = undefined');
+  assert.equal(adoption.choose(PROJECT_A).ok, true);
+  assert.equal(adoption.buy(0, 0, 'Atlas').ok, true);
+  await page.flush();
+  assert.equal(adoption.status().state, 'failed');
+  assert.equal(adoption.status().code, 'not-sent');
+  assert.match(adoption.status().message, /not sent/);
+  assert.deepEqual(page.overlay.read('sent'), [], 'the real overlay refused before sending');
+  assert.deepEqual(page.actions.map(({ action }) => action), ['adopt', 'cancelAdoption']);
+  assert.equal(page.actions[1].adoptionId, ADOPTION_ID);
+});
+
+test('the real panel keeps a purchase uncertain when the game throws after dispatch', async () => {
+  const page = await openPage({ respond: reserveAdoption });
+  const adoption = page.window.ClaudePenguinAdoption;
+  page.overlay.run('var sendBeforeFailure = shell.AIRTOWER.send; shell.AIRTOWER.send = function() { sendBeforeFailure.apply(this, arguments); throw new Error("after dispatch"); }');
+  adoption.choose(PROJECT_A);
+  adoption.buy(0, 0, 'Atlas');
+  try {
+    await page.flush();
+    assert.equal(page.overlay.read('sent.length'), 1);
+    assert.equal(adoption.status().state, 'pending');
+    assert.equal(adoption.status().code, 'unknown');
+    assert.equal(adoption.buy(0, 0, 'Atlas').ok, false);
+    assert.deepEqual(page.actions.map(({ action }) => action), ['adopt'], 'an ambiguous dispatch never cancels or repurchases');
+    // The real overlay receive path still resolves a late server success.
+    page.overlay.run(`cpBridge.adoptionReply([7, '${ADOPTION_ID}', 'ok', 41, 0, 0, 'Atlas', 4600, 400, 1, 105])`);
+    assert.equal(adoption.status().state, 'done');
+    await page.flush();
+    assert.deepEqual(page.actions.map(({ action }) => action), ['adopt', 'adoptionResult']);
+  } finally {
+    adoption.onReply(adoptionSuccess); // Also clears the recovery timer if an assertion failed.
+    await page.flush();
+  }
+});
+
+test('the adoption transport does not trust stale or malformed bridge refusals as not sent', async () => {
+  for (const rewrite of [result => ({ ...result, version: 2 }), () => ({ ok: false }), () => null]) {
+    const page = await openPage({ respond: reserveAdoption,
+      transform: (result, name) => name === 'cpBridgeAdopt' ? rewrite(result) : result });
+    const adoption = page.window.ClaudePenguinAdoption;
+    page.overlay.run('shell.AIRTOWER = undefined');
+    adoption.choose(PROJECT_A);
+    adoption.buy(0, 0, 'Atlas');
+    try {
+      await page.flush();
+      assert.equal(adoption.status().state, 'pending');
+      assert.equal(adoption.status().code, 'unknown');
+      assert.equal(adoption.buy(0, 0, 'Atlas').ok, false);
+      assert.deepEqual(page.actions.map(({ action }) => action), ['adopt'], 'only a verified current-contract refusal permits cancellation');
+    } finally {
+      adoption.onReply(adoptionSuccess); // Resolve the synthetic attempt to clear its recovery timer.
+      await page.flush();
+    }
+  }
+});
+
 // ------------------------------------------------------------ bridge lab
 test('bridge lab still configures fixture IDs, accepts real clicks, and labels cues as simulated', async () => {
   const page = await openPage({ agentMode: false });
@@ -339,6 +410,42 @@ test('Add project validates the name and only registers: the igloo starts empty'
   page.el('cp-project-name').value = 'Moon Base';
   await submit();
   assert.deepEqual(actions, [{action: 'register', path:'/repos/--Moon  Base!', name:'Moon Base'}]);
+});
+
+test('reserved and charged purchases can be checked without buying again', async () => {
+  const snapshot = engineSnapshot();
+  snapshot.adoptions = [
+    { id: 'lost-report', projectId: PROJECT_A, state: 'reserved', request: { name: 'Pip' } },
+    { id: 'binding-pending', projectId: PROJECT_B, state: 'charged', request: { name: 'Snow' } },
+    { id: 'conflict', projectId: snapshot.projects[2].id, state: 'conflict', error: 'Inspect this receipt.' },
+    { id: 'expired', projectId: PROJECT_A, state: 'reserved', expired: true },
+  ];
+  const page = await openPage({ snapshot });
+  page.el('cp-igloos').onclick();
+  const checks = () => page.el('cp-agent-list').children.map(row => row.querySelectorAll('button').filter(button => button.textContent === 'Check purchase'));
+  assert.deepEqual(checks().map(buttons => buttons.length), [1, 1, 0], 'both unresolved purchase states expose recovery; expired and conflict records do not');
+  assert.equal(checks()[0][0].disabled, false);
+
+  const fetch = globalThis.fetch;
+  let finish;
+  globalThis.fetch = async (url, options) => {
+    const response = await fetch(url, options);
+    return new Promise(resolve => { finish = () => resolve(response); });
+  };
+  const checking = checks()[0][0].onclick();
+  await page.flush();
+  try { assert.ok(checks().slice(0, 2).every(([button]) => button.disabled), 'checking disables repeat requests while busy'); }
+  finally { finish(); globalThis.fetch = fetch; }
+  await checking;
+  await checks()[1][0].onclick();
+  assert.deepEqual(page.actions, [
+    { action: 'reconcile', projectId: PROJECT_A },
+    { action: 'reconcile', projectId: PROJECT_B },
+  ], 'recovery only checks the selected project; it never cancels or resends the purchase');
+
+  page.socket.onclose();
+  page.window.dispatchEvent(new Event('beforeunload'));
+  assert.ok(checks().slice(0, 2).every(([button]) => button.disabled), 'checking requires a live engine connection');
 });
 
 test('archive is read-only and creating the legacy replacement is an explicit choice', async () => {

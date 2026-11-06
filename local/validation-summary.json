@@ -4,6 +4,7 @@
     "status": "multi_project_browser_and_real_claude_acceptance_with_open_gaps",
     "scope": "Overview of existing dated evidence, not a new acceptance run or live machine state. Other top-level records retain their checkpoint-specific status.",
     "evidence_records": [
+      "adoption_recovery_paging_2026_11_06",
       "project_adoption_teams_2026_11_06",
       "multi_project_experience_stage_3_2026_11_05",
       "postcards_playthrough"
@@ -777,6 +778,57 @@
     },
     "not_rerun_live": [
       "purchase hook fail-closed change made after the live run (module invariants passed)"
+    ]
+  },
+  "adoption_recovery_paging_2026_11_06": {
+    "date": "2026-11-06",
+    "document": "local/VALIDATION.md#adoption-recovery-and-destination-paging--november-6-2026",
+    "scope": "Working-tree fixes based on 2ea12da; new automated evidence, not a repeated paid adoption or real-Claude run.",
+    "automated": {
+      "web": 58,
+      "bridge_and_picker": 28,
+      "client_bridge_python": 16,
+      "diff_check": "passed"
+    },
+    "derived_module": {
+      "build": "passed",
+      "deterministic": true,
+      "unchanged_original_method_bodies": 4360,
+      "hooked_original_methods": 5,
+      "sha256": "2acafec391df2d9dc0871af38363ad63ea3c7bf870fa1820829eab58066b94d6"
+    },
+    "covered": [
+      "Unknown purchase outcomes remain pending and retry receipt lookup without cancellation or repurchase",
+      "Late success, concurrent lookup completion, synchronous replies and post-dispatch exceptions preserve the exact attempt",
+      "A stored receipt confirms payment independently of worker binding or worktree setup",
+      "The real panel preserves a version-checked pre-send refusal while treating thrown or invalid bridge responses as uncertain",
+      "Reserved and charged purchases expose project-specific Check purchase controls",
+      "The native picker reaches all 32 project identities through five-row pages and fits within the game stage"
+    ],
+    "browser": {
+      "runtime": "Actual rebuilt SWF in headless Chrome/Ruffle on the local stack",
+      "visitor": "adoptcheck",
+      "scope": "Page-only fixtures supplied 32 destinations and pending purchase status; no real projects or purchases were created",
+      "passed": [
+        "Seven native destination pages with five rows per page",
+        "Selection of destination IDs 9 and 32",
+        "Change reopens the chosen destination page",
+        "Next is disabled on the last page",
+        "The full pending recovery notice is readable",
+        "With page glue unavailable, attempted Adopt stays on naming screen and database balance/puffle count are unchanged"
+      ],
+      "evidence_directory": ".local/adoption-review/",
+      "database": {
+        "coins_before": 4800,
+        "coins_after": 4800,
+        "visitor_owned_puffles": 0
+      },
+      "limitation": "Browser WebSocket instrumentation did not capture Ruffle worker game sockets; no packet-level no-send claim.",
+      "cleanup": "Temporary engine stopped; runtime and publication locks released."
+    },
+    "not_validated_in_this_run": [
+      "Paid database adoption recovery",
+      "Two simultaneous real coding tasks in one igloo"
     ]
   }
 }

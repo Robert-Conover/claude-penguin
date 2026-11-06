@@ -67,7 +67,7 @@ jobs:
         run: npm test --prefix local/web
 
       - name: Test game bridge contracts
-        run: node --test local/client-bridge/bridge.test.mjs
+        run: node --test local/client-bridge/*.test.mjs
 
       - name: Test SWF preservation and stale-overlay rejection
         # The real generated-overlay test is expected to skip on a source-only checkout.

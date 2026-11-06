@@ -135,7 +135,7 @@ export function setupChooser({ el, action, report, openWork, visit, getState }) 
           : adoption.state === 'charged' ? `A purchase of ${adoption.request?.name ?? 'a puffle'} is being confirmed. ${adoption.error ?? ''}`.trim()
             : `Adopting ${adoption.request?.name ?? 'a puffle'}…`);
         row.append(note);
-        if (adoption.state === 'charged') button(row, 'Check purchase', () => action('reconcile', { projectId: project.id }), !connected || busy);
+        if (['reserved', 'charged'].includes(adoption.state)) button(row, 'Check purchase', () => action('reconcile', { projectId: project.id }), !connected || busy);
       }
       list.append(row);
     }

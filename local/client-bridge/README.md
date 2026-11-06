@@ -70,6 +70,14 @@ but the purchase hook still blocks: the derived module never calls upstream
 also fails closed. The purchase itself is `cpBridgeAdopt` below. Rainbow and Gold posters
 are hidden; a full igloo reuses the module's own capacity error.
 
+The destination picker shows five igloos per page, with Previous/Next controls
+for all 32 supported projects. Change returns to the selected project's page;
+removed or reordered destinations are resolved by project identity. An uncertain
+purchase stays pending and displays the page's recovery notice while receipt
+checks continue. Neither a timeout nor a hook exception claims that no coins
+were taken. `adoption-picker.test.mjs` executes the owned AS3 picker/status methods
+with display doubles; real Ruffle rendering remains a separate browser check.
+
 ## Browser contract, version 5
 
 Version 5 (multi-puffle igloos, November 6, 2026) maps each project to a set of

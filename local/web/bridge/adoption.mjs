@@ -4,7 +4,7 @@
 // module polls `status()`. The purchase itself is sent by the AVM1 overlay
 // (`cpBridgeAdopt`), and its reply is reported to the host engine, which
 // confirms the receipt independently before binding the puffle to a worker.
-import { MAX_PUFFLES_PER_IGLOO, catalogEntry } from '../engine/catalog.mjs';
+import { MAX_PUFFLES_PER_IGLOO, catalogEntry, catalogForPuffleType } from '../engine/catalog.mjs';
 
 const REPLY_TIMEOUT_MS = 20000;
 const MESSAGES = {
@@ -12,9 +12,15 @@ const MESSAGES = {
   440: 'This igloo already has 10 puffles.', expired: 'That took too long. Please try again.',
   'owner-online': 'The igloo is busy for a moment. Please try again.', 'unknown-adoption': 'Something went wrong. Please try again.',
   'unknown-puffle': 'Only the ten colors, the Blue Dog and the Orange Cat can join a project igloo.', conflict: 'Something went wrong. Please try again.',
-  failed: 'Something went wrong. Nothing was charged.', lost: 'The game did not confirm the purchase, and no coins were taken.',
+  failed: 'Something went wrong. Check your purchase before trying again.',
+  unknown: 'Your purchase is not confirmed yet. Checking again; please do not buy it again. You can also use Check purchase in Your Igloos.',
   disconnected: 'Your puffles are offline. Waiting for the local runtime.', busy: 'Another adoption is still open.',
 };
+// These replies establish that this request was refused before charging. Other
+// errors can follow a committed transaction or a lost earlier success reply.
+const REFUSED = new Set(['401', '441', '440', 'owner-online', 'unknown-puffle']);
+const PENDING = ['reserving', 'sent', 'checking', 'unknown'];
+const DISPATCHED = ['sent', 'checking', 'unknown'];
 
 export function createAdoption({ getEngine, request, overlay, travel, setTimer = setTimeout, clearTimer = clearTimeout }) {
   let chosen = '';
@@ -36,6 +42,17 @@ export function createAdoption({ getEngine, request, overlay, travel, setTimer =
     Object.assign(current, { phase, timer: null }, fields);
   }
 
+  function scheduleCheck(attempt) {
+    clearTimer(attempt.timer);
+    attempt.timer = setTimer(() => checkLost(attempt), REPLY_TIMEOUT_MS);
+  }
+
+  function uncertain(attempt) {
+    if (current !== attempt || !DISPATCHED.includes(attempt.phase)) return;
+    finishPhase('unknown', { code: 'unknown', message: MESSAGES.unknown });
+    scheduleCheck(attempt);
+  }
+
   async function report(adoptionId, result) {
     try { await request('adoptionResult', { adoptionId, result }); }
     catch { /* The engine reconciles receipts at startup and on Retry; a receipt always wins. */ }
@@ -43,36 +60,42 @@ export function createAdoption({ getEngine, request, overlay, travel, setTimer =
 
   /** The overlay relays the world server's p#cpadopt reply. */
   function onReply(event) {
-    if (!current || event?.type !== 'adoption-result' || event.adoptionId !== current.adoptionId || current.phase !== 'sent') return;
+    if (!current || event?.type !== 'adoption-result' || event.adoptionId !== current.adoptionId || !DISPATCHED.includes(current.phase)) return;
     if (event.ok) {
       const receipt = { puffleId: event.puffleId, typeId: event.typeId, subtypeId: event.subtypeId, name: event.name,
         coins: event.coins, cost: event.cost, createdAt: event.createdAt };
-      finishPhase('done', { receipt });
+      finishPhase('done', { receipt, code: null, message: '' });
       report(event.adoptionId, { ok: true, ...receipt });
     } else {
       const code = String(event.code ?? 'failed');
+      if (!REFUSED.has(code)) { uncertain(current); return; }
       finishPhase('failed', { code, message: MESSAGES[code] ?? MESSAGES.failed });
       report(event.adoptionId, { ok: false, code });
     }
   }
 
   /** No reply arrived: ask the engine whether a receipt exists before saying anything. */
-  async function checkLost(adoption) {
-    if (!current || current.adoptionId !== adoption || current.phase !== 'sent') return;
-    finishPhase('checking');
+  async function checkLost(attempt) {
+    if (current !== attempt || !['sent', 'unknown'].includes(attempt.phase)) return;
+    finishPhase('checking', { code: 'unknown', message: MESSAGES.unknown });
     try {
-      const result = await request('reconcile', { projectId: current.projectId });
-      const record = (result?.adoptions ?? []).find(item => item.id === adoption);
-      if (record?.state === 'bound' && record.receipt) {
-        const entry = catalogEntry(current.typeId, current.subtypeId);
+      const result = await request('reconcile', { projectId: attempt.projectId });
+      // A late world reply can resolve this attempt while the receipt lookup is
+      // in flight. Never overwrite it (or a newer purchase) with an older result.
+      if (current !== attempt || attempt.phase !== 'checking') return;
+      const record = (result?.adoptions ?? []).find(item => item.id === attempt.adoptionId);
+      if (record?.receipt) {
+        const entry = catalogForPuffleType(record.receipt.puffleType);
+        if (!entry) { uncertain(attempt); return; }
+        // Payment is confirmed independently of worker binding/worktree setup.
         finishPhase('done', { receipt: { puffleId: record.receipt.puffleId, typeId: entry.typeId, subtypeId: entry.subtypeId, name: record.receipt.name,
-          coins: record.receipt.coinsAfter, cost: record.receipt.cost, createdAt: record.receipt.createdAt } });
+          coins: record.receipt.coinsAfter, cost: record.receipt.cost, createdAt: record.receipt.createdAt }, code: null, message: '' });
         return;
       }
-    } catch { /* Reported below; the engine keeps checking at startup and on Retry. */ }
-    finishPhase('failed', { code: 'lost', message: MESSAGES.lost });
-    // Withdrawing only unpublishes the reservation: a receipt that appears later still wins.
-    request('cancelAdoption', { adoptionId: adoption }).catch(() => {});
+    } catch { /* A failed lookup cannot establish whether the visitor paid. */ }
+    // A missing receipt (including an expired/withdrawn record) is not a final
+    // refusal: the world transaction might still commit. Keep this operation.
+    uncertain(attempt);
   }
 
   async function purchase(attempt) {
@@ -81,11 +104,18 @@ export function createAdoption({ getEngine, request, overlay, travel, setTimer =
       if (current !== attempt) { await request('cancelAdoption', { adoptionId: adoption.id }).catch(() => {}); return; }
       attempt.adoptionId = adoption.id;
       attempt.ownerId = adoption.ownerId;
-      overlay('cpBridgeAdopt', adoption.id, attempt.typeId, attempt.name, attempt.subtypeId);
+      // The callback may deliver a reply synchronously, or throw after sending.
       attempt.phase = 'sent';
-      attempt.timer = setTimer(() => checkLost(adoption.id), REPLY_TIMEOUT_MS);
+      const sent = overlay('cpBridgeAdopt', adoption.id, attempt.typeId, attempt.name, attempt.subtypeId);
+      if (attempt.phase !== 'sent') return;
+      if (sent?.ok === false) {
+        finishPhase('failed', { code: 'not-sent', message: 'The purchase was not sent. Reopen the Pet Shop and try again.' });
+        request('cancelAdoption', { adoptionId: adoption.id }).catch(() => {});
+      } else scheduleCheck(attempt);
     } catch (problem) {
       if (current !== attempt) return;
+      if (DISPATCHED.includes(attempt.phase)) { uncertain(attempt); return; }
+      if (attempt.phase === 'done') return;
       if (attempt.adoptionId && attempt.phase === 'reserving') await request('cancelAdoption', { adoptionId: attempt.adoptionId }).catch(() => {});
       finishPhase('failed', { code: 'refused', message: String(problem?.message ?? MESSAGES.failed).slice(0, 200) });
     }
@@ -109,7 +139,7 @@ export function createAdoption({ getEngine, request, overlay, travel, setTimer =
     },
     /** Starts one purchase for the chosen igloo; the module then polls status(). */
     buy(typeId, subtypeId, name) {
-      if (current && ['reserving', 'sent', 'checking'].includes(current.phase)) return { ok: false, message: 'Your adoption is still on its way.' };
+      if (current && PENDING.includes(current.phase)) return { ok: false, message: current.message || 'Your adoption is still on its way.' };
       const engine = getEngine();
       if (!engine.connected) return { ok: false, message: MESSAGES.disconnected };
       const destination = destinations().find(item => item.projectId === chosen);
@@ -125,7 +155,7 @@ export function createAdoption({ getEngine, request, overlay, travel, setTimer =
     },
     status() {
       if (!current) return { state: 'idle' };
-      const state = { reserving: 'pending', sent: 'pending', checking: 'pending', done: 'done', failed: 'failed' }[current.phase] ?? 'pending';
+      const state = { reserving: 'pending', sent: 'pending', checking: 'pending', unknown: 'pending', done: 'done', failed: 'failed' }[current.phase] ?? 'pending';
       return { state, code: current.code ?? '', message: current.message ?? '', receipt: current.receipt, destination: current.destination };
     },
     /** The certificate closed: travel to the destination once the module is gone. */
@@ -140,7 +170,7 @@ export function createAdoption({ getEngine, request, overlay, travel, setTimer =
       travelAfterClose = null;
       if (current?.phase === 'reserving' && current.adoptionId) request('cancelAdoption', { adoptionId: current.adoptionId }).catch(() => {});
       // A sent purchase keeps its timer and reports its reply even after the module closes.
-      if (current && !['sent', 'checking'].includes(current.phase)) current = null;
+      if (current && !DISPATCHED.includes(current.phase)) current = null;
       chosen = '';
       if (pending) setTimer(() => travel(pending.projectId, { force: true, puffleId: pending.puffleId }).catch(() => {}), 800);
       return { ok: true };
