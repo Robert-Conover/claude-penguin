@@ -2,7 +2,7 @@ export const statusLabels = Object.freeze({
   starting: 'Starting', idle: 'Ready for a task', working: 'Working',
   'needs-you': 'Needs you', review: 'Ready for review · turn ended',
   interrupted: 'Interrupted', failed: 'Failed', stopped: 'Stopped', offline: 'Stopped',
-  setup: 'Setting up', 'needs-repair': 'Needs repair',
+  setup: 'Setting up', 'needs-repair': 'Needs repair', queued: 'Queued for a free session slot',
 });
 
 export const targetKey = target => target ? `${target.projectId}/${target.workerId}` : '';
@@ -17,20 +17,21 @@ export function nextSnapshotRevision(previous, incoming) {
   return incoming < previous ? null : incoming;
 }
 
-// An explicit target never falls back to another project or worker.
+// An explicit target never falls back to another project or worker. A project
+// holds up to ten active workers (snapshot.workers lists only active ones).
 export function resolveTarget(snapshot, target) {
   if (!target) return null;
   const project = snapshot?.projects?.find(item => item.id === target.projectId);
   const worker = snapshot?.workers?.find(item => item.id === target.workerId && item.projectId === target.projectId);
-  return project && worker && project.activeWorkerId === worker.id ? { project, worker } : null;
+  return project && worker ? { project, worker } : null;
 }
 
-// Routes a project UUID to the engine's recorded active worker. When the caller
-// names a worker, it must be that active worker; nothing else is substituted.
+// Routes a project UUID and an explicit worker to that worker. Without a named
+// worker there is no target: nothing picks one of the project's puffles.
 export function targetForProject(snapshot, projectId, workerId = null) {
+  if (workerId === null) return null;
   const project = snapshot?.projects?.find(item => item.id === projectId);
-  if (!project?.activeWorkerId || (workerId !== null && workerId !== project.activeWorkerId)) return null;
-  const worker = snapshot.workers?.find(item => item.id === project.activeWorkerId && item.projectId === project.id);
+  const worker = project && snapshot.workers?.find(item => item.id === workerId && item.projectId === project.id);
   return worker ? { projectId: project.id, workerId: worker.id } : null;
 }
 
@@ -46,9 +47,10 @@ export function controlsForWorker(connected, resolved, terminalReady) {
   const worker = resolved?.worker;
   const ready = Boolean(connected && worker);
   return {
-    start: ready && !worker.running && worker.workspace?.state === 'ready' && !worker.recoveryBlocked,
+    start: ready && !worker.running && !worker.queued && worker.workspace?.state === 'ready' && !worker.recoveryBlocked,
     interrupt: ready && worker.running,
-    stop: ready && worker.running,
+    // Stop also withdraws a queued start.
+    stop: ready && (worker.running || worker.queued === true),
     submit: ready && worker.running && terminalReady && ['idle', 'review', 'interrupted'].includes(worker.status),
     input: ready && worker.running && terminalReady,
     diff: ready,

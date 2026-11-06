@@ -5,7 +5,8 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { createManager } from './manager.mjs';
 import { migrateStateDir } from './state.mjs';
-import { FakePty, checkoutFingerprint, legacyState, sandbox } from './testing.mjs';
+import { ProvisionError } from './game.mjs';
+import { FakePty, checkoutFingerprint, fakeGame, legacyState, memoryPublisher, sandbox } from './testing.mjs';
 
 async function engine(t, extra = {}) {
   const s = sandbox(t, 'penguin-manager-');
@@ -13,27 +14,50 @@ async function engine(t, extra = {}) {
   const worktreeRoot = path.join(s.dir, 'worktrees');
   const processes = [];
   const events = [];
+  const game = extra.game === undefined ? fakeGame() : extra.game;
+  const publisher = extra.publisher ?? memoryPublisher();
   const options = { stateDir, worktreeRoot, gitEnv: s.gitEnv, hookBaseUrl: 'http://localhost:8081/engine/hooks', onEvent: event => events.push(event),
     ptySpawn: (command, args, spawnOptions) => {
       const proc = new FakePty();
       processes.push({ proc, command, args, options: spawnOptions });
       return proc;
-    }, ...extra };
-  const e = { ...s, stateDir, worktreeRoot, processes, events, options, manager: null };
+    }, ...extra, game, publisher };
+  const e = { ...s, stateDir, worktreeRoot, processes, events, options, game, publisher, manager: null };
   e.manager = await createManager(options);
   s.cleanup(() => e.manager?.close());
   e.restart = async (more = {}) => { await e.manager.close(); e.manager = null; e.manager = await createManager({ ...options, ...more }); return e.manager; };
   e.view = () => e.manager.snapshot();
   e.worker = id => e.view().workers.find(worker => worker.id === id);
   e.projectView = id => e.view().projects.find(project => project.id === id);
-  /** Register a disposable repository and create its ready puffle. */
-  e.add = async (name, { files, puffle } = {}) => {
+  /** Register a disposable repository; its empty igloo is provisioned in the background. */
+  e.register = async (name, files) => {
     const repo = s.repo(name, files);
     const project = await e.manager.registerProject({ path: repo });
-    const created = await e.manager.createWorker({ projectId: project.id, name: puffle });
     await e.manager.settled(project.id);
-    const worker = e.worker(created.id);
+    return { repo, project: e.projectView(project.id) };
+  };
+  /** Adopt a puffle the way the game does: reserve, buy against the world server, report, settle. */
+  e.purchase = async (projectId, { name = 'Atlas', typeId = 0, subtypeId = 0 } = {}) => {
+    const adoption = await e.manager.reserveAdoption({ projectId, typeId, subtypeId, name });
+    const reply = e.game.purchase(e.publisher.payload, { adoptionId: adoption.id, typeId, subtypeId, name });
+    return { adoption, reply };
+  };
+  e.adopt = async (projectId, request = {}) => {
+    const { adoption, reply } = await e.purchase(projectId, request);
+    const reported = await e.manager.reportAdoption({ adoptionId: adoption.id, result: reply });
+    await e.manager.settled(projectId);
+    return { adoption: reported, reply, worker: e.worker(adoption.workerId) };
+  };
+  /** Register a disposable repository and adopt its first, ready puffle. */
+  e.add = async (name, { files, puffle = 'Atlas', typeId, subtypeId } = {}) => {
+    const { repo, project } = await e.register(name, files);
+    const { worker } = await e.adopt(project.id, { name: puffle, typeId, subtypeId });
     return { repo, project: e.projectView(project.id), worker, target: { projectId: project.id, workerId: worker.id } };
+  };
+  /** Waits (bounded) for a condition driven by background work, such as a queued start. */
+  e.until = async (check, label) => {
+    for (let attempt = 0; attempt < 200; attempt++) { if (check()) return; await new Promise(resolve => setTimeout(resolve, 10)); }
+    assert.fail(`Timed out waiting: ${label}`);
   };
   e.processFor = workerId => processes.filter(item => item.options.env.CLAUDE_PENGUIN_WORKER_ID === workerId).at(-1);
   e.hook = (worker, type, fields = {}, token = e.processFor(worker.id).options.env.CLAUDE_PENGUIN_HOOK_TOKEN) => e.manager.hook({ workerId: worker.id, token,
@@ -64,10 +88,11 @@ test('multiple repositories get separate projects; symlinks, linked worktrees, a
   assert.equal(e.view().projects.length, 2);
   assert.equal(e.view().projects.find(project => project.id === a.id).sourcePath, first, 'the initially registered checkout is preserved');
   assert.equal(JSON.stringify(e.view()).includes('commonDir'), false, 'snapshots are allowlisted');
+  await Promise.all([e.manager.settled(a.id), e.manager.settled(b.id)]);
 });
 
 test('project names are validated by the engine and the 32-project limit is enforced', async t => {
-  const e = await engine(t);
+  const e = await engine(t, { game: null });
   for (const name of ['100%', 'A|B', 'a:b', ' padded', 'two  spaces', 'x'.repeat(31)]) {
     await assert.rejects(e.manager.registerProject({ path: e.repo(`bad-${randomUUID()}`), name }), /Project names/, name);
   }
@@ -79,22 +104,217 @@ test('project names are validated by the engine and the 32-project limit is enfo
   assert.equal((await e.manager.registerProject({ path: path.join(e.dir, 'repo-3') })).name, 'repo-3', 'existing projects still resolve at the limit');
 });
 
-test('creation requires an explicit project and never falls back to another project or worker', async t => {
+test('registration creates an empty project igloo: an owner and a locked igloo, no puffle and no worker', async t => {
+  const e = await engine(t);
+  const { project } = await e.register('empty');
+  assert.equal(project.setup.phase, 'ready');
+  assert.deepEqual([project.game.source, project.game.status, project.game.ownerId, project.game.roomId], ['managed', 'ready', 201, 2201]);
+  assert.deepEqual(project.capacity, { max: 10, puffles: 0, pending: 0 });
+  assert.equal(project.adoptionBlocked, null);
+  assert.equal(e.view().workers.length, 0);
+  assert.equal(e.game.db.owners[0].pets.length, 0, 'nothing was adopted for the owner');
+  assert.ok(!e.game.calls.some(([op]) => op === 'purchase'), 'the engine never purchases');
+  assert.deepEqual(e.publisher.payload.igloos, [{ ownerId: 201, iglooId: 9 }]);
+  assert.deepEqual(e.publisher.payload.adoptions, []);
+  assert.equal(e.game.calls.find(([op]) => op === 'verify')[1][0].puffles.length, 0, 'an empty igloo verifies as empty');
+  await assert.rejects(e.manager.createWorker({ projectId: project.id }), /Adopt a puffle at the Pet Shop/);
+});
+
+test('without provisioning a project waits at game-pending and cannot adopt', async t => {
+  const e = await engine(t, { game: null });
+  const project = await e.manager.registerProject({ path: e.repo('offline') });
+  await e.manager.settled(project.id);
+  assert.equal(e.projectView(project.id).setup.phase, 'game-pending');
+  assert.match(e.projectView(project.id).adoptionBlocked, /provisioning is off/);
+  await assert.rejects(e.manager.reserveAdoption({ projectId: project.id, typeId: 0, subtypeId: 0, name: 'Atlas' }), /provisioning is off/);
+});
+
+// ------------------------------------------------------------ adoption
+
+test('adoption reserves, publishes, binds the receipt to a new worker, and sets up its own worktree', async t => {
+  const e = await engine(t);
+  const { project } = await e.register('adopt');
+  const adoption = await e.manager.reserveAdoption({ projectId: project.id, typeId: 3, subtypeId: 0, name: 'moss' });
+  assert.equal(adoption.state, 'reserved');
+  assert.deepEqual(adoption.request, { typeId: 3, subtypeId: 0, name: 'moss', price: 400 });
+  const saved = JSON.parse(fs.readFileSync(path.join(e.stateDir, 'state.json'), 'utf8'));
+  assert.equal(saved.adoptions[0].workerId, adoption.workerId, 'the worker and adoption IDs are durable before the purchase');
+  assert.deepEqual(e.publisher.payload.adoptions.map(item => [item.adoptionId, item.ownerId]), [[adoption.id, 201]]);
+  assert.equal(e.view().workers.length, 0, 'no worker exists before the purchase');
+  const reply = e.game.purchase(e.publisher.payload, { adoptionId: adoption.id, typeId: 3, subtypeId: 0, name: 'moss' });
+  assert.equal(reply.ok, true);
+  const reported = await e.manager.reportAdoption({ adoptionId: adoption.id, result: reply });
+  assert.equal(reported.state, 'bound');
+  await e.manager.settled(project.id);
+  const worker = e.worker(adoption.workerId);
+  assert.equal(worker.name, 'Moss', 'the server title-cases the name');
+  assert.deepEqual([worker.puffle.puffleId, worker.puffle.typeId, worker.puffle.subtypeId, worker.puffle.color, worker.puffle.adoptionId], [reply.puffleId, 3, 0, 'green', adoption.id]);
+  assert.equal(worker.workspace.state, 'ready');
+  assert.equal(worker.workspace.branch, `claude-penguin/${project.id}/${worker.id}`);
+  assert.equal(worker.status, 'offline');
+  assert.deepEqual(e.publisher.payload.adoptions, [], 'a bound adoption leaves publication');
+  assert.deepEqual(e.projectView(project.id).capacity, { max: 10, puffles: 1, pending: 0 });
+  assert.equal(e.game.db.coins, 4600, 'exactly one debit');
+});
+
+test('the dog and cat cost 800; special puffles and invalid names are refused before any reservation', async t => {
+  const e = await engine(t);
+  const { project } = await e.register('variants');
+  const dog = await e.adopt(project.id, { name: 'Rex', typeId: 0, subtypeId: 1006 });
+  const cat = await e.adopt(project.id, { name: 'Tom', typeId: 8, subtypeId: 1007 });
+  assert.deepEqual([dog.worker.puffle.color, cat.worker.puffle.color], ['blue-dog', 'orange-cat']);
+  assert.equal(e.game.db.coins, 3400);
+  for (const [typeId, subtypeId] of [[10, 0], [11, 0], [0, 1007], [0, 1000], [12, 0]]) {
+    await assert.rejects(e.manager.reserveAdoption({ projectId: project.id, typeId, subtypeId, name: 'Shiny' }), /cannot join a project igloo/);
+  }
+  await assert.rejects(e.manager.reserveAdoption({ projectId: project.id, typeId: 0, subtypeId: 0, name: 'Two Words' }), /1 to 12 letters/);
+  await assert.rejects(e.manager.reserveAdoption({ projectId: randomUUID(), typeId: 0, subtypeId: 0, name: 'Atlas' }), /Unknown project/);
+  await assert.rejects(e.manager.reserveAdoption({ typeId: 0, subtypeId: 0, name: 'Atlas' }), /explicit project ID/);
+  assert.equal(e.view().adoptions.length, 2);
+});
+
+test('one adoption is open at a time; refusals and cancellation withdraw it; duplicate names are allowed', async t => {
+  const e = await engine(t);
+  const one = await e.register('one');
+  const two = await e.register('two');
+  const first = await e.manager.reserveAdoption({ projectId: one.project.id, typeId: 0, subtypeId: 0, name: 'Atlas' });
+  await assert.rejects(e.manager.reserveAdoption({ projectId: two.project.id, typeId: 0, subtypeId: 0, name: 'Atlas' }), /Another adoption is still open/);
+  e.game.db.coins = 100;
+  const refused = e.game.purchase(e.publisher.payload, { adoptionId: first.id, typeId: 0, subtypeId: 0, name: 'Atlas' });
+  assert.deepEqual(refused, { ok: false, code: '401' });
+  const withdrawn = await e.manager.reportAdoption({ adoptionId: first.id, result: refused });
+  assert.deepEqual([withdrawn.state, withdrawn.code], ['withdrawn', '401']);
+  assert.deepEqual(e.publisher.payload.adoptions, [], 'a withdrawn adoption is unpublished');
+  e.game.db.coins = 5000;
+  const second = await e.manager.reserveAdoption({ projectId: two.project.id, typeId: 0, subtypeId: 0, name: 'Atlas' });
+  assert.equal(e.manager.cancelAdoption({ adoptionId: second.id }).state, 'withdrawn');
+  const a = await e.adopt(one.project.id, { name: 'Atlas' });
+  const b = await e.adopt(one.project.id, { name: 'Atlas' });
+  assert.notEqual(a.worker.id, b.worker.id);
+  assert.deepEqual([a.worker.name, b.worker.name], ['Atlas', 'Atlas'], 'names need not be unique; the game ID is the identity');
+  assert.notEqual(a.worker.puffle.puffleId, b.worker.puffle.puffleId);
+  assert.equal(e.game.db.coins, 4200);
+});
+
+test('the tenth adoption succeeds and the eleventh is refused before any charge', async t => {
+  const e = await engine(t);
+  const { project } = await e.register('full');
+  for (let index = 0; index < 10; index++) await e.adopt(project.id, { name: 'Pup', typeId: index, subtypeId: 0 });
+  assert.equal(e.view().workers.filter(worker => worker.projectId === project.id).length, 10);
+  assert.match(e.projectView(project.id).adoptionBlocked, /already has 10 puffles/);
+  const coins = e.game.db.coins;
+  await assert.rejects(e.manager.reserveAdoption({ projectId: project.id, typeId: 0, subtypeId: 0, name: 'Eleven' }), /already has 10 puffles/);
+  assert.equal(e.game.db.coins, coins, 'nothing was charged');
+});
+
+test('a lost response and an engine crash after the debit are both recovered from the receipt', async t => {
+  const e = await engine(t);
+  const { project } = await e.register('crash');
+  // Lost response: the purchase completed, but the browser never reported it.
+  const lost = await e.purchase(project.id, { name: 'Lost' });
+  assert.equal(lost.reply.ok, true);
+  const reconciled = await e.manager.reconcileAdoptions({ projectId: project.id });
+  assert.deepEqual(reconciled.bound, [lost.adoption.workerId]);
+  await e.manager.settled(project.id);
+  assert.equal(e.worker(lost.adoption.workerId).puffle.puffleId, lost.reply.puffleId);
+  // Crash after the debit and before binding: restart, then startup reconciliation binds it.
+  const crashed = await e.purchase(project.id, { name: 'Crash' });
+  await e.restart();
+  assert.equal(e.view().adoptions.find(item => item.id === crashed.adoption.id).state, 'reserved');
+  await e.manager.verifyGameMappings();
+  await e.manager.settled(project.id);
+  assert.equal(e.view().adoptions.find(item => item.id === crashed.adoption.id).state, 'bound');
+  assert.equal(e.projectView(project.id).game.status, 'ready', 'the receipt-backed puffle verifies as recorded');
+  assert.equal(e.game.db.coins, 4200, 'replays never charged twice');
+  // Replaying the same adoption returns the stored receipt and binds nothing new.
+  const replay = e.game.purchase({ adoptions: [{ adoptionId: crashed.adoption.id, ownerId: 201, expiresAt: 4e9 }] },
+    { adoptionId: crashed.adoption.id, typeId: 0, subtypeId: 0, name: 'Crash' });
+  assert.equal(replay.puffleId, crashed.reply.puffleId);
+  assert.equal((await e.manager.reportAdoption({ adoptionId: crashed.adoption.id, result: replay })).state, 'bound');
+  assert.equal(e.view().workers.length, 2);
+});
+
+test('a receipt always wins over a withdrawn or expired reservation', async t => {
+  let clock = Date.now();
+  const e = await engine(t, { clock: () => clock });
+  const { project } = await e.register('late');
+  const { adoption, reply } = await e.purchase(project.id, { name: 'Late' });
+  await e.manager.reportAdoption({ adoptionId: adoption.id, result: { ok: false, code: 'failed' } });
+  assert.equal(e.view().adoptions[0].state, 'withdrawn');
+  clock += 60 * 60 * 1000;
+  await e.manager.reconcileAdoptions();
+  await e.manager.settled(project.id);
+  assert.equal(e.view().adoptions[0].state, 'bound');
+  assert.equal(e.worker(adoption.workerId).puffle.puffleId, reply.puffleId);
+  // An expired reservation without a receipt is withdrawn and unpublished.
+  const stale = await e.manager.reserveAdoption({ projectId: project.id, typeId: 1, subtypeId: 0, name: 'Stale' });
+  clock += 11 * 60 * 1000;
+  await e.manager.reconcileAdoptions();
+  assert.equal(e.view().adoptions.find(item => item.id === stale.id).state, 'withdrawn');
+  assert.equal((await e.manager.reserveAdoption({ projectId: project.id, typeId: 1, subtypeId: 0, name: 'Fresh' })).state, 'reserved', 'an expired reservation no longer blocks');
+});
+
+test('a receipt for another owner or visitor is a conflict and binds nothing', async t => {
+  const e = await engine(t);
+  const { project } = await e.register('conflict');
+  const { adoption } = await e.purchase(project.id, { name: 'Odd' });
+  e.game.db.receipts[0].ownerId = 999;
+  await e.manager.reconcileAdoptions();
+  assert.equal(e.view().adoptions[0].state, 'conflict');
+  assert.equal(e.worker(adoption.workerId), undefined);
+});
+
+test('adoption is refused while the project holds the owner session, during setup, or for the legacy Atlas', async t => {
+  const e = await engine(t);
+  let release;
+  e.game.before.igloo = () => new Promise(resolve => { release = resolve; });
+  const project = await e.manager.registerProject({ path: e.repo('busy') });
+  while (!release) await new Promise(resolve => setTimeout(resolve, 5));
+  await assert.rejects(e.manager.reserveAdoption({ projectId: project.id, typeId: 0, subtypeId: 0, name: 'Atlas' }), /busy with setup/);
+  release();
+  await e.manager.settled(project.id);
+  delete e.game.before.igloo;
+  assert.equal((await e.manager.reserveAdoption({ projectId: project.id, typeId: 0, subtypeId: 0, name: 'Atlas' })).state, 'reserved');
+});
+
+test('worktree setup failing after purchase keeps the paid puffle and retries that worker only', async t => {
+  const e = await engine(t);
+  // A partial clone fails during checkout (Git has already created the branch), then succeeds on retry.
+  const upstream = e.repo('upstream', { 'big.txt': 'large\n' });
+  const repo = path.join(e.dir, 'partial');
+  e.git(e.dir, 'clone', '-q', '--filter=blob:none', '--no-checkout', `file://${upstream}`, repo);
+  const project = await e.manager.registerProject({ path: repo });
+  await e.manager.settled(project.id);
+  const { worker } = await e.adopt(project.id, { name: 'Atlas' });
+  assert.equal(worker.setup.phase, 'failed');
+  assert.equal(worker.setup.retryable, true);
+  assert.match(worker.setup.error, /promisor remote/);
+  assert.equal(worker.status, 'setup');
+  assert.equal(e.projectView(project.id).setup.phase, 'ready', 'the destination stays usable');
+  assert.ok(worker.puffle.puffleId, 'the paid puffle stays bound');
+  await assert.rejects(e.manager.start({ projectId: project.id, workerId: worker.id }), /setup is not complete/);
+  const sibling = await e.adopt(project.id, { name: 'Comet' });
+  assert.equal(sibling.worker.setup.phase, 'failed', 'a sibling fails on its own, independently');
+  e.git(repo, 'fetch', '-q', 'origin');
+  e.git(repo, 'cat-file', '-p', e.git(upstream, 'rev-parse', 'HEAD:big.txt').trim()); // The user fetches the object manually.
+  await e.manager.retryWorker({ projectId: project.id, workerId: worker.id });
+  await e.manager.settled(project.id);
+  const ready = e.worker(worker.id);
+  assert.equal(ready.workspace.state, 'ready');
+  assert.equal(fs.readFileSync(path.join(ready.workspace.path, 'big.txt'), 'utf8'), 'large\n');
+  assert.equal(e.worker(sibling.worker.id).setup.phase, 'failed', 'retry affects only that worker');
+  await assert.rejects(e.manager.retryWorker({ projectId: project.id, workerId: worker.id }), /not waiting for a retry/);
+});
+
+test('control requires an explicit project and worker and never falls back to another one', async t => {
   const e = await engine(t);
   const one = await e.add('one');
   const two = await e.add('two', { puffle: 'Comet' });
-  await assert.rejects(e.manager.createWorker({ name: 'Nova' }), /explicit project ID/);
-  await assert.rejects(e.manager.createWorker({ projectId: randomUUID() }), /Unknown project/);
-  await assert.rejects(e.manager.createWorker({ projectId: one.project.id, name: 'Second' }), /already has a puffle/);
   await assert.rejects(e.manager.start({ projectId: one.project.id }), /explicit worker ID/);
   await assert.rejects(e.manager.start({ projectId: one.project.id, workerId: two.worker.id }), /Unknown worker for this project/);
   await assert.rejects(e.manager.diff({ workerId: one.worker.id }), /explicit project ID/);
-  assert.equal(one.worker.name, 'Atlas', 'the first puffle defaults to Atlas');
-  const three = e.repo('three');
-  const project = await e.manager.registerProject({ path: three });
-  const suggested = await e.manager.createWorker({ projectId: project.id });
-  assert.equal(suggested.name, 'Nova', 'later defaults avoid used names');
-  await assert.rejects(e.manager.createWorker({ projectId: (await e.manager.registerProject({ path: e.repo('four') })).id, name: 'Not Valid' }), /1 to 12 letters/);
+  await assert.rejects(e.manager.reportAdoption({ adoptionId: randomUUID(), result: { ok: true } }), /Unknown adoption/);
+  await assert.rejects(e.manager.retryWorker({ projectId: two.project.id, workerId: one.worker.id }), /Unknown worker for this project/);
 });
 
 // ------------------------------------------------------------ worktrees
@@ -109,15 +329,15 @@ test('each puffle gets a locked worktree on its own branch while the source chec
   fs.writeFileSync(path.join(repo, 'ignored.log'), 'ignored\n');
   const before = checkoutFingerprint(e, repo);
   const project = await e.manager.registerProject({ path: repo });
-  const created = await e.manager.createWorker({ projectId: project.id });
-  assert.equal(created.workspace.state, 'reserved', 'the reservation is visible before Git runs');
-  const settled = await e.manager.settled(project.id);
-  assert.equal(settled.setup.phase, 'game-pending');
-  assert.match(e.projectView(project.id).setup.note, /uncommitted changes[^]*stay in the source checkout/);
-  const worker = e.worker(created.id);
+  await e.manager.settled(project.id);
+  const { worker } = await e.adopt(project.id);
+  const second = (await e.adopt(project.id, { name: 'Comet' })).worker;
+  assert.match(worker.setup.note, /uncommitted changes[^]*stay in the source checkout/);
   const leaf = path.join(fs.realpathSync.native(e.worktreeRoot), worker.id, 'My-Repo--copy-');
   assert.equal(worker.workspace.path, leaf);
   assert.equal(worker.workspace.branch, `claude-penguin/${project.id}/${worker.id}`);
+  assert.notEqual(second.workspace.path, worker.workspace.path);
+  assert.notEqual(second.workspace.branch, worker.workspace.branch);
   assert.equal(worker.workspace.baseCommit, before.head);
   assert.equal(worker.workspace.sourceDirtyAtCreation, true);
   assert.equal(fs.readFileSync(path.join(leaf, 'hello.txt'), 'utf8'), 'hello\n', 'the worktree starts from committed HEAD');
@@ -126,9 +346,10 @@ test('each puffle gets a locked worktree on its own branch while the source chec
   assert.match(e.git(repo, 'worktree', 'list', '--porcelain'), new RegExp(`locked Claude Penguin worker ${worker.id}`));
   assert.deepEqual(checkoutFingerprint(e, repo), before, 'source files, index, and HEAD are unchanged');
   assert.deepEqual(worker.inspection.warnings, []);
+  assert.equal(e.git(repo, 'branch', '--list', 'claude-penguin/*').trim().split('\n').length, 2);
 });
 
-test('an overridden worktree root may contain spaces; roots inside Git are refused during setup', async t => {
+test('an overridden worktree root may contain spaces; roots inside Git fail that worker\'s setup', async t => {
   const e = await engine(t);
   const spaced = path.join(e.dir, 'Parent Folder', 'Penguin Worktrees');
   await e.restart({ worktreeRoot: spaced });
@@ -137,84 +358,78 @@ test('an overridden worktree root may contain spaces; roots inside Git are refus
   assert.ok(fs.existsSync(path.join(worker.workspace.path, 'hello.txt')));
   const host = e.repo('host');
   await e.restart({ worktreeRoot: path.join(host, 'worktrees') });
-  const project = await e.manager.registerProject({ path: e.repo('inside') });
-  await assert.rejects(e.manager.createWorker({ projectId: project.id }), /inside a Git repository/);
-  assert.equal(e.projectView(project.id).activeWorkerId, null, 'nothing is reserved after a refused root');
-  assert.equal(e.view().workers.find(item => item.id === worker.id).workspace.path, worker.workspace.path, 'changing the root affects future workers only');
+  const { project } = await e.register('inside');
+  const refused = (await e.adopt(project.id, { name: 'Nova' })).worker;
+  assert.equal(refused.setup.phase, 'failed');
+  assert.match(refused.setup.error, /inside a Git repository/);
+  assert.equal(refused.workspace, null, 'nothing is reserved after a refused root');
+  assert.equal(e.worker(worker.id).workspace.path, worker.workspace.path, 'changing the root affects future workers only');
 });
 
-test('setup failures persist, retry reconciles the same reservation, and nothing is duplicated', async t => {
+test('a custom Git filter fails the worker\'s setup before anything is reserved', async t => {
   const e = await engine(t);
-  // A custom filter is refused before anything is reserved, because even source status reads could run it.
   const filtered = e.repo('filtered', { '.gitattributes': '*.txt filter=custom\n', 'a.txt': 'a\n' });
   e.git(filtered, 'config', 'filter.custom.clean', 'cat');
-  const refused = await e.manager.registerProject({ path: filtered });
-  await assert.rejects(e.manager.createWorker({ projectId: refused.id }), /Unsupported Git filter command/);
-  assert.equal(e.projectView(refused.id).activeWorkerId, null);
-
-  // A partial clone fails during checkout (Git has already created the branch), then succeeds on retry.
-  const upstream = e.repo('upstream', { 'big.txt': 'large\n' });
-  const repo = path.join(e.dir, 'partial');
-  e.git(e.dir, 'clone', '-q', '--filter=blob:none', '--no-checkout', `file://${upstream}`, repo);
-  const project = await e.manager.registerProject({ path: repo });
-  const created = await e.manager.createWorker({ projectId: project.id });
-  let view = await e.manager.settled(project.id);
-  assert.equal(view.setup.phase, 'failed');
-  assert.equal(view.setup.retryable, true);
-  assert.match(view.setup.error, /promisor remote/);
-  assert.equal(e.worker(created.id).status, 'setup');
-  await assert.rejects(e.manager.start({ projectId: project.id, workerId: created.id }), /setup is not complete/);
-  await assert.rejects(e.manager.createWorker({ projectId: project.id }), /already has a puffle/);
-  e.git(repo, 'fetch', '-q', 'origin');
-  e.git(repo, 'cat-file', '-p', e.git(upstream, 'rev-parse', 'HEAD:big.txt').trim()); // The user fetches the object manually.
-  await e.manager.retrySetup({ projectId: project.id });
-  view = await e.manager.settled(project.id);
-  assert.equal(view.setup.phase, 'game-pending');
-  const worker = e.worker(created.id);
-  assert.equal(worker.workspace.state, 'ready');
-  assert.equal(fs.readFileSync(path.join(worker.workspace.path, 'big.txt'), 'utf8'), 'large\n');
-  assert.equal(e.git(repo, 'branch', '--list', 'claude-penguin/*').trim().split('\n').length, 1);
-  assert.equal(e.git(repo, 'worktree', 'list', '--porcelain').match(/^worktree /gm).length, 2);
-  await assert.rejects(e.manager.retrySetup({ projectId: project.id }), /not waiting for a retry/);
+  const project = await e.manager.registerProject({ path: filtered });
+  await e.manager.settled(project.id);
+  const { worker } = await e.adopt(project.id);
+  assert.match(worker.setup.error, /Unsupported Git filter command/);
+  assert.equal(worker.workspace, null);
 });
 
 test('an engine stop after Git finished but before state recorded it reconciles on retry', async t => {
   const e = await engine(t);
-  const repo = e.repo('interrupted');
-  const project = await e.manager.registerProject({ path: repo });
-  const created = await e.manager.createWorker({ projectId: project.id });
-  // Simulate a crash: the reservation is durable, the engine stops, and Git completed out of band.
+  const { repo, project } = await e.register('interrupted');
+  const { worker: created } = await e.adopt(project.id);
   await e.manager.close();
-  const saved = JSON.parse(fs.readFileSync(path.join(e.stateDir, 'state.json'), 'utf8'));
-  const reserved = saved.workers.find(worker => worker.id === created.id).workspace;
-  saved.projects[0].setup.phase = 'preparing';
-  fs.writeFileSync(path.join(e.stateDir, 'state.json'), JSON.stringify(saved));
-  if (!fs.existsSync(reserved.path)) e.git(repo, 'worktree', 'add', '-q', '--lock', '-b', reserved.branch, reserved.path, reserved.baseCommit);
+  // Simulate a crash mid-setup: the reservation is durable and Git completed out of band.
+  const file = path.join(e.stateDir, 'state.json');
+  const saved = JSON.parse(fs.readFileSync(file, 'utf8'));
+  const record = saved.workers.find(worker => worker.id === created.id);
+  record.workspace.state = 'reserved';
+  record.setup.phase = 'preparing';
+  fs.writeFileSync(file, JSON.stringify(saved));
   e.manager = await createManager(e.options);
-  let view = e.projectView(project.id);
+  const view = e.worker(created.id);
   assert.equal(view.setup.phase, 'failed');
   assert.match(view.setup.error, /Retry to reconcile/);
-  await e.manager.retrySetup({ projectId: project.id });
-  view = await e.manager.settled(project.id);
-  assert.equal(view.setup.phase, 'game-pending');
+  await e.manager.retryWorker({ projectId: project.id, workerId: created.id });
+  await e.manager.settled(project.id);
   assert.equal(e.worker(created.id).workspace.state, 'ready');
   assert.equal(e.git(repo, 'worktree', 'list', '--porcelain').match(/^worktree /gm).length, 2, 'the existing worktree was adopted, not duplicated');
   assert.equal(e.view().workers.length, 1);
 });
 
-test('concurrent setup for one project yields one puffle; different projects set up concurrently', async t => {
-  const e = await engine(t);
-  const one = await e.manager.registerProject({ path: e.repo('one') });
-  const two = await e.manager.registerProject({ path: e.repo('two') });
-  const results = await Promise.allSettled([
-    e.manager.createWorker({ projectId: one.id, name: 'Atlas' }), e.manager.createWorker({ projectId: one.id, name: 'Comet' }),
-    e.manager.createWorker({ projectId: two.id, name: 'Nova' }),
-  ]);
-  assert.deepEqual(results.map(result => result.status), ['fulfilled', 'rejected', 'fulfilled']);
-  assert.match(results[1].reason.message, /already has a puffle/);
-  await Promise.all([e.manager.settled(one.id), e.manager.settled(two.id)]);
-  assert.deepEqual(e.view().workers.map(worker => [worker.name, worker.workspace.state]).sort(), [['Atlas', 'ready'], ['Nova', 'ready']]);
-  assert.equal(e.git(path.join(e.dir, 'one'), 'branch', '--list', 'claude-penguin/*').trim().split('\n').length, 1);
+// ------------------------------------------------------------ session caps
+
+test('live sessions are capped per igloo and overall; extra starts queue visibly and run when a slot frees', async t => {
+  const e = await engine(t, { caps: { perIgloo: 2, total: 3 } });
+  const { project } = await e.register('busy-igloo');
+  const items = [];
+  for (const name of ['Atlas', 'Comet', 'Nova']) {
+    const { worker } = await e.adopt(project.id, { name });
+    items.push({ worker, target: { projectId: project.id, workerId: worker.id } });
+  }
+  const other = await e.add('other', { puffle: 'Pixel' });
+  const third = await e.add('third', { puffle: 'Echo' });
+  await e.started(items[0]);
+  await e.started(items[1]);
+  const queued = await e.manager.start(items[2].target);
+  assert.deepEqual([queued.status, queued.queued, queued.running], ['queued', true, false]);
+  assert.match(queued.activity, /2 of 2 sessions in this igloo/);
+  assert.equal(e.processes.length, 2, 'nothing spawned beyond the igloo cap');
+  await e.started(other);
+  const globallyQueued = await e.manager.start(third.target);
+  assert.equal(globallyQueued.status, 'queued', 'the overall cap also queues');
+  // Stopping one session in the busy igloo starts its queued sibling, never the other igloo's.
+  await e.manager.stop(items[0].target);
+  await e.until(() => e.worker(items[2].worker.id).running, 'the queued sibling started when a slot freed');
+  assert.equal(e.worker(third.worker.id).queued, true);
+  assert.equal(e.worker(items[1].worker.id).running, true, 'the engine never stops a working session to make room');
+  // A queued start can be withdrawn.
+  assert.equal((await e.manager.stop(third.target)).queued, false);
+  await e.manager.stop(other.target);
+  assert.equal(e.worker(third.worker.id).running, false, 'a withdrawn start stays withdrawn');
 });
 
 // ------------------------------------------------------------ workspace validation
@@ -621,26 +836,36 @@ test('an alive saved PID blocks restart without killing an unowned process', asy
   assert.equal(e.processes.length, 0);
 });
 
+
 test('saved state with inconsistent identities or records is refused before anything starts', async t => {
   const e = await engine(t);
-  await e.add('one');
+  const one = await e.add('one');
+  await e.adopt(one.project.id, { name: 'Twin' });
   await e.add('two', { puffle: 'Comet' });
   await e.manager.close();
   e.manager = null;
   const file = path.join(e.stateDir, 'state.json');
   const good = fs.readFileSync(file, 'utf8');
-  const game = ownerId => ({ source: 'managed', status: 'ready', ownerId, iglooId: 9, roomId: ownerId + 2000, puffleId: 31, puffleName: 'Atlas', fixtureId: null, verifiedAt: null });
+  const game = ownerId => ({ source: 'managed', status: 'ready', ownerId, iglooId: 9, roomId: ownerId + 2000, verifiedAt: null });
   const cases = [
     ['duplicate project IDs', s => { s.projects[1].id = s.projects[0].id; }, /project identity is missing or duplicated/],
     ['duplicate worker IDs', s => { s.workers[1].id = s.workers[0].id; }, /worker identity is missing, duplicated/],
-    ['two active puffles in one project', s => { Object.assign(s.workers[1], { projectId: s.projects[0].id }).workspace.repoCommonDir = s.projects[0].commonDir; }, /more than one active puffle/],
-    ['an activeWorkerId that names another project\'s puffle', s => { s.projects[0].activeWorkerId = s.workers[1].id; }, /does not reference its active puffle/],
-    ['an igloo room that is not the owner\'s', s => { s.projects[0].game = { ...game(201), roomId: 2999 }; }, /invalid igloo room address/],
-    ['a project owner that is the visitor', s => { s.visitor = { penguinId: 201, username: 'bridgecheck' }; s.projects[0].game = game(201); }, /shares its game owner/],
+    ['a version 2 project shape', s => { s.projects[0].activeWorkerId = null; }, /version 2 single-puffle shape/],
+    ['an igloo room that is not the owner\'s', s => { s.projects[0].game = { ...game(s.projects[0].game.ownerId), roomId: 2999 }; }, /invalid igloo room address/],
+    ['a project owner that is the visitor', s => { s.visitor = { penguinId: s.projects[0].game.ownerId, username: 'bridgecheck' }; }, /shares its game owner/],
     ['two projects with one repository', s => { s.projects[1].commonDir = s.projects[0].commonDir; }, /share one repository/],
     ['two workers with one Claude session', s => { s.workers[1].sessionId = s.workers[0].sessionId; }, /share one Claude session/],
+    ['two workers with one puffle', s => { s.workers[1].puffle.puffleId = s.workers[0].puffle.puffleId; }, /share one puffle/],
+    ['an invalid puffle binding', s => { s.workers[0].puffle.puffleId = 0; }, /invalid puffle binding/],
     ['two active puffles with one worktree', s => { s.workers[1].workspace.path = s.workers[0].workspace.path; }, /share one worktree/],
     ['a worktree from another repository', s => { s.workers[0].workspace.repoCommonDir = '/elsewhere/.git'; }, /different repository than its project/],
+    ['more than ten puffles in one igloo', s => {
+      for (let index = 0; index < 10; index++) s.workers.push({ ...structuredClone(s.workers[0]), id: randomUUID(), sessionId: randomUUID(), puffle: { ...s.workers[0].puffle, puffleId: 900 + index },
+        workspace: { ...s.workers[0].workspace, path: `/tmp/extra-${index}` } });
+    }, /more than 10 active puffles/],
+    ['a bound adoption without its worker', s => { s.adoptions[0].workerId = randomUUID(); }, /bound adoption .* has no matching worker/],
+    ['an unbound adoption record', s => { s.adoptions[0].projectId = randomUUID(); }, /adoption record is missing, duplicated, or unbound/],
+    ['a worker without a setup record', s => { delete s.workers[0].setup; }, /no valid setup record/],
     ['a null project entry', s => { s.projects.push(null); }, /project record is not an object/],
     ['a null worker entry', s => { s.workers.push(null); }, /worker record is not an object/],
     ['a null task entry', s => { s.workers[0].taskHistory.push(null); }, /is incomplete/],
@@ -658,39 +883,24 @@ test('saved state with inconsistent identities or records is refused before anyt
     fs.writeFileSync(file, JSON.stringify(saved));
     await (await createManager(e.options)).close();
   }
+  const otherVisitor = JSON.parse(good);
+  otherVisitor.visitor.username = 'adoptcheck';
+  fs.writeFileSync(file, JSON.stringify(otherVisitor));
+  await assert.rejects(createManager(e.options), /belongs to the adoptcheck visitor/, 'a state directory stays with its visitor');
   fs.writeFileSync(file, good);
   e.manager = await createManager(e.options);
 });
 
-test('identities and secrets stay out of snapshots and state; hook settings stay observational', async t => {
-  const e = await engine(t);
-  const item = await e.add('secrets');
-  await e.manager.start(item.target);
-  const token = e.processFor(item.worker.id).options.env.CLAUDE_PENGUIN_HOOK_TOKEN;
-  assert.equal(JSON.stringify(e.view()).includes(token), false);
-  assert.equal(fs.readFileSync(path.join(e.stateDir, 'state.json'), 'utf8').includes(token), false);
-  assert.equal(fs.statSync(path.join(e.stateDir, 'state.json')).mode & 0o777, 0o600);
-  const settings = JSON.parse(fs.readFileSync(path.join(e.stateDir, 'claude-settings.json'), 'utf8'));
-  assert.equal(settings.hooks.SessionStart[0].hooks[0].type, 'command');
-  assert.ok(Array.isArray(settings.hooks.SessionStart[0].hooks[0].args));
-  assert.ok(e.processFor(item.worker.id).args.includes('manual'));
-  assert.equal(e.view().limits.maxProjects, 32);
-});
-
-test('an unsupported Git version is refused at startup with upgrade guidance', async t => {
-  const s = sandbox(t);
-  await assert.rejects(createManager({ stateDir: path.join(s.dir, 'state'), worktreeRoot: path.join(s.dir, 'w'), hookBaseUrl: 'http://localhost:8081/engine/hooks', gitVersionText: 'git version 2.39.5 (Apple Git-154)' }), /requires Git 2\.48 or newer/);
-});
-
 // ------------------------------------------------------------ migration
 
-test('a migrated Atlas is archived read-only; an isolated replacement reuses only the game mapping', async t => {
+test('a migrated Atlas is archived read-only; an isolated replacement reuses only the game mapping; adoption stays off', async t => {
   const e = await engine(t);
   const source = e.repo('legacy');
   await e.manager.close();
   fs.writeFileSync(path.join(e.stateDir, 'state.json'), JSON.stringify(legacyState(source, { baseCommit: e.git(source, 'rev-parse', 'HEAD').trim() })));
   await assert.rejects(createManager(e.options), /migrate it explicitly/, 'the engine never migrates implicitly');
-  migrateStateDir(e.stateDir);
+  const migrated = migrateStateDir(e.stateDir);
+  assert.equal(migrated.backups.length, 2, 'v1 and v2 bytes are each preserved');
   e.manager = await createManager(e.options);
   const [archived] = e.view().archivedWorkers;
   const target = { projectId: archived.projectId, workerId: archived.id };
@@ -702,14 +912,19 @@ test('a migrated Atlas is archived read-only; an isolated replacement reuses onl
   await assert.rejects(e.manager.hook({ workerId: archived.id, token: 'anything', event: {} }), /Invalid hook/);
   const project = e.view().projects[0];
   assert.deepEqual([project.game.source, project.game.ownerId, project.game.iglooId, project.game.roomId, project.game.puffleId], ['legacy-fixture', 105, 4, 2105, 4]);
+  assert.match(project.adoptionBlocked, /Bridge Alpha owner/);
+  await assert.rejects(e.manager.reserveAdoption({ projectId: project.id, typeId: 0, subtypeId: 0, name: 'Comet' }), /Bridge Alpha owner/);
   assert.equal((await e.manager.registerProject({ path: source })).id, project.id, 'the legacy repository deduplicates after migration');
   const replacement = await e.manager.createWorker({ projectId: project.id });
   assert.equal(replacement.name, 'Atlas');
+  assert.deepEqual([replacement.puffle.puffleId, replacement.puffle.adoptionId], [4, null]);
   assert.notEqual(replacement.sessionId, archived.sessionId, 'the replacement starts a new Claude conversation');
   await e.manager.settled(project.id);
   assert.equal(e.projectView(project.id).setup.phase, 'ready');
+  assert.equal(e.worker(replacement.id).workspace.state, 'ready');
   assert.equal(e.projectView(project.id).game.puffleId, 4, 'the preserved mapping is unchanged');
   assert.equal(e.view().archivedWorkers.length, 1);
+  await assert.rejects(e.manager.createWorker({ projectId: project.id }), /already has its isolated puffle/);
 });
 
 test('migration with a missing source keeps readable history and blocks new puffles', async t => {
@@ -739,4 +954,24 @@ test('migration with a missing source keeps readable history and blocks new puff
   assert.equal(e.projectView(project.id).sourceAvailable, true);
   await e.manager.createWorker({ projectId: project.id });
   assert.equal((await e.manager.settled(project.id)).setup.phase, 'ready');
+});
+
+test('identities and secrets stay out of snapshots and state; hook settings stay observational', async t => {
+  const e = await engine(t);
+  const item = await e.add('secrets');
+  await e.manager.start(item.target);
+  const token = e.processFor(item.worker.id).options.env.CLAUDE_PENGUIN_HOOK_TOKEN;
+  assert.equal(JSON.stringify(e.view()).includes(token), false);
+  assert.equal(fs.readFileSync(path.join(e.stateDir, 'state.json'), 'utf8').includes(token), false);
+  assert.equal(fs.statSync(path.join(e.stateDir, 'state.json')).mode & 0o777, 0o600);
+  const settings = JSON.parse(fs.readFileSync(path.join(e.stateDir, 'claude-settings.json'), 'utf8'));
+  assert.equal(settings.hooks.SessionStart[0].hooks[0].type, 'command');
+  assert.ok(Array.isArray(settings.hooks.SessionStart[0].hooks[0].args));
+  assert.ok(e.processFor(item.worker.id).args.includes('manual'));
+  assert.equal(e.view().limits.maxProjects, 32);
+});
+
+test('an unsupported Git version is refused at startup with upgrade guidance', async t => {
+  const s = sandbox(t);
+  await assert.rejects(createManager({ stateDir: path.join(s.dir, 'state'), worktreeRoot: path.join(s.dir, 'w'), hookBaseUrl: 'http://localhost:8081/engine/hooks', gitVersionText: 'git version 2.39.5 (Apple Git-154)' }), /requires Git 2\.48 or newer/);
 });

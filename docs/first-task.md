@@ -34,11 +34,12 @@ JS
 
 ## Hand it to a puffle
 
-1. [Start the game and the agent engine](../README.md#play-locally). Finish the introductory tour if it covers the controls, then open **Igloos → Add project**. Paste the printed path, replace the suggested project name with **Postcards**, and name its puffle **Pip** (or choose your own name).
-2. **Visit** the igloo and click the puffle. Choose **Start / Resume**, then **Open Claude** to handle first-time folder trust. Return to the task card and send:
+1. [Start the game and the agent engine](../README.md#play-locally). Finish the introductory tour if it covers the controls, then open **Igloos → Add project**. Paste the printed path and replace the suggested project name with **Postcards**.
+2. Walk to the Pet Shop in the Plaza and open **Adopt a Puffle**. Choose the **Postcards** igloo, pick any puffle, and name it **Pip** (or choose your own name). A color costs 400 coins. **OK** on the certificate takes you to the igloo.
+3. Click Pip. Choose **Start / Resume**, then **Open Claude** to handle first-time folder trust: check the path and choose **Yes, I trust this folder**. Return to the task card and send:
 
    > Run `node --test`. Fix the postcard so it preserves the room name. Leave the test unchanged, run it again, and tell me the result.
-3. Close the card and walk to Town. **Work** reopens your selected puffle; if it needs permission, use **Open Claude** to review the request. Work continues while the host engine is running.
-4. When the turn ends, open **Changes**. Look for the fix in `postcard.cjs`, with `postcard.test.cjs` unchanged. To check it yourself, use **Copy path**, then **Open Claude → Stop session** in the terminal footer. Run `node --test` in the copied worktree directory. Expect **1 passing test**. The original checkout should still have the failing version.
+4. Close the card and walk to Town. **Work** reopens your selected puffle; if it needs permission, use **Open Claude** to review the request. Work continues while the host engine is running.
+5. When the turn ends, open **Changes**. Look for the fix in `postcard.cjs`, with `postcard.test.cjs` unchanged. To check it yourself, use **Copy path**, then **Open Claude → Stop session** in the terminal footer. Run `node --test` in the copied worktree directory. Expect **1 passing test**. The original checkout should still have the failing version.
 
 [Back to the island](../README.md)

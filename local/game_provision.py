@@ -20,12 +20,21 @@ Operations:
       account returns USERNAME_TAKEN; duplicated or mismatched markers fail.
       With a recorded `ownerId` it only verifies that owner: no marked account
       returns MISSING and a different ID MISMATCH; nothing is created.
-  {"op": "verify", "mappings": [{key, marker, username, ownerId, iglooId, puffleId, puffleName}]}
+  {"op": "verify", "mappings": [{key, marker, username, ownerId, iglooId, puffles: [{puffleId, name, puffleType}]}]}
       Check complete owner/layout/puffle mappings, including that the managed
-      igloo is still locked in the database.
+      igloo is still locked in the database. The owner's puffles must be
+      exactly the recorded set (ID, name, type, indoors), at most 10, with no
+      backyard puffles; an unrecorded puffle is reported with its adoption
+      receipt ID, if any, and is never adopted into state here. A legacy
+      fixture mapping ({key, fixtureId, ownerId, iglooId, puffleId, puffleName})
+      keeps its one-puffle check.
+  {"op": "receipts", "adoptionIds": [uuid, ...]}
+      Read-only: stored project-adoption receipts for these IDs. The receipt
+      table belongs to project_adoption.py, which the world server creates.
 
-Igloo creation and puffle adoption are not done here; the engine performs them
-through the owner's ordinary game session. Existing accounts are never updated.
+Igloo creation is not done here; the engine performs it through the owner's
+ordinary game session. Project adoption happens only through the visitor's own
+purchase (project_adoption.py). Existing accounts are never updated.
 """
 from __future__ import annotations
 
@@ -38,13 +47,17 @@ import sys
 sys.dont_write_bytecode = True
 
 import game_accounts
-from game_accounts import MANAGED_USERNAME, VISITOR_NICKNAME, VISITOR_USERNAME, managed_marker
+import project_adoption
+from game_accounts import MANAGED_USERNAME, VISITOR_USERNAMES, managed_marker
 
 MAX_REQUEST = 64 * 1024
 MAX_MAPPINGS = 64
+MAX_RECEIPTS = 256
+MAX_PUFFLES = project_adoption.CAPACITY
 PROJECT_NAME = re.compile(r'^[A-Za-z0-9](?:[A-Za-z0-9._-]| (?! ))*$')
 PUFFLE_NAME = re.compile(r'^[A-Za-z]{1,16}$')
 BLUE_PUFFLE = 0
+PUFFLE_TYPES = set(project_adoption.CATALOG.values())
 
 
 class RequestError(ValueError):
@@ -92,6 +105,9 @@ def recorded_id(request, key):
 
 async def visitor(connection, request, environ=os.environ):
     recorded = recorded_id(request, 'penguinId')
+    username = request.get('username', 'bridgecheck')
+    if username not in VISITOR_USERNAMES:
+        raise RequestError('The visitor must be one of the marked fixture visitors')
     password = request.get('password')
     if password is None:
         password = game_accounts.test_password(environ)
@@ -101,18 +117,18 @@ async def visitor(connection, request, environ=os.environ):
         if recorded is not None:
             # Verify only: a recorded visitor is never recreated or remapped.
             existing = await connection.fetchrow(
-                'SELECT id, email FROM penguin WHERE lower(username) = $1', VISITOR_USERNAME)
+                'SELECT id, email FROM penguin WHERE lower(username) = $1', username)
             if existing is None:
-                return failure('MISSING', f'No {VISITOR_USERNAME} account exists.')
-            if existing['email'] != game_accounts.fixture_marker(VISITOR_USERNAME):
-                return failure('MISMATCH', f'The {VISITOR_USERNAME} account is not the marked fixture visitor. Nothing was changed.')
+                return failure('MISSING', f'No {username} account exists.')
+            if existing['email'] != game_accounts.fixture_marker(username):
+                return failure('MISMATCH', f'The {username} account is not the marked fixture visitor. Nothing was changed.')
             if existing['id'] != recorded:
-                return failure('MISMATCH', f'The {VISITOR_USERNAME} visitor has game ID {existing["id"]}, not the recorded '
+                return failure('MISMATCH', f'The {username} visitor has game ID {existing["id"]}, not the recorded '
                                            f'{recorded}. Refusing to remap it; repair the visitor record explicitly.')
-            return {'status': 'ok', 'penguinId': recorded, 'username': VISITOR_USERNAME, 'created': False}
+            return {'status': 'ok', 'penguinId': recorded, 'username': username, 'created': False}
         penguin_id, created = await game_accounts.ensure_fixture_account(
-            connection, VISITOR_USERNAME, VISITOR_NICKNAME, password, game_accounts.auth_key(environ))
-    return {'status': 'ok', 'penguinId': penguin_id, 'username': VISITOR_USERNAME, 'created': created}
+            connection, username, VISITOR_USERNAMES[username], password, game_accounts.auth_key(environ))
+    return {'status': 'ok', 'penguinId': penguin_id, 'username': username, 'created': created}
 
 
 async def owner(connection, request, environ=os.environ):
@@ -150,15 +166,33 @@ async def owner(connection, request, environ=os.environ):
         return failure('USERNAME_TAKEN', 'The generated username was claimed concurrently.')
 
 
+def recorded_puffles(mapping):
+    """The managed mapping's recorded puffle set, validated."""
+    puffles = mapping.get('puffles')
+    if not isinstance(puffles, list) or len(puffles) > MAX_PUFFLES:
+        raise RequestError(f'Managed mappings list at most {MAX_PUFFLES} recorded puffles')
+    recorded = {}
+    for puffle in puffles:
+        if not isinstance(puffle, dict) or set(puffle) != {'puffleId', 'name', 'puffleType'} \
+                or not positive(puffle['puffleId']) or puffle['puffleId'] in recorded \
+                or not isinstance(puffle['name'], str) or not PUFFLE_NAME.match(puffle['name']) \
+                or puffle['puffleType'] not in PUFFLE_TYPES:
+            raise RequestError('Each recorded puffle needs a unique ID, a name and a catalog type')
+        recorded[puffle['puffleId']] = puffle
+    return recorded
+
+
 async def verify_mapping(connection, mapping):
     problems = []
     if not isinstance(mapping, dict) or not isinstance(mapping.get('key'), str) or len(mapping['key']) > 64:
         raise RequestError('Each mapping needs a short key')
-    if 'fixtureId' in mapping:
+    legacy = 'fixtureId' in mapping
+    if legacy:
         username = {'bridge-alpha': 'bridgealpha', 'bridge-beta': 'bridgebeta'}.get(mapping['fixtureId'])
         if username is None or not PUFFLE_NAME.fullmatch(mapping.get('puffleName') or ''):
             return {'key': mapping['key'], 'ok': False, 'problems': ['Legacy fixture identity or puffle name is unknown.']}
         marker = game_accounts.fixture_marker(username)
+        id_keys = ('ownerId', 'iglooId', 'puffleId')
     else:
         try:
             marker = managed_marker(mapping.get('marker'))
@@ -167,10 +201,13 @@ async def verify_mapping(connection, mapping):
         username = mapping.get('username')
         if not isinstance(username, str) or not MANAGED_USERNAME.match(username):
             raise RequestError('Only managed owners can be verified')
-    ids = {key: mapping.get(key) for key in ('ownerId', 'iglooId', 'puffleId')}
-    if not all(positive(value) for value in ids.values()) or not isinstance(mapping.get('puffleName'), str) \
-            or not PUFFLE_NAME.match(mapping['puffleName']):
-        raise RequestError('Mappings need positive owner, igloo, and puffle IDs and a puffle name')
+        id_keys = ('ownerId', 'iglooId')
+    ids = {key: mapping.get(key) for key in id_keys}
+    if not all(positive(value) for value in ids.values()):
+        raise RequestError('Mappings need positive owner and igloo IDs')
+    if legacy and (not isinstance(mapping.get('puffleName'), str) or not PUFFLE_NAME.match(mapping['puffleName'])):
+        raise RequestError('Legacy mappings need a puffle ID and name')
+    recorded = None if legacy else recorded_puffles(mapping)
 
     marked = await connection.fetch('SELECT id, username, igloo FROM penguin WHERE email = $1', marker)
     if len(marked) != 1:
@@ -193,15 +230,43 @@ async def verify_mapping(connection, mapping):
             problems.append('The managed igloo is open in the database; it must stay locked.')
     pets = await connection.fetch(
         'SELECT id, puffle_id, name, backyard FROM penguin_puffle WHERE penguin_id = $1', ids['ownerId'])
-    if len(pets) != 1:
-        problems.append(f'Expected exactly one managed puffle; found {len(pets)}.')
+    unrecorded = []
+    if legacy:
+        if len(pets) != 1:
+            problems.append(f'Expected exactly one managed puffle; found {len(pets)}.')
+        else:
+            pet = pets[0]
+            if pet['id'] != ids['puffleId'] or pet['name'] != mapping['puffleName']:
+                problems.append('The managed puffle has a different ID or name.')
+            if pet['puffle_id'] != BLUE_PUFFLE or pet['backyard']:
+                problems.append('The managed puffle is not the blue igloo puffle.')
     else:
-        pet = pets[0]
-        if pet['id'] != ids['puffleId'] or pet['name'] != mapping['puffleName']:
-            problems.append('The managed puffle has a different ID or name.')
-        if pet['puffle_id'] != BLUE_PUFFLE or pet['backyard']:
-            problems.append('The managed puffle is not the blue igloo puffle.')
-    return {'key': mapping['key'], 'ok': not problems, 'problems': problems}
+        found = {pet['id']: pet for pet in pets}
+        for puffle_id, puffle in recorded.items():
+            pet = found.get(puffle_id)
+            if pet is None:
+                problems.append(f'Recorded puffle {puffle_id} ({puffle["name"]}) no longer belongs to this owner.')
+            elif pet['name'] != puffle['name'] or pet['puffle_id'] != puffle['puffleType']:
+                problems.append(f'Puffle {puffle_id} has a different name or type than recorded.')
+            elif pet['backyard']:
+                problems.append(f'Puffle {puffle_id} ({puffle["name"]}) is in the backyard; project puffles stay indoors.')
+        extra = sorted(set(found) - set(recorded))
+        if extra:
+            receipts = {}
+            if await project_adoption.schema_ready(connection):
+                rows = await connection.fetch(
+                    'SELECT adoption_id::text AS adoption_id, penguin_puffle_id FROM claude_penguin_adoption_receipt '
+                    'WHERE penguin_puffle_id = ANY($1::int[])', extra)
+                receipts = {row['penguin_puffle_id']: row['adoption_id'] for row in rows}
+            unrecorded = [{'puffleId': puffle_id, 'adoptionId': receipts.get(puffle_id)} for puffle_id in extra]
+            problems.append(f'The owner has {len(extra)} puffle(s) this project has not recorded; they were not adopted '
+                            'into the project automatically.')
+        if len(pets) > MAX_PUFFLES:
+            problems.append(f'The owner has {len(pets)} puffles; a project igloo holds at most {MAX_PUFFLES}.')
+    result = {'key': mapping['key'], 'ok': not problems, 'problems': problems}
+    if unrecorded:
+        result['unrecorded'] = unrecorded
+    return result
 
 
 async def verify(connection, request):
@@ -209,6 +274,17 @@ async def verify(connection, request):
     if not isinstance(mappings, list) or not 1 <= len(mappings) <= MAX_MAPPINGS:
         raise RequestError(f'Pass 1 to {MAX_MAPPINGS} mappings')
     return {'status': 'ok', 'results': [await verify_mapping(connection, mapping) for mapping in mappings]}
+
+
+async def receipts(connection, request):
+    ids = request.get('adoptionIds')
+    if not isinstance(ids, list) or len(ids) > MAX_RECEIPTS or len(set(ids)) != len(ids) \
+            or not all(isinstance(value, str) and project_adoption.ADOPTION_ID.match(value) for value in ids):
+        raise RequestError(f'Pass at most {MAX_RECEIPTS} distinct lowercase adoption IDs')
+    if not await project_adoption.schema_ready(connection):
+        # The world server creates the table at start; without it nobody can have adopted yet.
+        return {'status': 'ok', 'schema': False, 'receipts': []}
+    return {'status': 'ok', 'schema': True, 'receipts': await project_adoption.read_receipts(connection, ids)}
 
 
 async def handle(request, connection, environ=os.environ):
@@ -221,6 +297,8 @@ async def handle(request, connection, environ=os.environ):
         return await owner(connection, request, environ)
     if operation == 'verify':
         return await verify(connection, request)
+    if operation == 'receipts':
+        return await receipts(connection, request)
     raise RequestError('Unknown provisioning operation')
 
 

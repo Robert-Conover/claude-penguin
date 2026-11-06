@@ -51,6 +51,7 @@ services:
       - ../houdini:/usr/src/houdini:ro
       - ../.local/logs/world:/logs
       - ./houdini_bootstrap.py:/local/houdini_bootstrap.py:ro
+      - ./project_adoption.py:/local/project_adoption.py:ro
       # The agent engine replaces published.json atomically (a new inode), so
       # mount the containing directory rather than the file.
       - ../.local/native-igloos:/native-igloos:ro
@@ -130,7 +131,7 @@ services:
     depends_on:
       db: {condition: service_healthy}
   # Agent-engine game provisioning. Requests (including generated managed-owner
-  # credentials) arrive as JSON on stdin; only the three scripts it needs are
+  # credentials) arrive as JSON on stdin; only the scripts it needs are
   # mounted, so private engine state under .local/ stays out of this container.
   provision:
     profiles: [tools]
@@ -142,6 +143,7 @@ services:
       - ./game_provision.py:/provision/game_provision.py:ro
       - ./game_accounts.py:/provision/game_accounts.py:ro
       - ./verify_game.py:/provision/verify_game.py:ro
+      - ./project_adoption.py:/provision/project_adoption.py:ro
     entrypoint: [python, /provision/game_provision.py]
     depends_on:
       db: {condition: service_healthy}

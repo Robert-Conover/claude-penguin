@@ -13,13 +13,20 @@
    agent engine's publication file, g#gr also lists the published owners that
    are absent from the normal open-igloo collection, and g#pio answers open for
    them. Every other penguin, including `player`, gets upstream behavior.
+
+3. Project adoption (project_adoption.py). A new p#cpadopt listener, attached
+   beside the upstream pet handlers, lets only the published visitor adopt into
+   a published project igloo using an adoption ID the engine reserved
+   (publication version 2). Upstream p#pn is unchanged for everyone.
 """
 import ast
+import contextlib
 import functools
 import inspect
 import json
 import os
 from pathlib import Path
+import re
 import runpy
 import sys
 import textwrap
@@ -113,17 +120,33 @@ def require_upstream_shape(callback, expected_source):
         raise RuntimeError(f'Upstream {callback.__name__} changed; review the native igloo adapter')
 
 
+MAX_PUBLISHED_ADOPTIONS = 8
+ADOPTION_ID = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
+
+
 def parse_publication(data):
-    """Validate {version: 1, visitorId, igloos: [{ownerId, iglooId}]}; None means no visitor."""
+    """Validate a publication; None means no visitor.
+
+    Version 1: {version, visitorId, igloos: [{ownerId, iglooId}]}.
+    Version 2 adds adoptions: [{adoptionId, ownerId, expiresAt}] reserved by the
+    engine for project adoption (expiresAt in Unix seconds). Any other version
+    is refused, so an unknown format publishes nothing.
+    """
     positive = lambda value: type(value) is int and value > 0  # noqa: E731
-    if not isinstance(data, dict) or set(data) != {'version', 'visitorId', 'igloos'} or data['version'] != 1:
+    if not isinstance(data, dict) or data.get('version') not in (1, 2):
+        raise ValueError('unexpected publication format')
+    keys = {'version', 'visitorId', 'igloos'} | ({'adoptions'} if data['version'] == 2 else set())
+    if set(data) != keys:
         raise ValueError('unexpected publication format')
     visitor_id, igloos = data['visitorId'], data['igloos']
+    adoptions = data.get('adoptions', [])
     if not isinstance(igloos, list) or len(igloos) > MAX_PUBLISHED_IGLOOS:
         raise ValueError('igloos must be a short list')
+    if not isinstance(adoptions, list) or len(adoptions) > MAX_PUBLISHED_ADOPTIONS:
+        raise ValueError('adoptions must be a short list')
     if visitor_id is None:
-        if igloos:
-            raise ValueError('igloos require a visitor')
+        if igloos or adoptions:
+            raise ValueError('igloos and adoptions require a visitor')
         return None
     if not positive(visitor_id):
         raise ValueError('invalid visitor ID')
@@ -135,7 +158,16 @@ def parse_publication(data):
         if item['ownerId'] in published or item['ownerId'] == visitor_id:
             raise ValueError('duplicate or visitor-owned igloo entry')
         published[item['ownerId']] = item['iglooId']
-    return SimpleNamespace(visitor_id=visitor_id, igloos=published)
+    reserved = {}
+    for item in adoptions:
+        if not isinstance(item, dict) or set(item) != {'adoptionId', 'ownerId', 'expiresAt'} \
+                or not isinstance(item['adoptionId'], str) or not ADOPTION_ID.match(item['adoptionId']) \
+                or not positive(item['ownerId']) or not positive(item['expiresAt']):
+            raise ValueError('invalid adoption entry')
+        if item['adoptionId'] in reserved or item['ownerId'] not in published:
+            raise ValueError('duplicate adoption or unpublished owner')
+        reserved[item['adoptionId']] = SimpleNamespace(owner_id=item['ownerId'], expires_at=item['expiresAt'])
+    return SimpleNamespace(visitor_id=visitor_id, igloos=published, adoptions=reserved)
 
 
 class NativeIglooPublication:
@@ -294,6 +326,64 @@ def install_native_igloo_adapter(publication):
     return True
 
 
+# ---------------------------------------------------------------- project adoption
+
+UPSTREAM_CHECK_NAME = '''
+def check_name(p, puffle_name):
+    tokens = puffle_name.lower().split()
+    clean = not any(word in tokens for word in p.server.chat_filter_words.keys())
+    length_ok = 1 <= len(puffle_name) <= 12
+    characters_ok = puffle_name.isalpha()
+    return characters_ok and length_ok and clean
+'''
+
+
+def require_upstream_function(function, expected_source):
+    source_lines, _ = inspect.getsourcelines(function)
+    actual = ast.parse(textwrap.dedent(''.join(source_lines))).body[0]
+    if ast.dump(actual) != ast.dump(ast.parse(textwrap.dedent(expected_source)).body[0]):
+        raise RuntimeError(f'Upstream {function.__name__} changed; review the project adoption adapter')
+
+
+@contextlib.asynccontextmanager
+async def raw_connection():
+    """A pooled asyncpg connection from Houdini's Gino engine."""
+    from houdini.data import db
+    async with db.acquire() as connection:
+        yield connection.raw_connection
+
+
+def install_project_adoption(publication):
+    """Register p#cpadopt and the receipt-schema check beside the upstream pet handlers.
+
+    Listener discovery scans handler modules, so the new listeners are attached
+    to houdini.handlers.play.pet before the server loads it. Only the published
+    agent visitor can use the handler; everyone else gets an error reply.
+    """
+    import houdini.handlers.games  # noqa: F401
+    import project_adoption
+    from houdini import handlers
+    from houdini.constants import ClientType
+    from houdini.handlers import XTPacket
+    from houdini.handlers.play import pet
+    if getattr(pet, '__local_project_adoption__', None):
+        return False
+    require_upstream_function(pet.check_name, UPSTREAM_CHECK_NAME)
+    packet = XTPacket('p', 'cpadopt')
+    if any(isinstance(getattr(value, 'packet', None), XTPacket) and value.packet == packet for value in vars(pet).values()):
+        raise RuntimeError('Upstream now defines p#cpadopt; review the project adoption adapter')
+    callback = project_adoption.adoption_handler(publication, raw_connection, pet.check_name)
+    pet.handle_claude_penguin_project_adopt = handlers.handler(packet, client=ClientType.Vanilla)(callback)
+
+    async def claude_penguin_adoption_schema(server):
+        async with raw_connection() as connection:
+            await project_adoption.ensure_schema(connection)
+        server.logger.info('Project adoption receipts are ready')
+    pet.claude_penguin_adoption_schema = handlers.boot(claude_penguin_adoption_schema)
+    pet.__local_project_adoption__ = True
+    return True
+
+
 if __name__ == '__main__':
     source_root = Path('/usr/src/houdini')
     sys.path.insert(0, str(source_root))
@@ -304,4 +394,6 @@ if __name__ == '__main__':
     publication = NativeIglooPublication(os.environ.get('CP_NATIVE_IGLOOS_FILE', '/native-igloos/published.json'))
     install_native_igloo_adapter(publication)
     print('Local compatibility: published project igloos are listed as open for the agent visitor only', flush=True)
+    install_project_adoption(publication)
+    print('Local compatibility: p#cpadopt adopts into published project igloos for the agent visitor only', flush=True)
     runpy.run_path(str(source_root / 'bootstrap.py'), run_name='__main__')

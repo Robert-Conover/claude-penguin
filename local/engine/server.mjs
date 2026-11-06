@@ -49,9 +49,10 @@ export function createEngineServer({ manager, publicOrigin = 'http://localhost:8
   const clients = new Set();
   const wsServer = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024, perMessageDeflate: false });
   const actions = new Map([
-    ['register', 'registerProject'], ['create', 'createWorker'], ['retry', 'retrySetup'], ['start', 'start'],
+    ['register', 'registerProject'], ['create', 'createWorker'], ['retry', 'retrySetup'], ['retryWorker', 'retryWorker'], ['start', 'start'],
     ['submit', 'submit'], ['input', 'input'], ['resize', 'resize'],
     ['interrupt', 'interrupt'], ['stop', 'stop'], ['diff', 'diff'],
+    ['adopt', 'reserveAdoption'], ['adoptionResult', 'reportAdoption'], ['cancelAdoption', 'cancelAdoption'], ['reconcile', 'reconcileAdoptions'],
   ]);
   const staticFiles = new Map([
     ['/engine/client.mjs', [path.join(root, 'local/web/engine/client.mjs'), 'text/javascript; charset=utf-8']],
@@ -59,6 +60,7 @@ export function createEngineServer({ manager, publicOrigin = 'http://localhost:8
     ['/engine/ui-model.mjs', [path.join(root, 'local/web/engine/ui-model.mjs'), 'text/javascript; charset=utf-8']],
     ['/engine/names.mjs', [path.join(root, 'local/web/engine/names.mjs'), 'text/javascript; charset=utf-8']],
     ['/engine/chooser.mjs', [path.join(root, 'local/web/engine/chooser.mjs'), 'text/javascript; charset=utf-8']],
+    ['/engine/catalog.mjs', [path.join(root, 'local/web/engine/catalog.mjs'), 'text/javascript; charset=utf-8']],
     ['/engine/art/puffle-blue.svg', [path.join(root, 'local/web/engine/art/puffle-blue.svg'), 'image/svg+xml']],
     ['/engine/art/puffle-blue.png', [path.join(root, 'local/web/engine/art/puffle-blue.png'), 'image/png']],
     ['/engine/vendor/xterm.js', [path.join(here, 'node_modules/@xterm/xterm/lib/xterm.js'), 'text/javascript; charset=utf-8']],
@@ -201,7 +203,7 @@ export function createEngineServer({ manager, publicOrigin = 'http://localhost:8
 
 import { acquireLock } from './lock.mjs';
 import { acquirePublication } from './publication.mjs';
-import { createGameProvisioner } from './game.mjs';
+import { VISITOR_USERNAME, VISITOR_USERNAMES, createGameProvisioner } from './game.mjs';
 export { acquireLock, stateDirProblem };
 
 /** The native igloo publication directory, mounted read-only into the world container. */
@@ -222,11 +224,14 @@ async function main() {
   try {
     // One engine owns the native igloo list across all state directories.
     publisher = acquirePublication({ dir: publicationDir(), stateDir });
-    provisioner = process.env.CP_ENGINE_GAME_PROVISIONING === 'off' ? null : createGameProvisioner({ root: projectRoot });
-    const { createManager } = await import('./manager.mjs');
+    const visitorUsername = process.env.CP_ENGINE_VISITOR || VISITOR_USERNAME;
+    if (!VISITOR_USERNAMES.includes(visitorUsername)) throw error(`CP_ENGINE_VISITOR must be one of ${VISITOR_USERNAMES.join(', ')}.`);
+    const { createManager, sessionCaps } = await import('./manager.mjs');
+    const caps = sessionCaps();
+    provisioner = process.env.CP_ENGINE_GAME_PROVISIONING === 'off' ? null : createGameProvisioner({ root: projectRoot, visitorUsername });
     let publish = () => {};
     manager = await createManager({ stateDir, onEvent: event => publish(event), claudePath: process.env.CP_CLAUDE_PATH ?? 'claude', hookBaseUrl: `${publicOrigin}/engine/hooks`,
-      game: provisioner, publisher, onWarning: message => console.error(message) });
+      game: provisioner, publisher, caps, onWarning: message => console.error(message) });
     const host = createEngineServer({ manager, publicOrigin });
     publish = host.publish;
     const server = host.server;
@@ -243,6 +248,7 @@ async function main() {
     // Installed before the address is announced, so a stop request that follows it always shuts down cleanly.
     for (const signal of ['SIGTERM', 'SIGINT']) process.on(signal, shutdown);
     console.log(`Claude Penguin engine: ${publicOrigin}/?bridge=1&agents=1#/login`);
+    console.log(`Visitor: ${visitorUsername}. Live sessions: ${caps.perIgloo} per igloo, ${caps.total} overall.`);
     if (provisioner) {
       // Background: confirm the visitor and every ready mapping still match the game database.
       manager.verifyGameMappings().then(

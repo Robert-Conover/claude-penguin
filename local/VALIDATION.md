@@ -3,7 +3,11 @@
 ## Current status
 
 **The multi-project agent loop has recorded browser and real-Claude acceptance;
-coverage remains partial.** The latest live evidence is from November 5, 2026:
+coverage remains partial.** The latest live evidence is from November 6, 2026:
+[project adoption and puffle teams](#project-adoption-and-puffle-teams--november-6-2026)
+covers adopting puffles at the Pet Shop into project igloos, one charge per
+purchase, a 10-puffle igloo, two real Claude sessions in one igloo, session
+limits, reconnect and the v3 state migration. Earlier evidence from November 5:
 [Stage 3](#multi-project-experience-stage-3--november-5-2026) covers native map
 visits, two concurrent puffles, permissions, changes review, reconnect, exact
 session resume, and the real Atlas archive migration. The
@@ -33,6 +37,10 @@ separate `current_status` overview.
 - Individual puffle animation frames tied to real agent states, and live
   puffle-name rejection/correction. Animation routing and rejection logic have
   automated coverage; the local name-filter data did not produce a live rejection.
+- Adoption edge paths checked only by automated tests: a live retry after a
+  failed puffle worktree setup, and the server's own full-igloo refusal (440),
+  which the engine's earlier refusal prevents from being reached in normal use.
+  A native `p#pn` purchase on the 8080 page was not repeated on November 6.
 - Full-stack operation on Intel Macs or other host platforms. The recorded
   game acceptance used Apple Silicon macOS; offline CI is separate coverage.
 
@@ -710,3 +718,135 @@ On merged `dev` (`afe6a58`), the [first-task guide](../docs/first-task.md) was e
 - **In the game:** Registered Postcards and its puffle, Pip. Submitted the bug from Pip’s native task card, visited Town, and handled the task’s permission requests in the live terminal. The Changes panel showed the edit to `postcard.cjs`.
 - **On disk:** An independent `node --test` run on Node 26.13.0 failed in the original repo and passed in Pip’s worktree (one test in each). The original checkout was clean. Pip removed `.toLowerCase()` from the implementation; the test file matched its original committed contents.
 - **In the public recording:** The [edited GIF](../docs/assets/pip-fixes-a-postcard.gif) and [MP4](../docs/assets/pip-fixes-a-postcard.mp4) use frames from this playthrough. Idle time and private terminal details are omitted. This run covered one puffle and travel to Town; it did not test minigame rewards or multiple puffles in a single repo.
+
+## Project adoption and puffle teams — November 6, 2026
+
+Environment: macOS 27.2 on Apple Silicon (arm64), Node 26.13.0, Ruffle
+nightly-2026-11-03 in the Claude desktop app's built-in browser, Claude Code
+2.1.318, the running local stack, and this branch's working tree. The engine
+ran with `CP_ENGINE_VISITOR=adoptcheck`, a private `CP_ENGINE_STATE_DIR` and
+worktree root, and two disposable repositories (`calc-app`, `notes-app`).
+`player`, `bridgecheck` and the default engine state were not used or changed.
+Raw notes stay under ignored `.local/`.
+
+**Adoption through the original Pet Shop (agent page, 8081).**
+
+- The derived module showed the destination picker over the pen ("calc-app,
+  1 of 10 puffles"), then the original catalog, naming (`Rex` accepted by the
+  server's name check) and certificate.
+- A 400-coin green puffle (Moss) and the 800-coin Blue Border Collie (Rex) were
+  adopted into `calc-app`. Adopt was clicked twice for each; each purchase stored
+  one receipt and charged once (10000 → 9600 → 8800). The pen showed the new
+  balance in the same session without a relog.
+- The certificate read "Rex is waiting for you in calc-app." **OK** travelled to
+  the igloo, where both puffles were mapped (overlay generation 2). The card's
+  **In this igloo** list showed Moss and Rex; selecting a row switched the card.
+- The database showed both puffles indoors on the `calc-app` owner, none on
+  `adoptcheck`, and the two receipts. Both workers were bound, with ready
+  worktrees, and no reservation remained in `published.json`.
+
+**One charge under failure.**
+
+- Replay: sending Rex's adoption ID again after binding was refused with
+  `unknown-adoption`; coins were unchanged.
+- Closing mid-purchase: a reservation for `notes-app` was sent twice through the
+  real transport and the page was reloaded before the reply was handled. One
+  receipt, one puffle (Snowy) and one 400-coin charge resulted. The engine still
+  showed the reservation; **reconcile** bound it from the stored receipt and
+  created its worker.
+
+**Capacity.** Nine more adoptions filled `notes-app` to 10 puffles. The 11th was
+refused by the engine ("This igloo already has 10 puffles.") before any
+reservation or charge. Totals: 12 receipts, 5,200 coins charged, 10000 → 4800.
+Back-to-back reservations wait while the previous puffle's worktree is set up
+("busy with setup or another adoption"), as designed.
+
+**Ordinary page (8080).** `/bridge/assets/puffle_adoption.swf` returns 404 on
+8080 and 200 on 8081. Signed in as `localcheck` on 8080, the Pet Shop loaded
+the archived `/media/play/v2/client/puffle_adoption.swf` and showed the original
+catalog without a destination picker. No purchase was made, to keep the
+verifier's fixture unchanged. `./local/verify` passed; its puffle already
+existed, so it did not repeat a native adoption.
+
+**Two real Claude sessions in one igloo.** Moss and Rex started together in
+`calc-app` with distinct session IDs and both reported **Needs you** for the
+first-run folder trust prompt, which **Work (2)** listed as "Puffles that need
+you." The trust prompt's highlighted default is **No, exit**; the first Enter
+declined it and Claude exited, as Claude intends. After restarting and choosing
+**Yes, I trust this folder**, both reported ready. A no-tool task to each ran
+concurrently (working → ready for review); the terminals showed "My name is
+Moss." and "My name is Rex."
+
+**Session limits and reconnect.** With the defaults (3 per igloo, 6 overall),
+starting four `notes-app` puffles launched three and showed the fourth as
+"Queued (1 in line). 3 of 3 sessions in this igloo and 5 of 6 overall are
+running." Stopping one launched the queued puffle. A page reload kept all five
+sessions with exactly one host process each. All sessions were then stopped.
+
+**Native card fixes found live.**
+
+- In an igloo the card's X did nothing. A hit-test probe showed no AVM1 clip
+  above it; the host's AS3 Like widget takes clicks across the stage's top-right
+  corner (about x ≥ 600, y ≤ 165). The X moved to the main panel's corner and
+  the roster rows start below that area; the X then closed the card.
+- The card always showed the blue portrait. It now loads the archived icon for
+  the puffle's color (Moss showed green; the Blue Dog uses the blue icon).
+- Attention rows now carry each puffle's color.
+- Screenshots of the hidden browser pane were sometimes stale; card state was
+  confirmed through the overlay's callbacks rather than screenshots alone.
+
+**Migration rehearsal.** Copies of two saved v2 states
+(`.local/agent-engine-demo`, `.local/readme-preview/session-state`) migrated to
+v3 with `--rehearsal` outside the checkout. Sessions, puffle bindings (4, 8, 9,
+10) and task histories were kept; the backup matched the original bytes; a
+second run changed nothing; the originals were unchanged.
+
+**Automated checks.** Engine 113, web 48, overlay contract 22, client-bridge
+Python 16 (including the generated-module invariants: 4,360 unpatched method
+bodies unchanged, 5 hooked), host Python 32, Houdini container 13, launcher
+syntax and `git diff --check` all passed. After the live run, the derived
+module's purchase hook was changed to fail closed when the page glue is
+unreachable; that rebuild passed the module invariants but was not re-run in
+the browser.
+
+## Adoption recovery and destination paging — November 6, 2026
+
+Follow-up fixes on `project-adoption-teams`, based on `2ea12da`. This is a new
+working-tree check, not a repeat of the earlier purchases or real-Claude run.
+
+- Unknown purchase outcomes stay pending and recheck the same receipt every
+  20 seconds. Timeout, lookup failure, generic server failure, and expired or
+  missing records never claim no charge or automatically resend a purchase.
+  Late replies resolve the operation, including during a lookup or after closing
+  the module. Confirmed payment is independent of worker setup.
+- The native picker pages through all 32 projects, five per page. Previous/Next,
+  selection by project identity, list changes, and bounds within the 760×480
+  stage have production-source regression coverage.
+- **Check purchase** is available for both reserved and charged operations.
+  The real browser/overlay test harness distinguishes a verified refusal before
+  sending from an exception after dispatch; only the former cancels the unused
+  reservation.
+
+**Automated verification:** web 58, bridge/picker 28, and client-bridge Python 16
+passed. The first web-server test attempt could not bind localhost in the
+sandbox (`listen EPERM`); the permitted rerun passed. The bridge build passed
+its deterministic-output and preservation checks: all 4,360 unrelated method
+bodies remain unchanged and five original methods retain their verified hooks.
+`git diff --check` passed. These checks use doubles for engine/game outcomes;
+they do not establish a new paid adoption or simultaneous coding tasks.
+
+**Ruffle browser check:** the rebuilt module ran in headless Chrome against the
+local stack as `adoptcheck`, with an isolated engine state and no registered
+projects. Page-only fixtures supplied 32 destinations and a pending purchase;
+these were not real project registrations or purchases. The picker rendered
+seven pages, selected destinations 9 and 32 by their IDs, reopened on the
+selected destination's page, and disabled Next on the last page. The pending
+recovery notice was fully readable over the original naming/purchase screen.
+Screenshots and the test script remain ignored under `.local/adoption-review/`.
+
+With the page adoption glue removed, an attempted native Adopt click stayed on
+the naming screen. A database check confirmed `adoptcheck` still had 4,800 coins
+and no owned puffles. Browser WebSocket instrumentation did not capture Ruffle's
+worker game sockets, so this is UI/database evidence, not packet-level proof.
+No real purchases or Claude sessions were created. The temporary engine stopped
+and released its runtime and publication locks.

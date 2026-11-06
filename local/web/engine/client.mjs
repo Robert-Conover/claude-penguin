@@ -15,8 +15,7 @@ panel.innerHTML = `<header class="cp-agent-header"><button id="cp-agent-back" ar
     <form id="cp-register-form" class="cp-agent-form" hidden>
       <label>Repository path<input id="cp-repo-path" autocomplete="off" placeholder="/Users/you/Projects/my-repository" required></label>
       <label>Project name<input id="cp-project-name" maxlength="30" placeholder="Repository name"></label>
-      <label>Puffle name<input id="cp-worker-name" maxlength="12" pattern="[A-Za-z]{1,12}" required></label>
-      <small>Your puffle starts from the latest commit. Uncommitted work stays in the source checkout.</small>
+      <small>Each project gets its own igloo. Adopt up to 10 puffles for it at the Pet Shop; each puffle works from the latest commit. Uncommitted work stays in the source checkout.</small>
       <button type="submit" class="cp-primary">Create project igloo</button>
     </form>
     <div id="cp-agent-list" aria-label="Registered projects"></div><div id="cp-travel"></div>
@@ -121,7 +120,7 @@ window.ClaudePenguinEngine = {
       error('This project is no longer registered.');
       return;
     }
-    const target = targetForProject(snapshot, projectId, workerId) ?? { projectId, workerId };
+    const target = targetForProject(snapshot, projectId, workerId ?? null) ?? { projectId, workerId: workerId ?? null };
     this.open(target, view);
   },
   async handleNativeAction({ projectId, workerId, action: actionName, text } = {}) {
@@ -145,6 +144,11 @@ window.ClaudePenguinEngine = {
   },
   openView(view, target) { this.open(target ?? selected, view); },
   getState() { return { connected, snapshot }; },
+  /** Engine actions for the in-game adoption flow (web/bridge/adoption.mjs). */
+  request(name, values) {
+    if (!['adopt', 'adoptionResult', 'cancelAdoption', 'reconcile'].includes(name)) return Promise.reject(new Error('Unknown adoption action.'));
+    return engineRequest(name, values);
+  },
 };
 el('cp-agent-close').onclick = () => visibility(false);
 
@@ -252,7 +256,8 @@ function render() {
   el('cp-chooser').hidden = !choosing;
   if (choosing) renderChooser({ snapshot, connected, busy, destinations });
   el('cp-agent-missing').hidden = choosing || Boolean(worker || archived);
-  el('cp-agent-missing').textContent = project?.setup?.error || project?.setup?.step || 'This puffle has no active session. Open Your Igloos to manage this project.';
+  el('cp-agent-missing').textContent = project?.setup?.error || project?.setup?.step || (project && !selected?.workerId
+    ? 'Click a puffle in this igloo, or choose one in Your Igloos.' : 'This puffle has no active session. Open Your Igloos to manage this project.');
   el('cp-archive').hidden = choosing || !archived;
   if (!choosing && archived) {
     el('cp-archive-details').textContent = [archived.originalPath, 'Session ' + archived.sessionId, archived.resumeCommand].filter(Boolean).join('\n');
@@ -275,10 +280,10 @@ function render() {
   el('cp-agent-status').dataset.state = worker.status;
   el('cp-agent-home').textContent = resolved.project.name;
   el('cp-agent-runtime-activity').textContent = worker.activity || worker.detail || '';
-  el('cp-agent-activity').textContent = !connected ? 'Reconnect to give your puffle a task.' : !worker.running ? 'Start your puffle when you are ready.' : ({ starting: 'Waking up… Open Claude for any setup questions.', idle: 'Ready for your next idea!', working: 'On the job! You can keep exploring.', 'needs-you': 'Your puffle needs you. Open Claude to answer.', review: 'A turn has ended. Check Claude and review the changes.', interrupted: 'The turn was interrupted. Check Claude before continuing.', failed: 'Something went wrong. Open Claude to take a look.' })[worker.status] ?? 'Open Claude to see what is happening.';
+  el('cp-agent-activity').textContent = !connected ? 'Reconnect to give your puffle a task.' : worker.queued ? worker.activity : !worker.running ? 'Start your puffle when you are ready.' : ({ starting: 'Waking up… Open Claude for any setup questions.', idle: 'Ready for your next idea!', working: 'On the job! You can keep exploring.', 'needs-you': 'Your puffle needs you. Open Claude to answer.', review: 'A turn has ended. Check Claude and review the changes.', interrupted: 'The turn was interrupted. Check Claude before continuing.', failed: 'Something went wrong. Open Claude to take a look.' })[worker.status] ?? 'Open Claude to see what is happening.';
   el('cp-agent-project').textContent = `${resolved.project.name} · ${resolved.project.sourcePath}`;
   el('cp-agent-session-id').textContent = `Session ${worker.sessionId}`;
-  el('cp-agent-start').textContent = worker.established ? 'Resume session' : 'Start session';
+  el('cp-agent-start').textContent = worker.queued ? 'Queued…' : worker.established ? 'Resume session' : 'Start session';
   el('cp-terminal-status').textContent = initialTerminalError || (!connected ? 'Disconnected. Displayed terminal output may be stale.' : !terminalReady ? 'Attaching to the session terminal…' : !worker.running ? 'Session process is stopped. Start or resume to continue.' : worker.status === 'needs-you' ? 'Claude needs a response. Use the terminal below.' : 'Connected to the live session terminal.');
   renderHistory(el('cp-history'), worker.taskHistory);
   if (worker.inspection?.repair) el('cp-agent-activity').textContent = worker.inspection.repair;
@@ -286,6 +291,20 @@ function render() {
   initializeTerminal();
   if (term) term.options.disableStdin = !controls.input;
   attachTerminal();
+}
+
+/** One authenticated engine action, without the panel's busy state. */
+async function engineRequest(name, values = {}) {
+  if (!connected) throw new Error('Wait for the local runtime connection.');
+  const currentEpoch = epoch;
+  const response = await fetch('/engine/action', {
+    method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+    body: JSON.stringify({ action: name, ...values }), signal: AbortSignal.timeout(30000),
+  });
+  const body = await response.json();
+  if (!response.ok) throw new Error(body.error || 'The runtime rejected the action.');
+  if (currentEpoch === epoch && body.snapshot) applySnapshot(body.snapshot);
+  return body.result;
 }
 
 async function action(name, values = {}) {

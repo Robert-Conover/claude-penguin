@@ -28,27 +28,35 @@ async function engine(t, { game = fakeGame(), ...extra } = {}) {
   e.published = () => JSON.parse(fs.readFileSync(path.join(publicationDir, 'published.json'), 'utf8'));
   e.secrets = () => JSON.parse(fs.readFileSync(path.join(stateDir, SECRETS_FILE), 'utf8'));
   e.saved = () => fs.readFileSync(path.join(stateDir, 'state.json'), 'utf8');
-  e.add = async (name, puffle) => {
+  /** Register a repository; its empty igloo is provisioned in the background. */
+  e.add = async name => {
     const project = await e.manager.registerProject({ path: s.repo(name), name: undefined });
-    const worker = await e.manager.createWorker({ projectId: project.id, name: puffle });
     await e.manager.settled(project.id);
-    return { project: e.project(project.id), worker: e.view().workers.find(item => item.id === worker.id) };
+    return { project: e.project(project.id) };
+  };
+  /** The visitor's purchase against the published reservation, reported back as the browser would. */
+  e.adopt = async (projectId, name, typeId = 0, subtypeId = 0) => {
+    const adoption = await e.manager.reserveAdoption({ projectId, typeId, subtypeId, name });
+    const reply = e.game.purchase(e.published(), { adoptionId: adoption.id, typeId, subtypeId, name });
+    const reported = await e.manager.reportAdoption({ adoptionId: adoption.id, result: reply });
+    await e.manager.settled(projectId);
+    return { adoption: reported, reply, worker: e.view().workers.find(item => item.id === adoption.workerId) };
   };
   return e;
 }
 
-test('setup provisions a dedicated owner, adopts the puffle, verifies it, and only then reaches ready', async t => {
+test('setup provisions a dedicated owner and an empty locked igloo, verifies it, and only then reaches ready', async t => {
   const e = await engine(t);
   let secretsAtOwner;
   e.game.before.owner = () => { secretsAtOwner = e.secrets(); };
-  const { project, worker } = await e.add('alpha-app', 'nOVA');
+  const { project } = await e.add('alpha-app');
   assert.equal(project.setup.phase, 'ready');
-  assert.deepEqual(project.game, { source: 'managed', status: 'ready', ownerId: 201, iglooId: 9, roomId: 2201, puffleId: 31, puffleName: 'Nova',
+  assert.deepEqual(project.game, { source: 'managed', status: 'ready', ownerId: 201, iglooId: 9, roomId: 2201, puffleId: null, puffleName: null,
     fixtureId: null, verifiedAt: project.game.verifiedAt });
   assert.ok(project.game.verifiedAt);
-  assert.equal(worker.name, 'Nova', 'the worker records the server-normalized adopted name');
   assert.deepEqual(e.view().visitor, { penguinId: 107, username: 'bridgecheck', verifiedAt: e.view().visitor.verifiedAt });
   assert.deepEqual(e.game.calls.map(([op]) => op), ['visitor', 'owner', 'igloo', 'verify']);
+  assert.deepEqual(e.game.calls[3][1][0].puffles, [], 'an empty igloo verifies as exactly empty');
   // The marker and credentials were durable before the owner was created.
   const credentials = e.secrets().owners[project.id];
   assert.deepEqual(secretsAtOwner.owners[project.id], credentials);
@@ -60,31 +68,34 @@ test('setup provisions a dedicated owner, adopts the puffle, verifies it, and on
     assert.equal(JSON.stringify(e.view()).includes(secret), false, 'snapshots hold no credentials or markers');
     assert.equal(fs.readFileSync(path.join(e.publicationDir, 'published.json'), 'utf8').includes(secret), false);
   }
-  assert.deepEqual(e.published(), { version: 1, visitorId: 107, igloos: [{ ownerId: 201, iglooId: 9 }] });
+  assert.deepEqual(e.published(), { version: 2, visitorId: 107, igloos: [{ ownerId: 201, iglooId: 9 }], adoptions: [] });
   for (const [op, args] of e.game.calls) if (op === 'igloo') assert.notEqual(args.username, 'bridgecheck', 'never authenticates as the visitor');
 });
 
-test('a rejected puffle name fails explicitly, accepts a correction, and never creates a second owner', async t => {
+test('an adopted puffle joins the recorded set; verification then requires exactly that set', async t => {
   const e = await engine(t);
-  const { project } = await e.add('beta', 'Badword');
-  assert.equal(project.setup.phase, 'failed');
-  assert.equal(project.setup.correction, 'puffleName');
-  assert.equal(project.setup.retryable, true);
-  assert.equal(project.game.status, 'failed');
-  assert.deepEqual(e.published().igloos, [], 'failed mappings are not published');
-  await assert.rejects(e.manager.retrySetup({ projectId: project.id, puffleName: 'no digits 1' }), /1 to 12 letters/);
-  await e.manager.retrySetup({ projectId: project.id, puffleName: 'comet' });
-  const fixed = await e.manager.settled(project.id);
-  assert.equal(fixed.setup.phase, 'ready');
-  assert.equal(fixed.game.puffleName, 'Comet');
-  assert.equal(e.game.db.owners.length, 1, 'the same marked owner was reused');
-  await assert.rejects(e.manager.retrySetup({ projectId: project.id, puffleName: 'Other' }), /not waiting for a retry/);
+  const { project } = await e.add('beta');
+  const reservation = await e.manager.reserveAdoption({ projectId: project.id, typeId: 0, subtypeId: 1006, name: 'rex' });
+  assert.deepEqual(e.published().adoptions.map(item => [item.adoptionId, item.ownerId]), [[reservation.id, 201]], 'the reservation is published for the world server');
+  await e.manager.cancelAdoption({ adoptionId: reservation.id });
+  assert.deepEqual(e.published().adoptions, []);
+  const { worker } = await e.adopt(project.id, 'rex', 0, 1006);
+  assert.deepEqual([worker.name, worker.puffle.subtypeId], ['Rex', 1006]);
+  assert.deepEqual((await e.manager.verifyGameMappings()), { checked: 1, repair: 0, visitorProblem: null });
+  const verified = e.game.calls.filter(([op]) => op === 'verify').at(-1)[1][0];
+  assert.deepEqual(verified.puffles, [{ puffleId: worker.puffle.puffleId, name: 'Rex', puffleType: 1006 }]);
+  // A filtered name is refused by the game; nothing is charged and the reservation is withdrawn.
+  const coins = e.game.db.coins;
+  const refused = await e.adopt(project.id, 'Badword');
+  assert.deepEqual([refused.reply.code, refused.adoption.state], ['441', 'withdrawn']);
+  assert.equal(e.game.db.coins, coins);
+  assert.equal(e.view().workers.length, 1);
 });
 
 test('transient failures and engine restarts retry against the same marked owner and adopted puffle', async t => {
   const e = await engine(t);
   e.game.fail.igloo = new ProvisionError('The game server is unavailable on port 9875. Start the game with ./local/start.', 'UNAVAILABLE');
-  const { project } = await e.add('gamma', 'Pixel');
+  const { project } = await e.add('gamma');
   assert.equal(project.setup.phase, 'failed');
   assert.equal(project.game.status, 'failed');
   assert.equal(project.game.ownerId, 201, 'progress is persisted');
@@ -114,7 +125,7 @@ test('transient failures and engine restarts retry against the same marked owner
 test('username collisions regenerate and persist a new username before retrying', async t => {
   const e = await engine(t);
   e.game.before.owner = args => { if (e.game.calls.filter(([op]) => op === 'owner').length === 1) e.game.db.taken.add(args.username); };
-  const { project } = await e.add('delta', 'Echo');
+  const { project } = await e.add('delta');
   assert.equal(project.setup.phase, 'ready');
   const usernames = e.game.calls.filter(([op]) => op === 'owner').map(([, args]) => args.username);
   assert.equal(usernames.length, 2);
@@ -124,10 +135,11 @@ test('username collisions regenerate and persist a new username before retrying'
 
 test('mismatched identities need repair, are never remapped, and leave publication', async t => {
   const e = await engine(t);
-  const { project } = await e.add('epsilon', 'Maple');
+  const { project } = await e.add('epsilon');
+  await e.adopt(project.id, 'Maple');
   assert.deepEqual(e.published().igloos, [{ ownerId: 201, iglooId: 9 }]);
-  // The game database changed behind the engine: the marked owner now has another puffle.
-  e.game.db.owners[0].pets.push({ id: 99, name: 'Intruder' });
+  // The game database changed behind the engine: the marked owner now has an unrecorded puffle.
+  e.game.db.owners[0].pets.push({ id: 99, name: 'Intruder', puffleType: 0, backyard: false });
   assert.deepEqual(await e.manager.verifyGameMappings(), { checked: 1, repair: 1, visitorProblem: null });
   let view = e.project(project.id);
   assert.equal(view.game.status, 'repair');
@@ -145,8 +157,8 @@ test('mismatched identities need repair, are never remapped, and leave publicati
 
 test('a changed visitor withdraws publication and is reported unverified until it verifies again; nothing is remapped', async t => {
   const e = await engine(t);
-  const { project } = await e.add('zeta', 'Orbit');
-  const published = { version: 1, visitorId: 107, igloos: [{ ownerId: 201, iglooId: 9 }] };
+  const { project } = await e.add('zeta');
+  const published = { version: 2, visitorId: 107, igloos: [{ ownerId: 201, iglooId: 9 }], adoptions: [] };
   // An unavailable stack keeps the last verified state.
   e.game.fail.visitor = new ProvisionError('The game stack is not running.', 'UNAVAILABLE');
   await assert.rejects(e.manager.verifyGameMappings(), /not running/);
@@ -158,7 +170,7 @@ test('a changed visitor withdraws publication and is reported unverified until i
   assert.deepEqual([result.checked, result.repair], [1, 0], 'owner mappings are still verified');
   assert.equal(e.view().visitor, null, 'the browser builds no mappings for an unverified visitor');
   assert.match(e.view().visitorProblem, /not the recorded 107/);
-  assert.deepEqual(e.published(), { version: 1, visitorId: null, igloos: [] }, 'publication is withdrawn');
+  assert.deepEqual(e.published(), { version: 2, visitorId: null, igloos: [], adoptions: [] }, 'publication is withdrawn');
   assert.equal(JSON.parse(e.saved()).visitor.penguinId, 107, 'the recorded visitor is never remapped');
   assert.equal(e.project(project.id).game.status, 'ready', 'project mappings do not move for a visitor problem');
   assert.deepEqual(e.game.calls.filter(([op]) => op === 'visitor').at(-1)[1], { penguinId: 107 }, 'the recorded visitor ID is sent so the service only verifies');
@@ -174,7 +186,7 @@ test('a changed visitor withdraws publication and is reported unverified until i
 
 test('a recorded visitor or owner that disappeared needs repair; retries never create a second account', async t => {
   const e = await engine(t);
-  const { project } = await e.add('vanished', 'Nova');
+  const { project } = await e.add('vanished');
   // The marked owner lost its marker (for example, a reset database or an edited email).
   e.game.db.owners[0].marker = 'changed';
   await e.manager.verifyGameMappings();
@@ -191,7 +203,7 @@ test('a recorded visitor or owner that disappeared needs repair; retries never c
   assert.match((await e.manager.verifyGameMappings()).visitorProblem, /visitor recorded as game ID 107[^]*Nothing was created/);
   assert.equal(e.game.db.visitorId, null, 'no replacement visitor was created');
   assert.equal(e.view().visitor, null);
-  assert.deepEqual(e.published(), { version: 1, visitorId: null, igloos: [] });
+  assert.deepEqual(e.published(), { version: 2, visitorId: null, igloos: [], adoptions: [] });
   await e.manager.retrySetup({ projectId: project.id });
   view = await e.manager.settled(project.id);
   assert.match(view.setup.error, /visitor recorded as game ID 107/);
@@ -200,7 +212,7 @@ test('a recorded visitor or owner that disappeared needs repair; retries never c
 
 test('a project set up while provisioning was off becomes retryable once provisioning is configured', async t => {
   const e = await engine(t, { game: null });
-  const { project } = await e.add('pending-app', 'Pip');
+  const { project } = await e.add('pending-app');
   assert.equal(project.setup.phase, 'game-pending');
   await e.manager.close();
   const game = fakeGame();
@@ -213,7 +225,7 @@ test('a project set up while provisioning was off becomes retryable once provisi
   view = await e.manager.settled(project.id);
   assert.equal(view.setup.phase, 'ready');
   assert.equal(view.game.status, 'ready');
-  assert.equal(view.game.puffleName, 'Pip');
+  assert.equal(e.view().workers.length, 0, 'still an empty igloo');
 });
 
 test('the legacy Atlas fixture mapping is published and needs no provisioning; clean shutdown empties the list', async t => {
@@ -223,7 +235,7 @@ test('the legacy Atlas fixture mapping is published and needs no provisioning; c
   fs.writeFileSync(path.join(e.stateDir, 'state.json'), JSON.stringify(legacyState(source, { baseCommit: e.git(source, 'rev-parse', 'HEAD').trim() })));
   migrateStateDir(e.stateDir);
   await e.open();
-  assert.deepEqual(e.published(), { version: 1, visitorId: null, igloos: [] }, 'nothing is published before the visitor is verified');
+  assert.deepEqual(e.published(), { version: 2, visitorId: null, igloos: [], adoptions: [] }, 'nothing is published before the visitor is verified');
   let matches = true;
   e.game.verifyOwners = async ([mapping]) => {
     assert.deepEqual(mapping, { key: e.view().projects[0].id, fixtureId: 'bridge-alpha', ownerId: 105, iglooId: 4, puffleId: 4, puffleName: 'Atlas' });
@@ -234,7 +246,7 @@ test('the legacy Atlas fixture mapping is published and needs no provisioning; c
   assert.deepEqual(e.published().igloos, []);
   matches = true;
   await e.manager.verifyGameMappings();
-  assert.deepEqual(e.published(), { version: 1, visitorId: 107, igloos: [{ ownerId: 105, iglooId: 4 }] });
+  assert.deepEqual(e.published(), { version: 2, visitorId: 107, igloos: [{ ownerId: 105, iglooId: 4 }], adoptions: [] });
   const project = e.view().projects[0];
   e.game.calls.length = 0;
   await e.manager.createWorker({ projectId: project.id });
@@ -242,14 +254,14 @@ test('the legacy Atlas fixture mapping is published and needs no provisioning; c
   assert.deepEqual(e.game.calls, [], 'a ready legacy mapping is not reprovisioned');
   await e.manager.close();
   e.manager = null;
-  assert.deepEqual(e.published(), { version: 1, visitorId: 107, igloos: [] });
+  assert.deepEqual(e.published(), { version: 2, visitorId: 107, igloos: [], adoptions: [] });
   assert.equal(fs.existsSync(path.join(e.publicationDir, 'owner.lock')), false);
 });
 
 test('two projects get distinct owners; a second engine cannot take over publication', async t => {
   const e = await engine(t);
-  const one = await e.add('one', 'Atlas');
-  const two = await e.add('two', 'Atlas');
+  const one = await e.add('one');
+  const two = await e.add('two');
   assert.notEqual(one.project.game.ownerId, two.project.game.ownerId);
   assert.deepEqual(e.published().igloos.map(item => item.ownerId), [201, 202]);
   assert.throws(() => acquirePublication({ dir: e.publicationDir, stateDir: path.join(e.dir, 'other-state') }), /owns native igloo publication/);

@@ -130,14 +130,18 @@ It uses only:
   UUID, its room is not `ownerId + 2000`, its owner is the visitor, a game ID is
   outside the overlay's range (1 to 999,999,999), or another ready project claims
   the same owner, igloo, room, or puffle. Every claimant of a shared identity is
-  excluded, and the panel reports how many are hidden. With more than 32 ready
+  excluded, and the panel reports how many are hidden. A project's puffles come
+  from its workers' `puffle` bindings (at most 10); a puffle ID claimed twice is
+  excluded the same way. With more than 32 ready
   mappings the panel configures none and shows an error rather than dropping
   some.
 
 The project UUID is the mapping identity. Flash receives `{projectId, ownerId,
-puffleId}` per project, and a bounded display card (project and puffle names,
-status, activity, aggregate attention). Paths, worker and session IDs, setup
-detail, and tokens stay in the browser. A verified visitor with zero ready
+puffles: [{puffleId, slot}]}` per project, where `slot` is a page-local number
+for each worker, and a bounded display card (puffle name and color, project
+name, status, activity, aggregate attention, the igloo's roster, and the
+puffles that need you). Paths, worker and session IDs, setup detail, adoption
+IDs and tokens stay in the browser. A verified visitor with zero ready
 projects configures an empty neighborhood. Town travel and the HUD work, and
 **Work** opens the project list.
 
@@ -147,21 +151,24 @@ page reload. Until the overlay confirms the new configuration generation, igloo
 buttons, puffle clicks, project card actions, and in-flight travel are refused.
 Afterwards, only snapshots and events carrying that generation are accepted.
 
-A puffle click selects that project and its engine-recorded `activeWorkerId`,
-validated against the current owner, room, and rendered puffle. If the project has
-no active worker, its own lifecycle or archived card is shown. **Work** opens the
-selected puffle's card, or the project list when nothing is selected. The native and browser views share that explicit selection.
+A puffle click selects that puffle's own worker, validated against the current
+owner, room, and rendered puffle. The card's **In this igloo** list selects
+another puffle in the same igloo. **Work** lists the puffles that need you
+(permission, an answer, recovery, review, or failed setup) across igloos; a row
+opens that puffle's card. With nothing to list it opens the project list. The native and browser views share that explicit selection.
 When the browser refuses a native card action (for example one prepared against
 an older generation, or sent during travel), it tells the overlay through
 `cpBridgeRejectAgentAction`. The card then releases a pending task, keeps the
 draft, and shows "Task not sent. Try again." Attention
-counts all active workers; animation plays only for the mapped puffle in the
-current room, from its own worker's state. Travel and closing menus never stop a
+counts all active workers; each mapped puffle in the current room animates from
+its own worker's state. Travel and closing menus never stop a
 started PTY.
 
-**Igloos** shows all registered projects, including setup, repair and archived
-records. Add projects here, retry setup, inspect the old Atlas journal or create
-its isolated replacement explicitly. Flash uses contract version 4 and a
-page-local numeric draft slot for each worker. The terminal, task journal and
+**Igloos** shows all registered projects with their puffles, including setup,
+repair and archived records. Add projects here, retry a project's or a puffle's
+setup, check a purchase, inspect the old Atlas journal or create its isolated
+replacement explicitly. Flash uses contract version 5. Adoption at the Pet Shop
+uses the derived module and `p#cpadopt`; see the
+[engine guide](AGENT_ENGINE.md#adoption-into-a-project-igloo). The terminal, task journal and
 changes viewer share the selected target. Rebuild the overlay after changing
 its source. See the [engine guide](AGENT_ENGINE.md) and [validation record](VALIDATION.md).

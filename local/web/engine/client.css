@@ -99,3 +99,13 @@
 .cp-row-actions, #cp-travel { margin-top: 9px; }
 #cp-archive { overflow: auto; }
 .cp-agent-mode #cp-travel #cp-evidence { display: block; font-size: 12px; overflow-wrap: anywhere; }
+.cp-puffle-list { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 6px; }
+.cp-puffle-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 6px 8px; background: #f2f9fc; border-radius: 9px; font-size: 13px; }
+.cp-puffle-row p { flex-basis: 100%; font-size: 12px; color: #6b3a1e; }
+.cp-puffle-row .cp-row-actions { margin: 0 0 0 auto; }
+.cp-puffle-dot { width: 12px; height: 12px; border-radius: 50%; border: 1px solid #003858; background: #2b6fd6; flex: none; }
+.cp-puffle-dot[data-color=pink] { background: #f27fc3; } .cp-puffle-dot[data-color=black] { background: #333; }
+.cp-puffle-dot[data-color=green] { background: #3fb34f; } .cp-puffle-dot[data-color=purple] { background: #8e4fc9; }
+.cp-puffle-dot[data-color=red] { background: #d9342b; } .cp-puffle-dot[data-color=yellow] { background: #f5d328; }
+.cp-puffle-dot[data-color=white] { background: #f4f4f4; } .cp-puffle-dot[data-color=orange], .cp-puffle-dot[data-color=orange-cat] { background: #f28c28; }
+.cp-puffle-dot[data-color=brown] { background: #8a5a35; }

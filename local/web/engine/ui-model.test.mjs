@@ -2,18 +2,23 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { resolveTarget, targetForProject, controlsForWorker, animationForStatus, attentionCount, statusLabels, nextSnapshotRevision, terminalDimensions } from './ui-model.mjs';
 
-const snapshot = { projects: [{ id: 'a', activeWorkerId: 'w1' }, { id: 'b', activeWorkerId: 'w2' }, { id: 'c', activeWorkerId: null }], workers: [{ id: 'w1', projectId: 'a', status: 'review', running: true }, { id: 'w2', projectId: 'b', status: 'working', running: true }] };
-test('explicit selection and project routing never reuse a worker from another project', () => {
+const snapshot = { projects: [{ id: 'a' }, { id: 'b' }, { id: 'c' }], workers: [{ id: 'w1', projectId: 'a', status: 'review', running: true },
+  { id: 'w2', projectId: 'b', status: 'working', running: true }, { id: 'w3', projectId: 'b', status: 'idle', running: false }] };
+test('explicit selection and project routing never reuse a worker from another project or pick one', () => {
   assert.equal(resolveTarget(snapshot, { projectId: 'b', workerId: 'w1' }), null);
   assert.equal(resolveTarget(snapshot, { projectId: 'removed', workerId: 'w1' }), null);
   assert.equal(resolveTarget(snapshot, { projectId: 'a', workerId: 'missing' }), null);
-  assert.equal(targetForProject(snapshot, 'missing'), null);
-  assert.equal(targetForProject(snapshot, 'c'), null, 'no active worker means no target, not the first worker');
-  assert.deepEqual(targetForProject(snapshot, 'b'), { projectId: 'b', workerId: 'w2' });
+  assert.deepEqual(resolveTarget(snapshot, { projectId: 'b', workerId: 'w3' }).worker.id, 'w3', 'any of the project\'s puffles can be selected');
+  assert.equal(targetForProject(snapshot, 'missing', 'w1'), null);
+  assert.equal(targetForProject(snapshot, 'b'), null, 'a project with several puffles never picks one');
+  assert.equal(targetForProject(snapshot, 'c'), null);
   assert.deepEqual(targetForProject(snapshot, 'b', 'w2'), { projectId: 'b', workerId: 'w2' });
-  assert.equal(targetForProject(snapshot, 'b', 'w1'), null, 'a named worker must be the active one');
-  assert.equal(targetForProject({ ...snapshot, projects: [{ id: 'a', activeWorkerId: 'w2' }] }, 'a'), null, 'active worker of another project');
-  assert.equal(targetForProject({ ...snapshot, workers: [{ id: 'w3', projectId: 'a' }, ...snapshot.workers] }, 'a').workerId, 'w1', 'never the first listed worker');
+  assert.deepEqual(targetForProject(snapshot, 'b', 'w3'), { projectId: 'b', workerId: 'w3' });
+  assert.equal(targetForProject(snapshot, 'b', 'w1'), null, 'a named worker must belong to that project');
+});
+test('a queued start can be withdrawn but not started twice', () => {
+  const queued = resolveTarget({ ...snapshot, workers: [{ id: 'w1', projectId: 'a', status: 'queued', running: false, queued: true, workspace: { state: 'ready' } }] }, { projectId: 'a', workerId: 'w1' });
+  assert.deepEqual([controlsForWorker(true, queued, false).start, controlsForWorker(true, queued, false).stop], [false, true]);
 });
 test('terminal and mutation controls require a fresh connection and terminal attachment', () => {
   const target = resolveTarget(snapshot, { projectId: 'a', workerId: 'w1' });
