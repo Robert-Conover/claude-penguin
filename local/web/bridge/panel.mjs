@@ -1,6 +1,6 @@
-import { BRIDGE_CONTRACT_VERSION, states, validateFixtures, projectAtSnapshot, projectForClick, waitForArrival, agentMappings, mappingKey,
-  flashConfiguration, freshSnapshot, selectionForClick, roomAnimation, activeMappingsFor, needsConfiguration } from './model.mjs';
-import { nativeMenuState, allowedNativeAction, attentionTotal } from './native-menu.mjs';
+import { BRIDGE_CONTRACT_VERSION, states, validateFixtures, projectAtSnapshot, puffleForClick, waitForArrival, agentMappings, mappingKey,
+  flashConfiguration, freshSnapshot, selectionForClick, roomAnimations, activeMappingsFor, needsConfiguration } from './model.mjs';
+import { nativeMenuState, allowedNativeAction, attentionTotal, selectionForSlot } from './native-menu.mjs';
 
 const agentMode = window.CP_AGENT_MODE === true;
 const work = document.createElement('button');
@@ -41,7 +41,7 @@ let mappings = null, desiredKey = '', configured = null, configError = '';
 let snapshot, selected, selection = null, configuring = false, navigating = false, pollRunning = false, pollQueued = false;
 let lastError = '', lastConnection = '';
 let engineState = window.ClaudePenguinEngine?.getState() ?? { connected: false, snapshot: { projects: [], workers: [] } };
-let lastAnimation = '';
+const lastAnimation = new Map();
 let nativeMenuReady = false;
 const statusByProject = new Map();
 const el = id => document.getElementById(id);
@@ -95,7 +95,7 @@ function updateMappings() {
 // Mapping changes discard every room-derived decision until a fresh snapshot.
 function invalidate() {
   snapshot = null;
-  lastAnimation = '';
+  lastAnimation.clear();
 }
 function schedulePoll() {
   if (pollQueued) return;
@@ -166,7 +166,7 @@ function buildProjects() {
     name.textContent = project.name;
     button.append(name);
     const caption = document.createElement('span');
-    caption.textContent = `${project.puffleName} · 1 fixture puffle`;
+    caption.textContent = `${project.puffles.map(puffle => puffle.name).join(', ')} · ${project.puffles.length} fixture puffle${project.puffles.length === 1 ? '' : 's'}`;
     button.append(caption);
     button.onclick = () => navigate(project.projectId);
     list.append(button);
@@ -188,7 +188,7 @@ function render() {
     el('cp-town').disabled = !live || navigating;
     window.ClaudePenguinEngine.setDestinations(live && !navigating ? active.projects.map(item => item.projectId) : []);
     const engineSnapshot = engineState.snapshot;
-    el('cp-location').textContent = navigating ? 'On our way…' : live ? (current ? `You are in ${current.name}.` : 'You are exploring the island.') : 'Log in as bridgecheck to visit your igloos.';
+    el('cp-location').textContent = navigating ? 'On our way…' : live ? (current ? `You are in ${current.name}.` : 'You are exploring the island.') : `Log in as ${engineSnapshot?.visitorUsername ?? 'bridgecheck'} to visit your igloos.`;
     const attention = attentionTotal(engineSnapshot);
     work.textContent = !engineState.connected ? 'Work · offline' : attention ? `Work · ${attention} need attention` : 'Work';
     const rejected = mappings?.rejected?.length ?? 0;
@@ -201,23 +201,28 @@ function render() {
   }
 }
 
-// Animates only the mapped puffle in the current room, from its own worker.
+// Animates each mapped puffle in the current room from its own worker's state.
 function syncAnimation() {
   if (!agentMode) return;
   const active = activeMappings();
-  const cue = engineState.connected && !navigating && freshSnapshot(active, snapshot, currentGeneration()) ? roomAnimation(active, snapshot, engineState.snapshot) : null;
-  if (!cue) { lastAnimation = ''; return; }
-  if (cue.identity === lastAnimation) return;
-  try {
-    call('cpBridgeAnimate', cue.puffleId, cue.cue);
-    lastAnimation = cue.identity;
-  } catch { /* A room can disappear between snapshot and animation; the next poll verifies it again. */ }
+  const cues = engineState.connected && !navigating && freshSnapshot(active, snapshot, currentGeneration()) ? roomAnimations(active, snapshot, engineState.snapshot) : [];
+  const present = new Set(cues.map(cue => cue.puffleId));
+  for (const puffleId of [...lastAnimation.keys()]) if (!present.has(puffleId)) lastAnimation.delete(puffleId);
+  for (const cue of cues) {
+    if (cue.identity === lastAnimation.get(cue.puffleId)) continue;
+    try {
+      call('cpBridgeAnimate', cue.puffleId, cue.cue);
+      lastAnimation.set(cue.puffleId, cue.identity);
+    } catch { /* A room can disappear between snapshot and animation; the next poll verifies it again. */ }
+  }
 }
 function report(error) {
   const message = error.message || String(error);
   if (lastError !== message) { el('cp-evidence').textContent = message; lastError = message; }
 }
-async function navigate(projectId) {
+// `force` rejoins an igloo the visitor is already in; `puffleId` waits for that
+// puffle to render (a newly adopted one).
+async function navigate(projectId, { force = false, puffleId } = {}) {
   if (navigating) return;
   try {
     const active = activeMappings();
@@ -229,14 +234,15 @@ async function navigate(projectId) {
     if (!freshSnapshot(active, snapshot, generation)) throw new Error('The game is still updating your igloo list. Try again in a moment.');
     const key = desiredKey;
     navigating = true;
-    lastAnimation = '';
+    lastAnimation.clear();
     render();
-    call(project ? 'cpBridgeJoinIgloo' : 'cpBridgeJoinRoom', project ? project.ownerId : 100);
+    if (project) call('cpBridgeJoinIgloo', project.ownerId, force);
+    else call('cpBridgeJoinRoom', 100);
     snapshot = null;
     render();
     el('cp-evidence').textContent = `Requested ${project?.name ?? 'Town'}; waiting for the game to confirm arrival.`;
     // The client request is not proof of arrival. Keep actions disabled until a fresh snapshot.
-    snapshot = await waitForArrival(() => call('cpBridgeSnapshot'), active, project, { generation, current: () => desiredKey === key });
+    snapshot = await waitForArrival(() => call('cpBridgeSnapshot'), active, project, { generation, current: () => desiredKey === key, puffleId });
     el('cp-evidence').textContent = `Game confirmed ${project?.name ?? 'Town'} (room ${snapshot.roomId}).`;
     showPanel(false);
     if (agentMode) window.ClaudePenguinEngine.close();
@@ -246,6 +252,25 @@ async function navigate(projectId) {
   } finally { navigating = false; render(); if (agentMode) schedulePoll(); }
 }
 el('cp-town').onclick = () => navigate(null);
+
+// After an adoption: wait until the engine has bound the paid puffle and the
+// overlay shows the new mapping, then travel to (or rejoin) its igloo.
+async function travelToNewPuffle(projectId, { force, puffleId }) {
+  for (let attempt = 0; attempt < 60; attempt++) {
+    const project = activeMappings()?.projects.find(item => item.projectId === projectId);
+    if (project?.puffles.some(item => item.puffleId === puffleId) && !navigating) return navigate(projectId, { force, puffleId });
+    await new Promise(resolve => setTimeout(resolve, 500));
+  }
+  report(new Error('Your new puffle is adopted. Open Your Igloos to visit it.'));
+}
+// Agent page only: the lab page never loads the adoption glue or the engine catalog.
+const adoption = agentMode ? (await import('./adoption.mjs')).createAdoption({
+  getEngine: () => engineState,
+  request: (name, values) => window.ClaudePenguinEngine.request(name, values),
+  overlay: (name, ...args) => call(name, ...args),
+  travel: travelToNewPuffle,
+}) : null;
+if (adoption) window.ClaudePenguinAdoption = adoption;
 for (const [state, text] of agentMode ? [] : Object.entries(states)) {
   const button = document.createElement('button');
   button.textContent = text;
@@ -282,12 +307,18 @@ function nativeAction(event) {
   }
   if (event.action === 'work') openWork();
   else if (event.action === 'igloos') window.ClaudePenguinEngine.openIgloos();
+  else if (event.action === 'select') {
+    window.ClaudePenguinEngine.select(selectionForSlot(engineState.snapshot, activeMappings(), event.projectId, event.draftSlot));
+    syncNativeMenu();
+    try { call('cpBridgeShowAgentMenu'); } catch { openWork(); }
+  }
   else window.ClaudePenguinEngine?.handleNativeAction({ projectId: selection.projectId, workerId: selection.workerId, action: event.action, text: event.text });
 }
 window.addEventListener('claude-penguin-bridge', ({ detail }) => {
   try {
     const event = typeof detail === 'string' ? JSON.parse(detail) : detail;
     if (agentMode && event?.type === 'agent-menu-action') return nativeAction(event);
+    if (agentMode && event?.type === 'adoption-result') return adoption.onReply(event);
     if (event?.type !== 'puffle-click') return;
     // A click is accepted only against a fresh snapshot of the current generation.
     snapshot = call('cpBridgeSnapshot');
@@ -302,12 +333,13 @@ window.addEventListener('claude-penguin-bridge', ({ detail }) => {
       openWork();
       return;
     }
-    const project = freshSnapshot(active, snapshot, generation) && event.generation === generation ? projectForClick(active, snapshot, event) : null;
-    if (!project) return;
-    selected = project;
+    const found = freshSnapshot(active, snapshot, generation) && event.generation === generation ? puffleForClick(active, snapshot, event) : null;
+    if (!found) return;
+    const project = found.project;
+    selected = { ...project, puffleId: found.puffle.puffleId, puffleName: found.puffle.name };
     el('cp-puffle').hidden = false;
-    el('cp-puffle-name').textContent = project.puffleName;
-    el('cp-selection').textContent = `${project.name} · puffle ${project.puffleId}`;
+    el('cp-puffle-name').textContent = found.puffle.name;
+    el('cp-selection').textContent = `${project.name} · puffle ${found.puffle.puffleId}`;
     el('cp-evidence').textContent = `Real game click received: owner ${event.ownerId}, puffle ${event.puffleId}.`;
     el('cp-animation').textContent = statusByProject.has(project.projectId) ? `Last simulated cue: ${states[statusByProject.get(project.projectId)]}. Choose a state to replay it.` : 'Choose a simulated state to exercise the game animation.';
     showPanel(true);
@@ -352,7 +384,7 @@ async function poll() {
         }
       } catch { /* The overlay is not ready; nothing is routed without mappings. */ }
       forgetSession();
-      connection(engineState.connected ? 'The local runtime has not verified the bridgecheck game visitor yet.' : 'Waiting for the local runtime…');
+      connection(engineState.connected ? `The local runtime has not verified the ${engineState.snapshot?.visitorUsername ?? 'bridgecheck'} game visitor yet.` : 'Waiting for the local runtime…');
       render();
       syncNativeMenu();
     }

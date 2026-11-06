@@ -61,6 +61,8 @@ test('serves preserved client, renders local addresses, proxies web services and
     await put('vanilla-media/media/play/v2/client/engine.swf', 'original-fixture');
     assert.equal(await fetch(`${origin}/bridge/assets/engine.swf`).then(r => r.text()), 'patched-fixture');
     assert.equal(await fetch(`${origin}/media/play/v2/client/engine.swf`).then(r => r.text()), 'original-fixture');
+    await put('.local/client-bridge/puffle_adoption.swf', 'derived-adoption');
+    assert.equal((await fetch(`${origin}/bridge/assets/puffle_adoption.swf`)).status, 404, 'the ordinary page never serves the derived adoption module');
     const xml = await fetch(`${origin}/servers.xml`).then(r => r.text());
     assert.match(xml, /address="127\.0\.0\.1"/);
     assert.doesNotMatch(xml, /locale="fr"/);

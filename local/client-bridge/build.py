@@ -57,11 +57,9 @@ def overlay(original, actions):
     raise ValueError('No ShowFrame tag found')
 
 
-def main():
-    OUT.mkdir(parents=True, exist_ok=True)
+def install_jpexs():
+    """Download (once) and re-extract the checksum-verified pinned JPEXS."""
     TOOLS.mkdir(parents=True, exist_ok=True)
-    engine_path = ROOT / 'vanilla-media/media/play/v2/client/engine.swf'
-    original = checked(engine_path, ENGINE_SHA256)
     archive = TOOLS / 'ffdec.zip'
     if not archive.exists():
         temporary = archive.with_suffix('.download')
@@ -78,6 +76,9 @@ def main():
                 raise ValueError('Unsafe archive entry')
         package.extractall(TOOLS / 'ffdec')
     checked(TOOLS / 'ffdec/lib/ffdec_lib.jar', LIB_SHA256)
+
+
+def java_tools():
     java_home = os.environ.get('BRIDGE_JAVA_HOME')
     if not java_home and Path('/opt/homebrew/opt/openjdk/bin/java').exists():
         java_home = '/opt/homebrew/opt/openjdk'
@@ -85,6 +86,14 @@ def main():
     javac = str(Path(java_home) / 'bin/javac') if java_home else shutil.which('javac')
     if not java or not javac:
         raise RuntimeError('A JDK is required; set BRIDGE_JAVA_HOME to its directory')
+    return java, javac
+
+
+def build_engine_overlay():
+    OUT.mkdir(parents=True, exist_ok=True)
+    engine_path = ROOT / 'vanilla-media/media/play/v2/client/engine.swf'
+    original = checked(engine_path, ENGINE_SHA256)
+    java, javac = java_tools()
     classpath = str(TOOLS / 'ffdec/lib/*')
     subprocess.run([javac, '-cp', classpath, '-d', str(OUT), str(HERE / 'CompileBridge.java')], check=True)
     actions_path = OUT / 'bridge.actions'
@@ -107,6 +116,14 @@ def main():
     }
     (OUT / 'build.json').write_text(json.dumps(provenance, indent=2) + '\n')
     print(f'Built {destination}; original tags preserved; SHA256 {digest(changed)}')
+
+
+def main():
+    install_jpexs()
+    build_engine_overlay()
+    # The agent page also serves a derived Pet Shop adoption module (Plan A).
+    import adoption_build
+    adoption_build.build()
 
 
 if __name__ == '__main__':

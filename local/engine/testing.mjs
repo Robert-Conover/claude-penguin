@@ -56,18 +56,23 @@ export class FakePty {
 
 /**
  * An in-memory stand-in for createGameProvisioner (game.mjs) that mirrors the
- * provisioning service: marked owners, a recorded ID that is only verified and
- * never recreated (MISSING), usernames held by any account (USERNAME_TAKEN),
- * Houdini's name filter and title-casing, locked igloos, and verification.
- * `db.visitorId = null` means no visitor account exists; `db.taken` holds
- * usernames of other accounts. `fake.fail[op]` (a function or ProvisionError)
- * injects one failure; `fake.before[op]` runs a check at call time.
+ * provisioning service and the owned p#cpadopt handler: marked owners, a
+ * recorded ID that is only verified and never recreated (MISSING), usernames
+ * held by any account (USERNAME_TAKEN), locked empty igloos, verification of
+ * the exact recorded puffle set, and adoption receipts. `db.visitorId = null`
+ * means no visitor account exists; `db.taken` holds usernames of other
+ * accounts. `fake.fail[op]` (a function or ProvisionError) injects one
+ * failure; `fake.before[op]` runs a check at call time. `fake.purchase` plays
+ * the visitor's purchase against the game, as the browser overlay would.
  */
-export function fakeGame({ visitorId = 107, filtered = ['Badword'] } = {}) {
-  const db = { visitorId, nextVisitor: 300, owners: [], nextOwner: 201, nextIgloo: 9, nextPuffle: 31, taken: new Set(), filtered: new Set(filtered.map(name => name.toLowerCase())) };
+export function fakeGame({ visitorId = 107, filtered = ['Badword'], visitorUsername = 'bridgecheck', coins = 5000 } = {}) {
+  const db = { visitorId, nextVisitor: 300, owners: [], nextOwner: 201, nextIgloo: 9, nextPuffle: 31, taken: new Set(),
+    filtered: new Set(filtered.map(name => name.toLowerCase())), receipts: [], coins, online: new Set() };
   const calls = [];
-  const fake = { db, calls, fail: {}, before: {} };
+  const fake = { db, calls, fail: {}, before: {}, visitorUsername };
   const title = name => name.slice(0, 1).toUpperCase() + name.slice(1).toLowerCase();
+  const prices = { 1006: 800, 1007: 800 };
+  const catalog = new Map([...Array.from({ length: 10 }, (_, type) => [`${type}/0`, type]), ['0/1006', 1006], ['8/1007', 1007]]);
   async function step(op, args) {
     calls.push([op, args]);
     await fake.before[op]?.(args);
@@ -78,13 +83,13 @@ export function fakeGame({ visitorId = 107, filtered = ['Badword'] } = {}) {
     await step('visitor', args);
     const recorded = args.penguinId ?? null;
     if (recorded !== null) {
-      if (db.visitorId === null) throw new ProvisionError('No bridgecheck account exists.', 'MISSING');
-      if (db.visitorId !== recorded) throw new ProvisionError(`The bridgecheck visitor has game ID ${db.visitorId}, not the recorded ${recorded}. Refusing to remap it; repair the visitor record explicitly.`, 'MISMATCH');
-      return { penguinId: recorded, username: 'bridgecheck', created: false };
+      if (db.visitorId === null) throw new ProvisionError(`No ${visitorUsername} account exists.`, 'MISSING');
+      if (db.visitorId !== recorded) throw new ProvisionError(`The ${visitorUsername} visitor has game ID ${db.visitorId}, not the recorded ${recorded}. Refusing to remap it; repair the visitor record explicitly.`, 'MISMATCH');
+      return { penguinId: recorded, username: visitorUsername, created: false };
     }
     const created = db.visitorId === null;
     if (created) db.visitorId = db.nextVisitor++;
-    return { penguinId: db.visitorId, username: 'bridgecheck', created };
+    return { penguinId: db.visitorId, username: visitorUsername, created };
   };
   fake.ensureOwner = async args => {
     await step('owner', args);
@@ -106,24 +111,73 @@ export function fakeGame({ visitorId = 107, filtered = ['Badword'] } = {}) {
     await step('igloo', args);
     const owner = db.owners.find(item => item.ownerId === args.ownerId && item.username === args.username && item.password === args.password);
     if (!owner) throw new ProvisionError('The managed credentials logged in as a different penguin.', 'MISMATCH');
-    if (!owner.pets.length) {
-      if (db.filtered.has(args.requestedName.toLowerCase())) throw new ProvisionError(`The game rejected the puffle name "${args.requestedName}".`, 'NAME_REJECTED');
-      owner.pets.push({ id: db.nextPuffle++, name: title(args.requestedName) });
-    }
-    owner.iglooId ??= db.nextIgloo++;
-    return { iglooId: owner.iglooId, roomId: owner.ownerId + 2000, puffleId: owner.pets[0].id, puffleName: owner.pets[0].name };
+    db.online.add(owner.ownerId);
+    try {
+      owner.iglooId ??= db.nextIgloo++;
+      if (args.recorded?.iglooId && args.recorded.iglooId !== owner.iglooId) throw new ProvisionError('The managed owner\'s active igloo changed from the recorded layout.', 'MISMATCH');
+      return { iglooId: owner.iglooId, roomId: owner.ownerId + 2000 };
+    } finally { db.online.delete(owner.ownerId); }
   };
   fake.verifyOwners = async mappings => {
     await step('verify', mappings);
     return mappings.map(mapping => {
       const owner = db.owners.find(item => item.marker === mapping.marker);
-      const ok = Boolean(owner && owner.ownerId === mapping.ownerId && owner.iglooId === mapping.iglooId && owner.locked &&
-        owner.pets.length === 1 && owner.pets[0].id === mapping.puffleId && owner.pets[0].name === mapping.puffleName);
-      return { key: mapping.key, ok, problems: ok ? [] : ['The managed mapping changed.'] };
+      const problems = [];
+      if (!owner || owner.ownerId !== mapping.ownerId || owner.iglooId !== mapping.iglooId || !owner.locked) problems.push('The managed mapping changed.');
+      const recorded = new Map((mapping.puffles ?? []).map(item => [item.puffleId, item]));
+      for (const [id, item] of recorded) {
+        const pet = owner?.pets.find(entry => entry.id === id);
+        if (!pet || pet.name !== item.name || pet.puffleType !== item.puffleType || pet.backyard) problems.push(`Recorded puffle ${id} changed.`);
+      }
+      const unrecorded = (owner?.pets ?? []).filter(pet => !recorded.has(pet.id))
+        .map(pet => ({ puffleId: pet.id, adoptionId: db.receipts.find(item => item.puffleId === pet.id)?.adoptionId ?? null }));
+      if (unrecorded.length) problems.push('The owner has puffles this project has not recorded.');
+      return { key: mapping.key, ok: !problems.length, problems, unrecorded };
     });
+  };
+  fake.readReceipts = async ids => {
+    await step('receipts', ids);
+    return db.receipts.filter(item => ids.includes(item.adoptionId)).map(item => ({ ...item }));
+  };
+  /**
+   * The visitor's purchase as the world server handles it: `published` is the
+   * engine's current publication. Returns the overlay's reply shape.
+   */
+  fake.purchase = (published, { adoptionId, typeId, subtypeId = 0, name }) => {
+    const reservation = published?.adoptions?.find(item => item.adoptionId === adoptionId);
+    const stored = db.receipts.find(item => item.adoptionId === adoptionId);
+    if (!reservation) return { ok: false, code: 'unknown-adoption' };
+    const puffleType = catalog.get(`${typeId}/${subtypeId}`);
+    if (puffleType === undefined) return { ok: false, code: 'unknown-puffle' };
+    if (!/^[A-Za-z]{1,12}$/.test(name) || db.filtered.has(name.toLowerCase())) return { ok: false, code: '441' };
+    const owner = db.owners.find(item => item.ownerId === reservation.ownerId);
+    const reply = receipt => ({ ok: true, adoptionId, puffleId: receipt.puffleId, typeId, subtypeId, name: receipt.name, coins: db.coins, cost: receipt.cost, createdAt: receipt.createdAt, ownerId: receipt.ownerId });
+    if (stored) {
+      if (stored.ownerId !== owner.ownerId || stored.puffleType !== puffleType || stored.name !== title(name)) return { ok: false, code: 'conflict' };
+      return reply(stored);
+    }
+    if (reservation.expiresAt * 1000 <= Date.now()) return { ok: false, code: 'expired' };
+    if (db.online.has(owner.ownerId)) return { ok: false, code: 'owner-online' };
+    const cost = prices[puffleType] ?? 400;
+    if (db.coins < cost) return { ok: false, code: '401' };
+    if (owner.pets.filter(pet => !pet.backyard).length >= 10) return { ok: false, code: '440' };
+    db.coins -= cost;
+    const pet = { id: db.nextPuffle++, name: title(name), puffleType, backyard: false };
+    owner.pets.push(pet);
+    const receipt = { adoptionId, visitorId: db.visitorId, ownerId: owner.ownerId, puffleId: pet.id, puffleType, name: pet.name, cost, coinsAfter: db.coins, createdAt: Math.floor(Date.now() / 1000) };
+    db.receipts.push(receipt);
+    return reply(receipt);
   };
   fake.close = () => { fake.closed = true; };
   return fake;
+}
+
+/** A publisher that records the last payload, for tests that play purchases. */
+export function memoryPublisher() {
+  const publisher = { payload: null, updates: 0, closed: false };
+  publisher.update = payload => { publisher.payload = structuredClone(payload); publisher.updates++; return true; };
+  publisher.close = () => { publisher.closed = true; };
+  return publisher;
 }
 
 /** Snapshot the parts of a source checkout that engine setup must never change. */

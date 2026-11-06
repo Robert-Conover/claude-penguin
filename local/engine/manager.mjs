@@ -6,17 +6,19 @@ import * as nodePty from '@lydell/node-pty';
 import headless from '@xterm/headless';
 import serialize from '@xterm/addon-serialize';
 import { readState, writeState, writePrivateJson } from './state.mjs';
-import { ProvisionError, VISITOR_USERNAME } from './game.mjs';
+import { ProvisionError, VISITOR_USERNAME, VISITOR_USERNAMES } from './game.mjs';
 import { generateUsername, newOwnerCredentials, readSecrets, writeSecrets } from './game-secrets.mjs';
 import { publicationFor } from './publication.mjs';
 import { assertGitVersion, assertReadPolicy, createGit, ensureEmptyHooksDir } from './git-policy.mjs';
 import {
   MAX_PROJECTS, createWorktree, defaultProjectName, identifyRepository, inside, inspectWorkspace, prepareWorktreeRoot,
-  projectNameProblem, reserveWorkspacePath, resolveWorktreeRoot, reviewWorkspace, shellQuote, sourceDirty, suggestPuffleName,
+  projectNameProblem, reserveWorkspacePath, resolveWorktreeRoot, reviewWorkspace, shellQuote, sourceDirty,
   validateProjectName, validatePuffleName, workerBranch,
 } from './workspace.mjs';
+import { ADOPTION_CATALOG, MAX_PUFFLES_PER_IGLOO, catalogEntry, catalogForPuffleType } from '../web/engine/catalog.mjs';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const LOWER_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const COMMIT = /^[a-f0-9]{40,64}$/;
 const EVENTS = ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'PostToolUseFailure',
   'PermissionRequest', 'Notification', 'Stop', 'StopFailure', 'SessionEnd'];
@@ -46,7 +48,7 @@ function childEnvironment() {
   const remove = new Set(['CLAUDECODE', 'CLAUDE_CODE_ENTRYPOINT', 'CLAUDE_CODE_SSE_PORT', 'CLAUDE_CODE_EXECPATH',
     'CLAUDE_PID', 'CLAUDE_EFFORT', 'NO_COLOR', 'FORCE_COLOR', 'VSCODE_INJECTION', 'TERM_PROGRAM', 'TERM_PROGRAM_VERSION']);
   for (const key of Object.keys(env)) {
-    if (remove.has(key) || /^(CLAUDE_CODE_SESSION|CLAUDE_CODE_CHILD|CLAUDE_CODE_MESSAGING|NEBULA_|AGENT_OFFICE_|CLAUDE_PENGUIN_)/.test(key)) delete env[key];
+    if (remove.has(key) || /^(CLAUDE_CODE_SESSION|CLAUDE_CODE_CHILD|CLAUDE_CODE_MESSAGING|NEBULA_|AGENT_OFFICE_|CLAUDE_PENGUIN_|CP_ENGINE_)/.test(key)) delete env[key];
   }
   return { ...env, TERM: 'xterm-256color', COLORTERM: 'truecolor' };
 }
@@ -60,16 +62,46 @@ function secretMatches(expected, supplied) {
 const positiveId = value => Number.isSafeInteger(value) && value > 0;
 const GAME_SOURCES = ['managed', 'legacy-fixture'];
 const GAME_STATUSES = ['provisioning', 'ready', 'failed', 'repair'];
-// `needs-worker` comes from migration (state.mjs); the others are set here.
+// Project setup covers only the destination (owner and igloo). `needs-worker`
+// is a migrated legacy-fixture project without an isolated worker yet.
 const SETUP_PHASES = ['registered', 'needs-worker', 'preparing', 'game-pending', 'failed', 'ready'];
+const WORKER_SETUP_PHASES = ['preparing', 'failed', 'ready'];
+const ADOPTION_STATES = ['reserved', 'charged', 'bound', 'withdrawn', 'conflict'];
+const OPEN_ADOPTIONS = ['reserved', 'charged'];
 const SUBMITTABLE = ['idle', 'review', 'interrupted'];
 const USERNAME_ATTEMPTS = 5;
+const ADOPTION_TTL_MS = 10 * 60 * 1000;
+const MAX_RECONCILED = 256;
 const absolute = value => typeof value === 'string' && path.isAbsolute(value);
 const record = value => Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 // A recorded identity the service could not find: repair it explicitly, never recreate it.
 const REPAIR_CODES = ['MISMATCH', 'MISSING'];
+// Server refusals of a p#cpadopt purchase (local/project_adoption.py) and their meaning.
+const REFUSALS = {
+  401: 'The visitor does not have enough coins.', 441: 'The game rejected that puffle name.',
+  440: 'This igloo already has 10 puffles.', expired: 'The adoption expired before the purchase arrived.',
+  'owner-online': 'The project owner was logged in; try again in a moment.', 'unknown-adoption': 'The game did not recognize this adoption.',
+  'unknown-puffle': 'That puffle cannot join a project igloo.', conflict: 'This adoption ID was already used for a different puffle.',
+  failed: 'The game could not complete the purchase. Nothing was charged.', cancelled: 'Adoption cancelled before purchase.',
+  lost: 'The game did not confirm the purchase and no receipt was found.',
+};
 
-function validateSaved(state) {
+export function sessionCaps(env = process.env) {
+  const read = (key, fallback) => {
+    if (env[key] === undefined || env[key] === '') return fallback;
+    const value = Number(env[key]);
+    if (!Number.isSafeInteger(value) || value < 1 || value > 32) throw new Error(`${key} must be an integer from 1 to 32.`);
+    return value;
+  };
+  return { perIgloo: read('CP_ENGINE_SESSIONS_PER_IGLOO', 3), total: read('CP_ENGINE_SESSIONS', 6) };
+}
+
+function validPuffle(puffle) {
+  return record(puffle) && positiveId(puffle.puffleId) && typeof puffle.name === 'string' && puffle.name.length > 0 && puffle.name.length <= 16 &&
+    Number.isSafeInteger(puffle.typeId) && Number.isSafeInteger(puffle.subtypeId) && (puffle.adoptionId === null || UUID.test(puffle.adoptionId ?? ''));
+}
+
+function validateSaved(state, visitorUsername) {
   const invalid = message => fail(`Saved agent state is invalid: ${message} Preserve it and repair it before restarting.`, 500);
   const projectIds = new Set();
   const commonDirs = new Set();
@@ -81,23 +113,23 @@ function validateSaved(state) {
     if (!absolute(project.sourcePath) || (project.commonDir !== null && !absolute(project.commonDir))) invalid(`project ${project.id} has an invalid repository path.`);
     if (project.commonDir !== null && commonDirs.has(project.commonDir)) invalid(`project ${project.id} and another project share one repository.`);
     commonDirs.add(project.commonDir);
+    if (Object.hasOwn(project, 'activeWorkerId')) invalid(`project ${project.id} still uses the version 2 single-puffle shape.`);
     if (project.game !== null) {
       const game = project.game;
-      const ids = ['ownerId', 'iglooId', 'roomId', 'puffleId'];
-      if (typeof game !== 'object' || !GAME_SOURCES.includes(game.source) || !GAME_STATUSES.includes(game.status)) invalid(`project ${project.id} has an invalid game mapping.`);
+      if (!record(game) || !GAME_SOURCES.includes(game.source) || !GAME_STATUSES.includes(game.status)) invalid(`project ${project.id} has an invalid game mapping.`);
+      const ids = game.source === 'legacy-fixture' ? ['ownerId', 'iglooId', 'roomId', 'puffleId'] : ['ownerId', 'iglooId', 'roomId'];
       // A ready or legacy mapping is complete; a managed mapping in progress may lack IDs it has not reached yet.
       const complete = game.status === 'ready' || game.source === 'legacy-fixture';
       if (!ids.every(key => positiveId(game[key]) || (!complete && (game[key] ?? null) === null))) invalid(`project ${project.id} has an invalid game mapping.`);
       if (positiveId(game.ownerId) && positiveId(game.roomId) && game.roomId !== game.ownerId + 2000) invalid(`project ${project.id} has an invalid igloo room address.`);
     }
-    if (project.activeWorkerId !== null && !UUID.test(project.activeWorkerId)) invalid(`project ${project.id} has an invalid worker reference.`);
-    if (!record(project.setup)) invalid(`project ${project.id} has no setup record.`);
-    if (!SETUP_PHASES.includes(project.setup.phase)) invalid(`project ${project.id} has an unknown setup phase.`);
+    if (!record(project.setup) || !SETUP_PHASES.includes(project.setup.phase)) invalid(`project ${project.id} has an unknown setup phase.`);
   }
   if (state.projects.length > MAX_PROJECTS) invalid(`more than ${MAX_PROJECTS} projects are registered.`);
   const workerIds = new Set();
   const sessionIds = new Set();
   const worktrees = new Set();
+  const puffleIds = new Set();
   for (const worker of state.workers) {
     if (!record(worker)) invalid('a worker record is not an object.');
     if (!UUID.test(worker.id) || workerIds.has(worker.id) || !UUID.test(worker.sessionId) || !projectIds.has(worker.projectId)) invalid('a worker identity is missing, duplicated, or unbound.');
@@ -105,24 +137,51 @@ function validateSaved(state) {
     if (sessionIds.has(worker.sessionId.toLowerCase())) invalid(`worker ${worker.id} and another worker share one Claude session.`);
     sessionIds.add(worker.sessionId.toLowerCase());
     if (typeof worker.established !== 'boolean' || !Array.isArray(worker.taskHistory) || !worker.taskHistory.every(record)) invalid(`worker ${worker.id} is incomplete.`);
+    if (worker.puffle !== null && worker.puffle !== undefined) {
+      if (!validPuffle(worker.puffle)) invalid(`worker ${worker.id} has an invalid puffle binding.`);
+      if (puffleIds.has(worker.puffle.puffleId)) invalid(`worker ${worker.id} and another worker share one puffle.`);
+      puffleIds.add(worker.puffle.puffleId);
+    }
     const workspace = worker.workspace;
-    if (!record(workspace) || !absolute(workspace.path) || !COMMIT.test(workspace.baseCommit ?? '')) invalid(`worker ${worker.id} has no valid workspace record.`);
-    if (worker.archived) { if (typeof worker.archived !== 'object') invalid(`worker ${worker.id} has an invalid archive record.`); continue; }
-    if (workspace.kind !== 'worktree' || typeof workspace.branch !== 'string' || !['reserved', 'ready'].includes(workspace.state)) invalid(`active worker ${worker.id} must use an engine worktree.`);
-    if (worktrees.has(workspace.path)) invalid(`worker ${worker.id} and another active worker share one worktree.`);
-    worktrees.add(workspace.path);
-    const commonDir = state.projects.find(project => project.id === worker.projectId).commonDir;
-    if (commonDir !== null && workspace.repoCommonDir !== commonDir) invalid(`worker ${worker.id} records a different repository than its project.`);
+    if (worker.archived) {
+      if (typeof worker.archived !== 'object') invalid(`worker ${worker.id} has an invalid archive record.`);
+      if (!record(workspace) || !absolute(workspace.path) || !COMMIT.test(workspace.baseCommit ?? '')) invalid(`worker ${worker.id} has no valid workspace record.`);
+      continue;
+    }
+    // A paid puffle whose worktree could not be reserved yet keeps a null workspace and a retryable setup.
+    if (workspace !== null) {
+      if (!record(workspace) || !absolute(workspace.path) || !COMMIT.test(workspace.baseCommit ?? '')) invalid(`worker ${worker.id} has no valid workspace record.`);
+      if (workspace.kind !== 'worktree' || typeof workspace.branch !== 'string' || !['reserved', 'ready'].includes(workspace.state)) invalid(`active worker ${worker.id} must use an engine worktree.`);
+      if (worktrees.has(workspace.path)) invalid(`worker ${worker.id} and another active worker share one worktree.`);
+      worktrees.add(workspace.path);
+      const commonDir = state.projects.find(project => project.id === worker.projectId).commonDir;
+      if (commonDir !== null && workspace.repoCommonDir !== commonDir) invalid(`worker ${worker.id} records a different repository than its project.`);
+    }
+    if (!record(worker.setup) || !WORKER_SETUP_PHASES.includes(worker.setup.phase)) invalid(`worker ${worker.id} has no valid setup record.`);
     try { validatePuffleName(worker.name); } catch { invalid(`worker ${worker.id} has an invalid puffle name.`); }
     if (worker.pid !== null && worker.pid !== undefined && !positiveId(worker.pid)) invalid(`worker ${worker.id} has an invalid process identity.`);
   }
   for (const project of state.projects) {
     const active = state.workers.filter(worker => worker.projectId === project.id && !worker.archived);
-    if (active.length > 1) invalid(`project ${project.id} has more than one active puffle.`);
-    if ((project.activeWorkerId ?? null) !== (active[0]?.id ?? null)) invalid(`project ${project.id} does not reference its active puffle.`);
+    if (active.length > MAX_PUFFLES_PER_IGLOO) invalid(`project ${project.id} has more than ${MAX_PUFFLES_PER_IGLOO} active puffles.`);
+    if (project.game?.source === 'legacy-fixture' && active.length > 1) invalid(`legacy project ${project.id} has more than one active puffle.`);
+  }
+  const adoptionIds = new Set();
+  for (const adoption of state.adoptions) {
+    if (!record(adoption) || !LOWER_UUID.test(adoption.id ?? '') || adoptionIds.has(adoption.id) || !projectIds.has(adoption.projectId) ||
+        !UUID.test(adoption.workerId ?? '') || !ADOPTION_STATES.includes(adoption.state) || !positiveId(adoption.ownerId) || !positiveId(adoption.visitorId)) {
+      invalid('an adoption record is missing, duplicated, or unbound.');
+    }
+    adoptionIds.add(adoption.id);
+    if (adoption.state === 'bound' && !state.workers.some(worker => worker.id === adoption.workerId && worker.puffle?.adoptionId === adoption.id)) {
+      invalid(`bound adoption ${adoption.id} has no matching worker.`);
+    }
   }
   const visitor = state.visitor;
-  if (visitor !== null && (typeof visitor !== 'object' || !positiveId(visitor.penguinId) || visitor.username !== VISITOR_USERNAME)) invalid('the visitor record is invalid.');
+  if (visitor !== null && (typeof visitor !== 'object' || !positiveId(visitor.penguinId) || !VISITOR_USERNAMES.includes(visitor.username))) invalid('the visitor record is invalid.');
+  if (visitor && visitor.username !== visitorUsername) {
+    fail(`This state directory belongs to the ${visitor.username} visitor, but the engine is configured for ${visitorUsername}. Use the matching CP_ENGINE_VISITOR or a different CP_ENGINE_STATE_DIR; nothing was changed.`, 500);
+  }
   const owners = new Set(visitor ? [visitor.penguinId] : []);
   for (const project of state.projects) {
     const ownerId = project.game?.ownerId;
@@ -134,12 +193,15 @@ function validateSaved(state) {
 
 /**
  * Host-owned PTYs, one per active worker, remain alive while the browser,
- * panel, game room, or selected project changes. Each worker runs in its own
- * persistent engine worktree and never falls back to the source checkout.
+ * panel, game room, or selected project changes. Each project igloo holds up
+ * to ten adopted puffles; each puffle is a worker with its own persistent
+ * Claude session and engine worktree, and never falls back to the source
+ * checkout. Live sessions are capped per igloo and overall; starts beyond a
+ * cap queue visibly and run when a slot frees.
  */
 export async function createManager({ stateDir, onEvent = () => {}, claudePath = 'claude', ptySpawn = nodePty.spawn, hookBaseUrl,
   startupTimeoutMs = 12000, worktreeRoot = resolveWorktreeRoot(), gitEnv = {}, gitVersionText,
-  game = null, publisher = null, onWarning = () => {} } = {}) {
+  game = null, publisher = null, onWarning = () => {}, caps = { perIgloo: 3, total: 6 }, clock = () => Date.now() } = {}) {
   // `game` is the injectable provisioner (createGameProvisioner in game.mjs, or a
   // test fake). Without it, setup stops at game-pending. `publisher` is the
   // native igloo publication owned by this engine (publication.mjs).
@@ -147,14 +209,17 @@ export async function createManager({ stateDir, onEvent = () => {}, claudePath =
   const hookUrl = new URL(hookBaseUrl);
   if (hookUrl.protocol !== 'http:' || !['localhost', '127.0.0.1', '[::1]'].includes(hookUrl.hostname)) fail('Hooks must use a loopback HTTP address.');
   if (!absolute(worktreeRoot)) fail('The worktree root must be an absolute path.');
+  if (!positiveId(caps?.perIgloo) || !positiveId(caps?.total)) fail('Session caps must be positive integers.');
+  const visitorUsername = game?.visitorUsername ?? VISITOR_USERNAME;
   const state = readState(stateDir);
   const hooksDir = ensureEmptyHooksDir(path.join(stateDir, 'git-empty-hooks'));
   const git = createGit({ hooksDir, env: gitEnv });
   assertGitVersion(gitVersionText ?? await git.text(stateDir, ['--version']));
-  validateSaved(state);
+  validateSaved(state, visitorUsername);
 
   const runtimes = new Map();
   const projectLocks = new Map();
+  const startQueue = [];
   let registration = Promise.resolve();
   let closing = false;
   const settingsPath = path.join(stateDir, 'claude-settings.json');
@@ -194,10 +259,9 @@ export async function createManager({ stateDir, onEvent = () => {}, claudePath =
     if (project.game?.source === 'managed' && project.game.status === 'provisioning') project.game.status = 'failed';
     if (project.setup.phase === 'preparing') {
       project.setup = { ...project.setup, phase: 'failed', retryable: true, updatedAt: startedAt,
-        error: 'Setup stopped when the engine stopped. Retry to reconcile the reserved worktree and game identities; nothing was removed.' };
+        error: 'Setup stopped when the engine stopped. Retry to reconcile the owner and igloo; nothing was removed.' };
     }
-    const worker = state.workers.find(item => item.id === project.activeWorkerId);
-    if (game && project.setup.phase === 'game-pending' && worker?.workspace.state === 'ready') {
+    if (game && project.setup.phase === 'game-pending') {
       // Provisioning is configured now; the existing Retry path provisions it. Nothing is provisioned automatically.
       project.setup = { ...project.setup, phase: 'failed', step: null, retryable: true, correction: null, updatedAt: startedAt,
         error: 'Game provisioning was off when this project was set up. Retry to provision its igloo.' };
@@ -209,8 +273,13 @@ export async function createManager({ stateDir, onEvent = () => {}, claudePath =
     worker.rows = Math.min(100, Math.max(10, Number.isSafeInteger(worker.rows) ? worker.rows : 32));
     worker.updatedAt = startedAt;
     worker.outsideWorkspace = null;
+    worker.queued = false;
     for (const task of worker.taskHistory) if (!task.endedAt) { task.status = 'interrupted'; task.endedAt = startedAt; }
-    if (worker.workspace.state !== 'ready') { worker.status = 'setup'; worker.activity = 'Worktree setup is incomplete.'; continue; }
+    if (worker.setup.phase === 'preparing') {
+      worker.setup = { ...worker.setup, phase: 'failed', step: null, retryable: true, updatedAt: startedAt,
+        error: 'Worktree setup stopped when the engine stopped. Retry to reconcile the reserved worktree; nothing was removed.' };
+    }
+    if (worker.workspace?.state !== 'ready') { worker.status = 'setup'; worker.activity = 'Worktree setup is incomplete. Retry its setup.'; continue; }
     worker.status = 'offline';
     if (pidAlive(worker.pid)) worker.activity = 'A previous process may still be alive. Stop it manually before resuming; this engine will not kill or duplicate it.';
     else {
@@ -237,27 +306,52 @@ export async function createManager({ stateDir, onEvent = () => {}, claudePath =
   function activeWorkerFor(target) {
     const worker = workerFor(target);
     if (worker.archived) fail('This puffle is archived and read-only. Its conversation stays in its original folder; create an isolated replacement to continue.', 409);
-    if (worker.workspace.state !== 'ready') fail('This puffle\'s worktree setup is not complete. Retry setup first.', 409);
+    if (worker.workspace?.state !== 'ready') fail('This puffle\'s worktree setup is not complete. Retry its setup first.', 409);
     return worker;
   }
+  function adoptionFor(id) {
+    if (typeof id !== 'string' || !LOWER_UUID.test(id)) fail('An explicit adoption ID is required.');
+    const adoption = state.adoptions.find(item => item.id === id);
+    if (!adoption) fail('Unknown adoption.', 404);
+    return adoption;
+  }
+  const activeWorkers = projectId => state.workers.filter(worker => worker.projectId === projectId && !worker.archived);
   function assertOpen() { if (closing) fail('The local runtime is stopping.', 409); }
+  const expired = adoption => Date.parse(adoption.expiresAt) <= clock();
+  const openAdoptions = projectId => state.adoptions.filter(item => item.projectId === projectId && OPEN_ADOPTIONS.includes(item.state) && !(item.state === 'reserved' && expired(item)));
+  /** Puffles in the igloo plus purchases in flight. */
+  const occupancy = project => activeWorkers(project.id).filter(worker => worker.puffle).length + openAdoptions(project.id).length;
 
   // ------------------------------------------------------------ views (allowlisted)
 
+  /** Why the visitor cannot adopt into this project right now, or null. */
+  function adoptionBlocked(project) {
+    if (project.game?.source === 'legacy-fixture') return 'The migrated Atlas shares the Bridge Alpha owner with the bridge lab, so adoption into this igloo stays off.';
+    if (!game) return 'Game provisioning is off for this engine.';
+    if (!state.visitor || visitorProblem) return 'The island visitor has not been verified yet.';
+    if (project.game?.status !== 'ready' || project.setup.phase !== 'ready') return 'This igloo is still being set up.';
+    if (occupancy(project) >= MAX_PUFFLES_PER_IGLOO) return `This igloo already has ${MAX_PUFFLES_PER_IGLOO} puffles.`;
+    return null;
+  }
   function projectView(project) {
     // Allowlisted: game usernames, passwords, and ownership markers never leave the host engine.
     const mapping = project.game ? Object.fromEntries(['source', 'status', 'ownerId', 'iglooId', 'roomId', 'puffleId', 'puffleName', 'fixtureId', 'verifiedAt']
       .map(key => [key, project.game[key] ?? null])) : null;
     const setup = Object.fromEntries(['phase', 'step', 'error', 'note', 'retryable', 'correction', 'updatedAt'].map(key => [key, project.setup[key] ?? null]));
+    const puffles = activeWorkers(project.id).filter(worker => worker.puffle).length;
     return { id: project.id, name: project.name, sourcePath: project.sourcePath, sourceAvailable: fs.existsSync(project.sourcePath),
-      createdAt: project.createdAt, legacy: Boolean(project.legacy), setup, game: mapping, activeWorkerId: project.activeWorkerId ?? null };
+      createdAt: project.createdAt, legacy: Boolean(project.legacy), setup, game: mapping,
+      capacity: { max: MAX_PUFFLES_PER_IGLOO, puffles, pending: openAdoptions(project.id).length },
+      adoptionBlocked: adoptionBlocked(project), busy: projectLocks.has(project.id) };
   }
   function workerView(worker) {
     const runtime = runtimes.get(worker.id);
-    const workspace = Object.fromEntries(['kind', 'path', 'branch', 'baseCommit', 'state', 'sourceDirtyAtCreation'].map(key => [key, worker.workspace[key] ?? null]));
+    const workspace = worker.workspace ? Object.fromEntries(['kind', 'path', 'branch', 'baseCommit', 'state', 'sourceDirtyAtCreation'].map(key => [key, worker.workspace[key] ?? null])) : null;
+    const setup = Object.fromEntries(['phase', 'step', 'error', 'note', 'retryable', 'updatedAt'].map(key => [key, worker.setup?.[key] ?? null]));
+    const puffle = worker.puffle ? { ...worker.puffle, color: catalogForPuffleType(worker.puffle.subtypeId || worker.puffle.typeId)?.color ?? 'blue' } : null;
     return { ...Object.fromEntries(['id', 'projectId', 'name', 'sessionId', 'status', 'activity', 'established',
       'cols', 'rows', 'createdAt', 'updatedAt', 'taskHistory', 'lastError', 'exitCode', 'outsideWorkspace'].map(key => [key, copy(worker[key])])),
-    workspace, inspection: worker.inspection ? copy(worker.inspection) : null,
+    workspace, setup, puffle, queued: Boolean(worker.queued), inspection: worker.inspection ? copy(worker.inspection) : null,
     running: Boolean(runtime?.pty), recoveryBlocked: Boolean(!runtime?.pty && pidAlive(worker.pid)) };
   }
   function archivedView(worker) {
@@ -266,23 +360,30 @@ export async function createManager({ stateDir, onEvent = () => {}, claudePath =
       originalPath: worker.workspace.path, baseCommit: worker.workspace.baseCommit, workspaceKind: worker.workspace.kind,
       resumeCommand: worker.established ? `cd ${shellQuote(worker.workspace.path)} && claude --resume ${worker.sessionId}` : null };
   }
+  function adoptionView(adoption) {
+    return { ...Object.fromEntries(['id', 'projectId', 'workerId', 'ownerId', 'state', 'error', 'code', 'createdAt', 'updatedAt', 'expiresAt'].map(key => [key, adoption[key] ?? null])),
+      request: copy(adoption.request), receipt: adoption.receipt ? copy(adoption.receipt) : null, expired: adoption.state === 'reserved' && expired(adoption) };
+  }
   function snapshot() {
     // A visitor that failed this run's verification is reported unverified, so the browser builds no mappings for it.
     const visitor = state.visitor && !visitorProblem ? { penguinId: state.visitor.penguinId, username: state.visitor.username, verifiedAt: state.visitor.verifiedAt ?? null } : null;
-    return { revision: state.revision, limits: { maxProjects: MAX_PROJECTS }, worktreeRoot, visitor, visitorProblem,
+    return { revision: state.revision, worktreeRoot, visitor, visitorProblem, visitorUsername,
+      limits: { maxProjects: MAX_PROJECTS, maxPuffles: MAX_PUFFLES_PER_IGLOO, sessionsPerIgloo: caps.perIgloo, sessions: caps.total },
+      catalog: ADOPTION_CATALOG,
       projects: state.projects.map(projectView),
       workers: state.workers.filter(worker => !worker.archived).map(workerView),
-      archivedWorkers: state.workers.filter(worker => worker.archived).map(archivedView) };
+      archivedWorkers: state.workers.filter(worker => worker.archived).map(archivedView),
+      adoptions: state.adoptions.slice(-50).map(adoptionView) };
   }
   function notify(event) { try { onEvent(event); } catch { /* A disconnected UI must not stop the agent. */ } }
   let publicationProblem = null;
   let publisherClosed = false;
   let visitorProblem = null; // Set when this run's visitor verification failed; cleared when it verifies again.
-  const withdrawn = { version: 1, visitorId: null, igloos: [] };
-  /** Rewrites the native igloo publication when ready mappings or the visitor change. */
+  const withdrawnPublication = { version: 2, visitorId: null, igloos: [], adoptions: [] };
+  /** Rewrites the native igloo publication when ready mappings, reservations, or the visitor change. */
   function publish() {
     if (!publisher || publisherClosed) return;
-    try { publisher.update(visitorProblem ? withdrawn : publicationFor(state)); publicationProblem = null; }
+    try { publisher.update(visitorProblem ? withdrawnPublication : publicationFor(state, clock())); publicationProblem = null; }
     catch (error) {
       if (publicationProblem !== error.message) { publicationProblem = error.message; onWarning(`Native igloo publication failed: ${error.message}`); }
     }
@@ -339,8 +440,12 @@ export async function createManager({ stateDir, onEvent = () => {}, claudePath =
     return inspection;
   }
 
-  // ------------------------------------------------------------ registration and setup
+  // ------------------------------------------------------------ registration and destination setup
 
+  /**
+   * Registration creates an empty project igloo: a dedicated owner and a
+   * locked igloo, with no puffle. Puffles are adopted at the Pet Shop.
+   */
   async function registerProject({ path: input, name } = {}) {
     assertOpen();
     const operation = registration.then(async () => {
@@ -351,73 +456,48 @@ export async function createManager({ stateDir, onEvent = () => {}, claudePath =
       if (existing) {
         // An unrelated repository at a legacy project's old path stays unbound; createWorker explains why.
         if (existing.commonDir === null && !await legacyIdentityProblem(existing, identity)) { existing.commonDir = identity.commonDir; existing.sourceAvailable = true; commit(); }
-        return projectView(existing);
+        return { project: existing, created: false };
       }
       if (state.projects.length >= MAX_PROJECTS) fail(`Claude Penguin supports at most ${MAX_PROJECTS} registered projects.`, 409);
       const projectName = name === undefined || name === '' ? defaultProjectName(path.basename(identity.sourcePath)) : validateProjectName(name);
       const project = { id: randomUUID(), name: projectName, sourcePath: identity.sourcePath, commonDir: identity.commonDir, createdAt: now(),
-        sourceAvailable: true, setup: { phase: 'registered', step: null, error: null, retryable: false, updatedAt: now() }, game: null, activeWorkerId: null };
+        sourceAvailable: true, setup: { phase: 'registered', step: null, error: null, retryable: false, updatedAt: now() }, game: null };
       state.projects.push(project);
       commit();
-      return projectView(project);
+      return { project, created: true };
     });
     registration = operation.catch(() => {});
-    return operation;
+    const { project, created } = await operation;
+    if (created) withProjectLock(project.id, () => runSetup(project));
+    return projectView(project);
   }
 
   function setSetup(project, fields) {
     project.setup = { ...project.setup, ...fields, updatedAt: now() };
     commit();
   }
-
-  async function prepareWorkspace(project, worker) {
-    const workspace = worker.workspace;
-    setSetup(project, { phase: 'preparing', step: 'Creating the worktree.', error: null, retryable: false, correction: null });
-    await createWorktree(git, { sourcePath: project.sourcePath, workspacePath: workspace.path, branch: workspace.branch,
-      baseline: workspace.baseCommit, workerId: worker.id, onProgress: step => setSetup(project, { step }) });
-    await assertReadPolicy(git, workspace.path, [workspace.baseCommit]);
-    const inspection = await inspectWorkspace(git, project, workspace);
-    if (inspection.repair) throw Object.assign(new Error(inspection.repair), { statusCode: 409 });
-    workspace.state = 'ready';
-    workspace.readyAt = now();
-    worker.inspection = { repair: null, warnings: inspection.warnings, checkedAt: now() };
-    worker.status = 'offline';
-    worker.activity = 'Ready to start this named conversation.';
+  function setWorkerSetup(worker, fields) {
+    worker.setup = { ...worker.setup, ...fields, updatedAt: now() };
     worker.updatedAt = now();
-    setSetup(project, { step: 'Worktree ready.' });
+    commit();
   }
 
-  /**
-   * Setup runs in separate, individually retryable parts: workspace
-   * preparation, then game provisioning. It reaches `ready` only when both are.
-   */
-  async function runSetup(project, worker) {
+  /** Destination setup: owner and igloo. It reaches `ready` only once the mapping verifies. */
+  async function runSetup(project) {
+    if (project.game?.source === 'legacy-fixture') return;
+    if (!game) {
+      setSetup(project, { phase: 'game-pending', step: 'Game provisioning is not configured for this engine.', error: null, retryable: false, correction: null });
+      return;
+    }
     try {
       assertOpen();
-      if (worker.workspace.state !== 'ready') await prepareWorkspace(project, worker);
-    } catch (error) {
-      worker.status = 'setup';
-      worker.activity = 'Worktree setup failed. Retry after resolving the problem.';
-      worker.updatedAt = now();
-      setSetup(project, { phase: 'failed', step: null, error: String(error.message).slice(0, 1000), retryable: true, correction: null });
-      return;
-    }
-    if (project.game?.status === 'ready') { setSetup(project, { phase: 'ready', step: null, error: null, retryable: false, correction: null }); return; }
-    if (!game) {
-      setSetup(project, { phase: 'game-pending', step: 'Worktree ready. Game provisioning is not configured for this engine.', error: null, retryable: false, correction: null });
-      return;
-    }
-    try {
-      await provisionGame(project, worker);
+      await provisionGame(project);
       setSetup(project, { phase: 'ready', step: null, error: null, retryable: false, correction: null });
     } catch (error) {
       if (closing && !(error instanceof ProvisionError)) return;
       const message = String(error.message).slice(0, 1000);
-      if (project.game?.source === 'managed') {
-        project.game.status = REPAIR_CODES.includes(error.code) ? 'repair' : 'failed';
-        project.game.nameRejected = error.code === 'NAME_REJECTED' && !project.game.puffleId;
-      }
-      setSetup(project, { phase: 'failed', step: null, error: message, retryable: true, correction: error.code === 'NAME_REJECTED' ? 'puffleName' : null });
+      if (project.game?.source === 'managed') project.game.status = REPAIR_CODES.includes(error.code) ? 'repair' : 'failed';
+      setSetup(project, { phase: 'failed', step: null, error: message, retryable: true, correction: null });
     }
   }
 
@@ -426,7 +506,7 @@ export async function createManager({ stateDir, onEvent = () => {}, claudePath =
   let visitorRun = null;
   let visitorVerified = false;
   /**
-   * Verify or create only the marked shared visitor; the engine never logs in
+   * Verify or create only the marked fixture visitor; the engine never logs in
    * as it. A recorded visitor is only verified, never recreated. A visitor
    * that fails verification (not an unavailable stack) is reported unverified
    * and publication is withdrawn until it verifies again; it is never remapped.
@@ -441,11 +521,11 @@ export async function createManager({ stateDir, onEvent = () => {}, claudePath =
         try { visitor = await game.ensureVisitor({ penguinId: recorded }); }
         catch (error) {
           if (error.code !== 'MISSING') throw error;
-          throw new ProvisionError(`The ${VISITOR_USERNAME} visitor recorded as game ID ${recorded} is missing from the game database: ${String(error.message).slice(0, 300)} Nothing was created; restore that account or repair the visitor record explicitly.`, 'MISSING');
+          throw new ProvisionError(`The ${visitorUsername} visitor recorded as game ID ${recorded} is missing from the game database: ${String(error.message).slice(0, 300)} Nothing was created; restore that account or repair the visitor record explicitly.`, 'MISSING');
         }
-        if (!positiveId(visitor?.penguinId) || visitor.username !== VISITOR_USERNAME) throw new ProvisionError('The provisioner returned an unexpected visitor identity.', 'MISMATCH');
+        if (!positiveId(visitor?.penguinId) || visitor.username !== visitorUsername) throw new ProvisionError('The provisioner returned an unexpected visitor identity.', 'MISMATCH');
         if (recorded !== null && recorded !== visitor.penguinId) {
-          throw new ProvisionError(`The ${VISITOR_USERNAME} visitor now has game ID ${visitor.penguinId}, not the recorded ${recorded}. Refusing to remap it; repair the visitor record explicitly.`, 'MISMATCH');
+          throw new ProvisionError(`The ${visitorUsername} visitor now has game ID ${visitor.penguinId}, not the recorded ${recorded}. Refusing to remap it; repair the visitor record explicitly.`, 'MISMATCH');
         }
         if (state.projects.some(project => project.game?.ownerId === visitor.penguinId)) throw new ProvisionError('The visitor account is also a project owner.', 'MISMATCH');
         assertOpen();
@@ -472,8 +552,14 @@ export async function createManager({ stateDir, onEvent = () => {}, claudePath =
     writeSecrets(stateDir, secrets);
   }
 
-  /** Provision or reconcile one project's dedicated owner, locked igloo, and adopted puffle. */
-  async function provisionGame(project, worker) {
+  /** The recorded puffle set of a managed project, as the verifier expects it. */
+  function recordedPuffles(project) {
+    return state.workers.filter(worker => worker.projectId === project.id && worker.puffle)
+      .map(worker => ({ puffleId: worker.puffle.puffleId, name: worker.puffle.name, puffleType: worker.puffle.subtypeId || worker.puffle.typeId }));
+  }
+
+  /** Provision or reconcile one project's dedicated owner and locked, empty-or-recorded igloo. */
+  async function provisionGame(project) {
     const step = text => setSetup(project, { phase: 'preparing', step: text, error: null, retryable: false, correction: null });
     const mismatch = message => new ProvisionError(message, 'MISMATCH');
     step('Checking the island visitor.');
@@ -487,13 +573,8 @@ export async function createManager({ stateDir, onEvent = () => {}, claudePath =
       credentials = newOwnerCredentials(now());
       saveCredentials(project.id, credentials);
     }
-    if (!project.game) {
-      project.game = { source: 'managed', status: 'provisioning', ownerId: null, iglooId: null, roomId: null, puffleId: null, puffleName: null,
-        fixtureId: null, verifiedAt: null, requestedPuffleName: worker.name, nameRejected: false };
-    } else {
-      project.game.status = 'provisioning';
-      project.game.requestedPuffleName ??= worker.name;
-    }
+    if (!project.game) project.game = { source: 'managed', status: 'provisioning', ownerId: null, iglooId: null, roomId: null, verifiedAt: null };
+    else project.game.status = 'provisioning';
     const mapping = project.game;
     step('Preparing the project owner penguin.');
 
@@ -520,24 +601,23 @@ export async function createManager({ stateDir, onEvent = () => {}, claudePath =
     if (mapping.ownerId && mapping.ownerId !== owner.ownerId) throw mismatch(`The managed owner is now game ID ${owner.ownerId}, not the recorded ${mapping.ownerId}. Nothing was remapped; repair the game mapping explicitly.`);
     if (owner.ownerId === state.visitor?.penguinId || state.projects.some(other => other !== project && other.game?.ownerId === owner.ownerId)) throw mismatch('The managed owner is already mapped to the visitor or another project.');
     mapping.ownerId = owner.ownerId;
-    step(`Adopting ${mapping.puffleName ?? mapping.requestedPuffleName} in the project igloo.`);
+    step('Preparing the project igloo.');
 
     const igloo = await game.prepareIgloo({ username: credentials.username, password: credentials.password, ownerId: mapping.ownerId,
-      requestedName: mapping.requestedPuffleName, recorded: { iglooId: mapping.iglooId, puffleId: mapping.puffleId, puffleName: mapping.puffleName } });
+      recorded: { iglooId: mapping.iglooId } });
     assertOpen();
-    if (!['iglooId', 'roomId', 'puffleId'].every(key => positiveId(igloo?.[key])) || typeof igloo.puffleName !== 'string') throw new ProvisionError('The game session returned an incomplete igloo mapping.');
+    if (!positiveId(igloo?.iglooId) || !positiveId(igloo?.roomId)) throw new ProvisionError('The game session returned an incomplete igloo mapping.');
     if (igloo.roomId !== mapping.ownerId + 2000) throw mismatch('The game entered a room that does not belong to the managed owner.');
-    for (const key of ['iglooId', 'puffleId', 'puffleName']) {
-      if (mapping[key] !== null && mapping[key] !== igloo[key]) throw mismatch(`The managed ${key === 'iglooId' ? 'igloo' : 'puffle'} no longer matches the recorded mapping. Nothing was remapped; repair it explicitly.`);
+    if (mapping.iglooId !== null && mapping.iglooId !== igloo.iglooId) throw mismatch('The managed igloo no longer matches the recorded mapping. Nothing was remapped; repair it explicitly.');
+    Object.assign(mapping, { iglooId: igloo.iglooId, roomId: igloo.roomId });
+    // Paid puffles always win: bind any completed purchase before verifying the recorded set.
+    if (state.adoptions.some(item => item.projectId === project.id && item.state !== 'bound')) {
+      step('Checking adoption receipts.');
+      await reconcileReceipts(state.adoptions.filter(item => item.projectId === project.id && item.state !== 'bound'));
     }
-    // Record the server-normalized adopted name (Houdini title-cases it).
-    try { validatePuffleName(igloo.puffleName); } catch { throw new ProvisionError('The game returned a puffle name the engine cannot use.'); }
-    Object.assign(mapping, { iglooId: igloo.iglooId, roomId: igloo.roomId, puffleId: igloo.puffleId, puffleName: igloo.puffleName, nameRejected: false });
-    if (worker.name !== igloo.puffleName) { worker.name = igloo.puffleName; worker.updatedAt = now(); }
-    step('Verifying the owner, igloo, room, and puffle mapping.');
-
+    step('Verifying the owner, igloo, room, and puffles.');
     const [result] = await game.verifyOwners([{ key: project.id, marker: credentials.marker, username: credentials.username,
-      ownerId: mapping.ownerId, iglooId: mapping.iglooId, puffleId: mapping.puffleId, puffleName: mapping.puffleName }]);
+      ownerId: mapping.ownerId, iglooId: mapping.iglooId, puffles: recordedPuffles(project) }]);
     assertOpen();
     if (!result?.ok || result.key !== project.id) throw mismatch(`The game mapping did not verify: ${(result?.problems ?? ['no result']).join(' ')}`);
     mapping.status = 'ready';
@@ -545,17 +625,19 @@ export async function createManager({ stateDir, onEvent = () => {}, claudePath =
   }
 
   /**
-   * Re-verify the visitor and every ready mapping (one batched
-   * provisioning run). A mismatch marks the mapping for repair and removes it
-   * from publication; a visitor that fails verification withdraws the whole
-   * publication (see ensureVisitor) while owner mappings are still checked. An
-   * unavailable stack leaves the last verified state.
+   * Re-verify the visitor and every ready mapping (one batched provisioning
+   * run), after reconciling every unfinished adoption against its receipt. A
+   * mismatch marks the mapping for repair and removes it from publication; a
+   * visitor that fails verification withdraws the whole publication (see
+   * ensureVisitor) while owner mappings are still checked. An unavailable
+   * stack leaves the last verified state.
    */
   async function verifyGameMappings() {
     if (!game) return { checked: 0, repair: 0, visitorProblem: null };
     assertOpen();
     try { await ensureVisitor({ force: true }); }
     catch (error) { if (!REPAIR_CODES.includes(error.code)) throw error; }
+    await reconcileAdoptions();
     const secrets = readSecrets(stateDir);
     const ready = state.projects.filter(project => project.game?.status === 'ready' || (project.game?.source === 'legacy-fixture' && project.game.status === 'repair'));
     const markRepair = (project, message) => withProjectLock(project.id, async () => {
@@ -567,28 +649,31 @@ export async function createManager({ stateDir, onEvent = () => {}, claudePath =
     const checks = [];
     for (const project of ready) {
       const { ownerId, iglooId, puffleId, puffleName, fixtureId } = project.game;
-      const expected = { ownerId, iglooId, puffleId, puffleName };
       if (project.game.source === 'legacy-fixture') {
+        const expected = { ownerId, iglooId, puffleId, puffleName };
         checks.push({ project, expected, mapping: { key: project.id, fixtureId, ...expected } });
         continue;
       }
       const credentials = secrets.owners[project.id];
       if (!credentials) { repair++; await markRepair(project, "This project's managed-owner credentials are missing from game-secrets.json. Restore that file."); continue; }
-      checks.push({ project, expected, mapping: { key: project.id, marker: credentials.marker, username: credentials.username, ...expected } });
+      const puffles = recordedPuffles(project);
+      checks.push({ project, expected: { ownerId, iglooId, puffles: JSON.stringify(puffles) },
+        mapping: { key: project.id, marker: credentials.marker, username: credentials.username, ownerId, iglooId, puffles } });
     }
     const results = await game.verifyOwners(checks.map(check => check.mapping));
     assertOpen();
     for (const check of checks) {
       const result = results.find(item => item.key === check.project.id);
-      const unchanged = () => Object.entries(check.expected).every(([key, value]) => check.project.game?.[key] === value);
+      const unchanged = () => Object.entries(check.expected).every(([key, value]) =>
+        key === 'puffles' ? JSON.stringify(recordedPuffles(check.project)) === value : check.project.game?.[key] === value);
       if (result?.ok) {
         await withProjectLock(check.project.id, async () => {
           if (!unchanged()) return;
           const project = check.project;
           if (project.game.source === 'legacy-fixture' && project.game.status === 'repair') {
             project.game.status = 'ready';
-            const worker = state.workers.find(item => item.id === project.activeWorkerId);
-            if (!worker || worker.workspace.state === 'ready') setSetup(project, { phase: worker ? 'ready' : 'needs-worker', error: null, retryable: false });
+            const worker = activeWorkers(project.id)[0];
+            setSetup(project, { phase: worker ? 'ready' : 'needs-worker', error: null, retryable: false });
           }
           if (project.game.status === 'ready') { project.game.verifiedAt = now(); commit(); }
         });
@@ -600,17 +685,201 @@ export async function createManager({ stateDir, onEvent = () => {}, claudePath =
     return { checked: ready.length, repair, visitorProblem };
   }
 
-  async function createWorker({ projectId, name } = {}) {
+  // ------------------------------------------------------------ adoption
+
+  /**
+   * Reserve one adoption for a ready project with room for another puffle.
+   * The adoption and worker IDs are durable and published before the browser
+   * sends the purchase. One outstanding adoption per visitor; refused while
+   * the engine holds the project lock (for example an owner game session).
+   */
+  async function reserveAdoption({ projectId, typeId, subtypeId, name } = {}) {
+    assertOpen();
+    const project = projectFor(projectId);
+    if (projectLocks.has(project.id)) fail('This igloo is busy with setup or another adoption. Try again in a moment.', 409);
+    const entry = catalogEntry(typeId, subtypeId);
+    if (!entry) fail('That puffle cannot join a project igloo. Choose one of the ten colors, the Blue Dog or the Orange Cat.');
+    const puffleName = validatePuffleName(name);
+    return withProjectLock(project.id, async () => {
+      assertOpen();
+      const blocked = adoptionBlocked(project);
+      if (blocked) fail(blocked, 409);
+      const outstanding = state.adoptions.find(item => OPEN_ADOPTIONS.includes(item.state) && !(item.state === 'reserved' && expired(item)));
+      if (outstanding) fail(outstanding.state === 'charged'
+        ? 'A purchase is still being confirmed. Wait for it, or check it from Your Igloos.'
+        : 'Another adoption is still open. Finish or close it first.', 409);
+      const at = now();
+      const adoption = { id: randomUUID(), projectId: project.id, workerId: randomUUID(), visitorId: state.visitor.penguinId, ownerId: project.game.ownerId,
+        state: 'reserved', request: { typeId: entry.typeId, subtypeId: entry.subtypeId, name: puffleName, price: entry.price },
+        receipt: null, error: null, createdAt: at, updatedAt: at, expiresAt: new Date(clock() + ADOPTION_TTL_MS).toISOString() };
+      state.adoptions.push(adoption);
+      commit();
+      return adoptionView(adoption);
+    });
+  }
+
+  function setAdoption(adoption, fields) {
+    Object.assign(adoption, fields, { updatedAt: now() });
+    commit();
+  }
+
+  /** Bind a confirmed receipt: the paid puffle becomes a worker with its own session; worktree setup follows. */
+  function bind(adoption, receipt) {
+    const project = projectFor(adoption.projectId);
+    const entry = catalogForPuffleType(receipt.puffleType);
+    let worker = state.workers.find(item => item.id === adoption.workerId);
+    if (!worker) {
+      if (state.workers.some(item => item.puffle?.puffleId === receipt.puffleId)) {
+        setAdoption(adoption, { state: 'conflict', error: `Puffle ${receipt.puffleId} is already bound to another worker.` });
+        return null;
+      }
+      let name = receipt.name;
+      try { validatePuffleName(name); } catch { name = 'Puffle'; }
+      worker = { id: adoption.workerId, projectId: project.id, name, sessionId: randomUUID(), established: false,
+        status: 'setup', activity: 'Preparing the worktree.', cols: 120, rows: 32, createdAt: now(), updatedAt: now(), pid: null, taskHistory: [],
+        outsideWorkspace: null, inspection: null, archived: null, queued: false,
+        puffle: { puffleId: receipt.puffleId, typeId: entry.typeId, subtypeId: entry.subtypeId, name: receipt.name, adoptionId: adoption.id },
+        workspace: null, setup: { phase: 'preparing', step: 'Waiting to reserve the worktree.', error: null, retryable: false, updatedAt: now() } };
+      state.workers.push(worker);
+    }
+    setAdoption(adoption, { state: 'bound', error: null, receipt: { puffleId: receipt.puffleId, puffleType: receipt.puffleType, name: receipt.name,
+      cost: receipt.cost, coinsAfter: receipt.coinsAfter, createdAt: receipt.createdAt } });
+    withProjectLock(project.id, () => runWorkerSetup(project, worker));
+    return worker;
+  }
+
+  /** Confirm receipts for these adoptions through the provisioning service. A receipt always wins. */
+  async function reconcileReceipts(adoptions) {
+    if (!game || !adoptions.length) return [];
+    const receipts = await game.readReceipts(adoptions.map(item => item.id));
+    assertOpen();
+    const bound = [];
+    for (const adoption of adoptions) {
+      if (adoption.state === 'bound') continue;
+      const receipt = receipts.find(item => item.adoptionId === adoption.id);
+      if (receipt) {
+        if (receipt.visitorId !== adoption.visitorId || receipt.ownerId !== adoption.ownerId || !catalogForPuffleType(receipt.puffleType)) {
+          setAdoption(adoption, { state: 'conflict', error: 'The stored receipt does not match this reservation. Nothing was bound; inspect it explicitly.' });
+          continue;
+        }
+        const worker = bind(adoption, receipt);
+        if (worker) bound.push(worker.id);
+      } else if (adoption.state === 'reserved' && expired(adoption)) {
+        setAdoption(adoption, { state: 'withdrawn', error: REFUSALS.expired });
+      } else if (adoption.state === 'charged') {
+        // The browser saw a purchase that has no receipt (yet): keep it open until it expires, then withdraw it.
+        if (expired(adoption)) setAdoption(adoption, { state: 'withdrawn', error: REFUSALS.lost });
+      }
+    }
+    return bound;
+  }
+
+  /** At startup and on Retry: reconcile every reserved, charged or withdrawn adoption in one run. */
+  async function reconcileAdoptions({ projectId } = {}) {
+    if (!game) return { bound: [] };
+    if (projectId !== undefined) projectFor(projectId);
+    const unfinished = state.adoptions.filter(item => ['reserved', 'charged', 'withdrawn'].includes(item.state) && (projectId === undefined || item.projectId === projectId))
+      .slice(-MAX_RECONCILED);
+    return { bound: await reconcileReceipts(unfinished), adoptions: state.adoptions.slice(-50).map(adoptionView) };
+  }
+
+  /**
+   * The browser relays the game's reply to p#cpadopt. Success marks the
+   * adoption charged, then the engine confirms the receipt itself before
+   * binding. A refusal withdraws the reservation (a later receipt still wins).
+   */
+  async function reportAdoption({ adoptionId, result } = {}) {
+    assertOpen();
+    const adoption = adoptionFor(adoptionId);
+    if (!record(result) || typeof result.ok !== 'boolean') fail('A purchase result is required.');
+    if (adoption.state === 'bound') return adoptionView(adoption);
+    if (!result.ok) {
+      const code = typeof result.code === 'string' && Object.hasOwn(REFUSALS, result.code) ? result.code : 'failed';
+      if (adoption.state === 'reserved') setAdoption(adoption, { state: 'withdrawn', error: REFUSALS[code], code });
+      return adoptionView(adoption);
+    }
+    if (['reserved', 'withdrawn'].includes(adoption.state)) setAdoption(adoption, { state: 'charged', error: null });
+    try { await withProjectLock(adoption.projectId, () => reconcileReceipts([adoption])); }
+    catch (error) {
+      setAdoption(adoption, { error: `The purchase is recorded; confirming its receipt failed (${String(error.message).slice(0, 200)}). Retry from Your Igloos.` });
+    }
+    return adoptionView(adoption);
+  }
+
+  /** The visitor closed adoption before buying. A charged purchase cannot be cancelled. */
+  function cancelAdoption({ adoptionId } = {}) {
+    const adoption = adoptionFor(adoptionId);
+    if (adoption.state === 'reserved') setAdoption(adoption, { state: 'withdrawn', error: REFUSALS.cancelled, code: 'cancelled' });
+    return adoptionView(adoption);
+  }
+
+  // ------------------------------------------------------------ worker setup
+
+  async function reserveWorkspace(project, worker) {
+    project.sourceAvailable = fs.existsSync(project.sourcePath);
+    if (!project.sourceAvailable) fail('The source checkout is unavailable. Restore it, then retry this puffle\'s setup.', 409);
+    const identity = await identifyRepository(git, project.sourcePath);
+    if (project.commonDir === null) {
+      const problem = await legacyIdentityProblem(project, identity);
+      if (problem) fail(problem, 409);
+      project.commonDir = identity.commonDir;
+    }
+    if (identity.commonDir !== project.commonDir) fail('The source checkout now belongs to a different repository. Repair the project before continuing.', 409);
+    const dirty = await sourceDirty(git, project.sourcePath);
+    const root = await prepareWorktreeRoot(git, worktreeRoot);
+    // The reservation is durable before Git runs, so a retry reconciles only this exact path and branch.
+    worker.workspace = { kind: 'worktree', path: reserveWorkspacePath(root, worker.id, project.sourcePath), branch: workerBranch(project.id, worker.id),
+      baseCommit: identity.head, repoCommonDir: project.commonDir, sourcePath: project.sourcePath, sourceDirtyAtCreation: dirty, state: 'reserved', reservedAt: now() };
+    setWorkerSetup(worker, { step: 'Reserved the worktree path and branch.',
+      ...(dirty ? { note: 'The source checkout has uncommitted changes. They stay in the source checkout; the worktree starts from its committed HEAD.' } : {}) });
+  }
+
+  async function prepareWorkspace(project, worker) {
+    const workspace = worker.workspace;
+    setWorkerSetup(worker, { phase: 'preparing', step: 'Creating the worktree.', error: null, retryable: false });
+    await createWorktree(git, { sourcePath: project.sourcePath, workspacePath: workspace.path, branch: workspace.branch,
+      baseline: workspace.baseCommit, workerId: worker.id, onProgress: step => setWorkerSetup(worker, { step }) });
+    await assertReadPolicy(git, workspace.path, [workspace.baseCommit]);
+    const inspection = await inspectWorkspace(git, project, workspace);
+    if (inspection.repair) throw Object.assign(new Error(inspection.repair), { statusCode: 409 });
+    workspace.state = 'ready';
+    workspace.readyAt = now();
+    worker.inspection = { repair: null, warnings: inspection.warnings, checkedAt: now() };
+    worker.status = 'offline';
+    worker.activity = 'Ready to start this named conversation.';
+    setWorkerSetup(worker, { phase: 'ready', step: null, error: null, retryable: false });
+  }
+
+  /** One worker's worktree setup. A failure affects only that worker; the paid puffle stays. */
+  async function runWorkerSetup(project, worker) {
+    try {
+      assertOpen();
+      if (!worker.workspace) await reserveWorkspace(project, worker);
+      if (worker.workspace.state !== 'ready') await prepareWorkspace(project, worker);
+    } catch (error) {
+      if (closing) return;
+      worker.status = 'setup';
+      worker.activity = 'Worktree setup failed. Retry after resolving the problem.';
+      setWorkerSetup(worker, { phase: 'failed', step: null, error: String(error.message).slice(0, 1000), retryable: true });
+    }
+  }
+
+  /**
+   * Legacy only: create the one isolated worker for a migrated legacy-fixture
+   * project, bound to its fixture puffle. Managed projects get workers only by
+   * adoption.
+   */
+  async function createWorker({ projectId } = {}) {
     assertOpen();
     const project = projectFor(projectId);
     let created;
     await withProjectLock(project.id, async () => {
       assertOpen();
-      if (project.activeWorkerId) fail('This project already has a puffle. Each project has one active puffle.', 409);
+      if (project.game?.source !== 'legacy-fixture') fail('Adopt a puffle at the Pet Shop to add it to this igloo.', 409);
+      if (activeWorkers(project.id).length) fail('This legacy igloo already has its isolated puffle.', 409);
+      if (project.game.status !== 'ready') fail('The legacy fixture mapping is not verified. Restore it and restart the engine.', 409);
       project.sourceAvailable = fs.existsSync(project.sourcePath);
       if (!project.sourceAvailable) fail('The source checkout is unavailable. Restore it before creating a puffle.', 409);
-      const fallback = project.game?.puffleName ?? suggestPuffleName(state.workers.map(worker => worker.name));
-      const puffleName = validatePuffleName(name === undefined || name === '' ? fallback : name);
       const identity = await identifyRepository(git, project.sourcePath);
       if (project.commonDir === null) {
         // A legacy project whose source returned after startup.
@@ -619,57 +888,83 @@ export async function createManager({ stateDir, onEvent = () => {}, claudePath =
         project.commonDir = identity.commonDir;
       }
       if (identity.commonDir !== project.commonDir) fail('The source checkout now belongs to a different repository. Repair the project before continuing.', 409);
-      const dirty = await sourceDirty(git, project.sourcePath);
-      const root = await prepareWorktreeRoot(git, worktreeRoot);
       const id = randomUUID();
-      const workspacePath = reserveWorkspacePath(root, id, project.sourcePath);
-      const worker = { id, projectId: project.id, name: puffleName, sessionId: randomUUID(), established: false,
+      const worker = { id, projectId: project.id, name: validatePuffleName(project.game.puffleName), sessionId: randomUUID(), established: false,
         status: 'setup', activity: 'Preparing the worktree.', cols: 120, rows: 32, createdAt: now(), updatedAt: now(), pid: null, taskHistory: [],
-        outsideWorkspace: null, inspection: null, archived: null,
-        workspace: { kind: 'worktree', path: workspacePath, branch: workerBranch(project.id, id), baseCommit: identity.head,
-          repoCommonDir: project.commonDir, sourcePath: project.sourcePath, sourceDirtyAtCreation: dirty, state: 'reserved', reservedAt: now() } };
-      // The reservation is durable before Git runs, so a retry reconciles only this exact path and branch.
+        outsideWorkspace: null, inspection: null, archived: null, queued: false,
+        puffle: { puffleId: project.game.puffleId, typeId: 0, subtypeId: 0, name: project.game.puffleName, adoptionId: null },
+        workspace: null, setup: { phase: 'preparing', step: 'Reserving the worktree.', error: null, retryable: false, updatedAt: now() } };
       state.workers.push(worker);
-      project.activeWorkerId = worker.id;
-      project.setup = { phase: 'preparing', step: 'Reserved the worktree path and branch.', error: null, retryable: false, updatedAt: now(),
-        note: dirty ? 'The source checkout has uncommitted changes. They stay in the source checkout; the worktree starts from its committed HEAD.' : null };
+      project.setup = { ...project.setup, phase: 'ready', error: null, retryable: false, updatedAt: now() };
       commit();
       created = worker;
     });
-    withProjectLock(project.id, () => runSetup(project, created));
+    withProjectLock(project.id, () => runWorkerSetup(project, created));
     return workerView(created);
   }
 
-  /**
-   * Explicit retry of whichever setup part failed. After the game rejected the
-   * puffle name (and before any adoption), `puffleName` supplies a correction.
-   */
-  async function retrySetup({ projectId, puffleName } = {}) {
+  /** Explicit retry of a project's destination setup. */
+  async function retrySetup({ projectId } = {}) {
     assertOpen();
     const project = projectFor(projectId);
-    let worker;
     await withProjectLock(project.id, async () => {
       if (project.setup.phase !== 'failed') fail('Setup is not waiting for a retry.', 409);
-      worker = state.workers.find(item => item.id === project.activeWorkerId);
-      if (!worker || (worker.workspace.state !== 'reserved' && project.game?.status === 'ready')) fail('No reserved worktree is waiting for setup.', 409);
-      if (puffleName !== undefined && puffleName !== '') {
-        const corrected = validatePuffleName(puffleName);
-        if (!project.game?.nameRejected || project.game.puffleId) fail('The puffle name can be changed only after the game rejected it, before adoption.', 409);
-        project.game.requestedPuffleName = corrected;
-        project.game.nameRejected = false;
-        worker.name = corrected;
-        worker.updatedAt = now();
-        commit();
-      }
+      if (project.game?.source === 'legacy-fixture') fail('Restore the legacy fixture in the game database and restart the engine to verify it.', 409);
     });
-    withProjectLock(project.id, () => runSetup(project, worker));
+    withProjectLock(project.id, () => runSetup(project));
     return projectView(project);
   }
 
-  /** Resolves after queued setup or retry work for this project finishes. */
+  /** Explicit retry of one worker's worktree setup. */
+  async function retryWorker(target = {}) {
+    assertOpen();
+    const worker = workerFor(target);
+    const project = projectFor(worker.projectId);
+    if (worker.archived) fail('Archived puffles are read-only.', 409);
+    if (worker.setup.phase !== 'failed') fail('This puffle\'s setup is not waiting for a retry.', 409);
+    withProjectLock(project.id, () => runWorkerSetup(project, worker));
+    return workerView(worker);
+  }
+
+  /** Resolves after queued setup or adoption work for this project finishes. */
   async function settled(projectId) {
     while (projectLocks.has(projectId)) await projectLocks.get(projectId);
     return projectView(projectFor(projectId));
+  }
+
+  // ------------------------------------------------------------ session caps
+
+  const live = runtime => Boolean(runtime?.pty || runtime?.starting);
+  function liveCounts(projectId) {
+    let project = 0, total = 0;
+    for (const [workerId, runtime] of runtimes) {
+      if (!live(runtime)) continue;
+      total++;
+      if (state.workers.find(item => item.id === workerId)?.projectId === projectId) project++;
+    }
+    return { project, total };
+  }
+  const hasSlot = worker => { const counts = liveCounts(worker.projectId); return counts.project < caps.perIgloo && counts.total < caps.total; };
+  function queueActivity(worker) {
+    const counts = liveCounts(worker.projectId);
+    const position = startQueue.indexOf(worker.id) + 1;
+    return `Queued (${position} in line). ${counts.project} of ${caps.perIgloo} sessions in this igloo and ${counts.total} of ${caps.total} overall are running; it starts when a slot frees.`;
+  }
+  /** Start queued workers, in order, while slots are free. Never stops a working session to make room. */
+  function drainQueue() {
+    if (closing) return;
+    for (const workerId of [...startQueue]) {
+      const worker = state.workers.find(item => item.id === workerId);
+      if (!worker || worker.archived || !worker.queued) { startQueue.splice(startQueue.indexOf(workerId), 1); continue; }
+      if (!hasSlot(worker)) continue;
+      startQueue.splice(startQueue.indexOf(workerId), 1);
+      worker.queued = false;
+      launch(worker).catch(() => { /* launch records the failure on the worker. */ });
+    }
+    for (const workerId of startQueue) {
+      const worker = state.workers.find(item => item.id === workerId);
+      if (worker?.queued) { worker.activity = queueActivity(worker); }
+    }
   }
 
   // ------------------------------------------------------------ terminal lifecycle
@@ -679,7 +974,18 @@ export async function createManager({ stateDir, onEvent = () => {}, claudePath =
     const worker = activeWorkerFor(target);
     if (runtimes.get(worker.id)?.pty) return workerView(worker);
     if (runtimes.get(worker.id)?.starting) fail('This worker is already starting.', 409);
+    if (worker.queued) return workerView(worker);
     if (pidAlive(worker.pid)) fail('The saved process may still be alive. Stop it manually before resuming; refusing to duplicate the session.', 409);
+    if (!hasSlot(worker)) {
+      worker.queued = true;
+      startQueue.push(worker.id);
+      update(worker, 'queued', queueActivity(worker));
+      return workerView(worker);
+    }
+    return launch(worker);
+  }
+
+  async function launch(worker) {
     const previous = runtimes.get(worker.id);
     const runtime = { starting: true, token: randomBytes(32).toString('hex'), pty: null, stopping: false, fatal: null,
       started: false, lastNeedsYouAt: 0, promptId: null, terminalQueue: Promise.resolve(), cwdCache: new Map(), topCache: new Map(),
@@ -745,6 +1051,7 @@ export async function createManager({ stateDir, onEvent = () => {}, claudePath =
           } else update(worker, runtime.stopping ? 'interrupted' : 'offline', runtime.stopping ? 'Claude process stopped. Start to resume the saved conversation.' : 'Claude process exited. Start to resume the saved conversation.');
         } catch (error) { callbackFailure(worker, error); }
         runtime.resolveExit();
+        drainQueue();
       });
       runtime.startupTimer = setTimeout(() => {
         if (runtime.pty !== proc || runtime.started) return;
@@ -762,11 +1069,13 @@ export async function createManager({ stateDir, onEvent = () => {}, claudePath =
         worker.pid = null;
         // Nothing spawned: keep the previous screen available for replay.
         if (!runtime.term && previous) runtimes.set(worker.id, previous);
+        else if (!runtime.term) runtimes.delete(worker.id);
       }
       if (worker.status !== 'needs-repair') {
         worker.lastError = `Unable to start Claude: ${error.message}`;
         update(worker, 'failed', worker.lastError);
       }
+      drainQueue();
       throw error;
     }
   }
@@ -832,6 +1141,13 @@ export async function createManager({ stateDir, onEvent = () => {}, claudePath =
   }
 
   async function stopWorker(worker) {
+    if (worker.queued) {
+      worker.queued = false;
+      startQueue.splice(startQueue.indexOf(worker.id), 1);
+      update(worker, 'offline', 'Removed from the start queue.');
+      drainQueue();
+      return workerView(worker);
+    }
     const runtime = runtimes.get(worker.id);
     if (!runtime?.pty) {
       if (pidAlive(worker.pid)) fail('This process belongs to an earlier runtime. Stop it manually; its identity cannot be verified safely.', 409);
@@ -1017,13 +1333,16 @@ export async function createManager({ stateDir, onEvent = () => {}, claudePath =
 
   async function close() {
     closing = true;
+    startQueue.length = 0;
     for (const worker of state.workers) {
+      if (worker.queued) worker.queued = false;
       if (runtimes.get(worker.id)?.pty) { try { await stopWorker(worker); } catch { /* Report through state; keep closing others. */ } }
       const runtime = runtimes.get(worker.id);
       clearTimeout(runtime?.startupTimer);
       await runtime?.terminalQueue;
       runtime?.term?.dispose();
     }
+    clearInterval(expiryTimer);
     game?.close?.();
     // Clean shutdown empties the published list before releasing ownership.
     publisherClosed = true;
@@ -1031,7 +1350,17 @@ export async function createManager({ stateDir, onEvent = () => {}, claudePath =
     catch (error) { onWarning(`Native igloo publication could not be cleared: ${error.message}`); }
   }
 
+  // Withdraw reservations that expired without a purchase report, and drop them from publication.
+  const expiryTimer = setInterval(() => {
+    if (closing) return;
+    const stale = state.adoptions.filter(item => item.state === 'reserved' && expired(item));
+    if (!stale.length) return;
+    for (const item of stale) Object.assign(item, { state: 'withdrawn', error: REFUSALS.expired, updatedAt: now() });
+    try { commit(); } catch (error) { onWarning(`Could not record expired adoptions: ${error.message}`); }
+  }, 30000);
+  expiryTimer.unref?.();
+
   commit();
-  return { registerProject, createWorker, retrySetup, settled, start, submit, input, resize, interrupt, stop, diff, snapshot, terminal, hook, close,
-    ensureVisitor, verifyGameMappings };
+  return { registerProject, createWorker, retrySetup, retryWorker, settled, start, submit, input, resize, interrupt, stop, diff, snapshot, terminal, hook, close,
+    ensureVisitor, verifyGameMappings, reserveAdoption, reportAdoption, cancelAdoption, reconcileAdoptions };
 }

@@ -1,4 +1,4 @@
-// Explicit v1 → v2 state migration. Usage:
+// Explicit state migration (v1 → v2 → v3, one step at a time). Usage:
 //   node local/engine/migrate.mjs --state-dir <dir>
 // It takes the runtime lock (so no engine can start meanwhile), refuses while
 // a saved engine or worker process may be alive, preserves the original bytes
@@ -35,10 +35,14 @@ async function main(argv) {
     throw new Error('Usage: node local/engine/migrate.mjs --state-dir <state folder>');
   }
   const result = await migrate({ stateDir: path.resolve(args[1]), rehearsal: argv.includes('--rehearsal') });
-  if (!result.migrated) { console.log('State is already version 2; nothing changed.'); return; }
-  console.log(`Migrated to version 2. Original bytes preserved at ${result.backup}`);
+  if (!result.migrated) { console.log('State is already version 3; nothing changed.'); return; }
+  console.log('Migrated to version 3. The bytes before each step are preserved at:');
+  for (const backup of result.backups) console.log(`  ${backup}`);
   for (const project of result.state.projects) console.log(`Project ${project.id} (${project.name}): source ${project.sourceAvailable ? 'available' : 'unavailable'}, game ${project.game?.source ?? 'none'}.`);
-  for (const worker of result.state.workers) console.log(`Archived worker ${worker.name} (${worker.id}), session ${worker.sessionId}, ${worker.taskHistory.length} tasks.`);
+  for (const worker of result.state.workers) {
+    const binding = worker.puffle ? `puffle ${worker.puffle.puffleId}` : 'no puffle';
+    console.log(`${worker.archived ? 'Archived' : 'Active'} worker ${worker.name} (${worker.id}), session ${worker.sessionId}, ${binding}, ${worker.taskHistory.length} tasks.`);
+  }
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

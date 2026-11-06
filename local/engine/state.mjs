@@ -3,12 +3,13 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { defaultProjectName, projectNameProblem, shellQuote } from './workspace.mjs';
 
-export const STATE_VERSION = 2;
+export const STATE_VERSION = 3;
 export const LEGACY_STATE_VERSION = 1;
+export const V2_STATE_VERSION = 2;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const COMMIT = /^[a-f0-9]{40,64}$/;
 
-export const emptyState = () => ({ version: STATE_VERSION, revision: 0, visitor: null, projects: [], workers: [] });
+export const emptyState = () => ({ version: STATE_VERSION, revision: 0, visitor: null, projects: [], workers: [], adoptions: [] });
 
 function refuse(message, code) { return Object.assign(new Error(message), { code }); }
 
@@ -21,10 +22,11 @@ export function readState(stateDir) {
   catch (error) { if (error.code === 'ENOENT') return emptyState(); throw error; }
   let state;
   try { state = JSON.parse(raw); } catch { throw refuse('Agent state is invalid JSON; preserve it and repair it before restarting.', 'STATE_INVALID'); }
-  if (state?.version === LEGACY_STATE_VERSION) {
-    throw refuse(`Agent state in ${stateDir} uses the single-project format (version 1). Stop the old engine and its Claude process, then migrate it explicitly with \`node local/engine/migrate.mjs --state-dir ${shellQuote(stateDir)}\`; the engine does not migrate saved sessions implicitly.`, 'STATE_V1');
+  if (state?.version === LEGACY_STATE_VERSION || state?.version === V2_STATE_VERSION) {
+    const format = state.version === LEGACY_STATE_VERSION ? 'the single-project format (version 1)' : 'the one-puffle-per-project format (version 2)';
+    throw refuse(`Agent state in ${stateDir} uses ${format}. Stop the old engine and its Claude processes, then migrate it explicitly with \`node local/engine/migrate.mjs --state-dir ${shellQuote(stateDir)}\`; the engine does not migrate saved sessions implicitly.`, state.version === LEGACY_STATE_VERSION ? 'STATE_V1' : 'STATE_V2');
   }
-  if (state?.version !== STATE_VERSION || !Array.isArray(state.projects) || !Array.isArray(state.workers)) throw refuse('Unsupported agent state; refusing to replace saved sessions.', 'STATE_UNSUPPORTED');
+  if (state?.version !== STATE_VERSION || !Array.isArray(state.projects) || !Array.isArray(state.workers) || !Array.isArray(state.adoptions)) throw refuse('Unsupported agent state; refusing to replace saved sessions.', 'STATE_UNSUPPORTED');
   state.revision ??= 0;
   state.visitor ??= null;
   if (!Number.isSafeInteger(state.revision) || state.revision < 0) throw refuse('Saved agent revision is invalid.', 'STATE_INVALID');
@@ -96,25 +98,92 @@ export function convertV1(v1, { at = new Date().toISOString(), sourceExists = fi
       archived: { at, reason: 'Migrated from the direct-checkout milestone. Execution is disabled; create an isolated replacement to continue in a worktree.' },
     };
   });
-  return { version: STATE_VERSION, revision: (Number.isSafeInteger(v1.revision) ? v1.revision : 0) + 1, visitor: null, projects, workers };
+  return { version: V2_STATE_VERSION, revision: (Number.isSafeInteger(v1.revision) ? v1.revision : 0) + 1, visitor: null, projects, workers };
 }
 
 /**
- * Migrate a stopped v1 state directory in place. The caller must already own
- * the runtime lock. The original bytes are preserved in a 0600 backup that is
- * never overwritten, then state.json is replaced atomically.
+ * Convert a v2 state (at most one active puffle per project) into v3 (up to
+ * ten adopted puffles per project). The project's single blue puffle becomes
+ * its active worker's `puffle` binding; `activeWorkerId` is removed. Project
+ * setup now covers only the destination (owner and igloo); each worker keeps
+ * its own worktree setup. Archived workers and legacy-fixture mappings are
+ * preserved as they are. Identities, sessions, worktrees, branches and task
+ * history are copied unchanged.
+ */
+export function convertV2(v2, { at = new Date().toISOString() } = {}) {
+  if (v2?.version !== V2_STATE_VERSION || !Array.isArray(v2.projects) || !Array.isArray(v2.workers)) {
+    throw refuse('Only a version 2 state can be migrated to version 3.', 'STATE_UNSUPPORTED');
+  }
+  const bindings = new Map();
+  const projects = v2.projects.map(old => {
+    if (!UUID.test(old?.id ?? '')) throw refuse('A saved v2 project identity is invalid; it was not migrated.', 'STATE_INVALID');
+    const { activeWorkerId, ...project } = structuredClone(old);
+    const game = project.game;
+    if (game && game.source !== 'legacy-fixture') {
+      // The managed puffle moves to its worker; the destination keeps only owner and igloo.
+      if (activeWorkerId && Number.isSafeInteger(game.puffleId) && game.puffleId > 0) {
+        bindings.set(activeWorkerId, { puffleId: game.puffleId, typeId: 0, subtypeId: 0, name: game.puffleName ?? null, adoptionId: null });
+      }
+      project.game = Object.fromEntries(['source', 'status', 'ownerId', 'iglooId', 'roomId', 'verifiedAt'].map(key => [key, game[key] ?? null]));
+    } else if (game && activeWorkerId) {
+      bindings.set(activeWorkerId, { puffleId: game.puffleId, typeId: 0, subtypeId: 0, name: game.puffleName ?? null, adoptionId: null });
+    }
+    const phase = project.setup?.phase;
+    const gameReady = project.game?.status === 'ready';
+    const setupPhase = phase === 'needs-worker' ? 'needs-worker' : gameReady ? 'ready' : phase === 'game-pending' ? 'game-pending'
+      : project.game ? 'failed' : phase === 'failed' ? 'failed' : 'registered';
+    project.setup = { ...project.setup, phase: setupPhase, step: null, correction: null, updatedAt: at,
+      ...(setupPhase === 'failed' && !project.setup?.error ? { error: 'Setup did not finish before migration. Retry to reconcile it.', retryable: true } : {}),
+      ...(setupPhase === 'ready' ? { error: null, retryable: false } : {}) };
+    return project;
+  });
+  const workers = v2.workers.map(old => {
+    const worker = structuredClone(old);
+    if (worker.archived) return { ...worker, puffle: worker.puffle ?? null };
+    const ready = worker.workspace?.state === 'ready';
+    const binding = bindings.get(worker.id) ?? null;
+    if (binding && binding.name === null) binding.name = worker.name;
+    return { ...worker, puffle: binding, queued: false,
+      setup: { phase: ready ? 'ready' : 'failed', step: null, updatedAt: at,
+        error: ready ? null : 'Worktree setup did not finish before migration. Retry to reconcile the reserved worktree.', retryable: !ready } };
+  });
+  return { version: STATE_VERSION, revision: (Number.isSafeInteger(v2.revision) ? v2.revision : 0) + 1,
+    visitor: v2.visitor ?? null, projects, workers, adoptions: [] };
+}
+
+function backupOnce(stateDir, original, fromVersion, at) {
+  const backup = path.join(stateDir, `state.v${fromVersion}-backup-${at.replace(/[:.]/g, '-')}.json`);
+  const fd = fs.openSync(backup, 'wx', 0o600);
+  try { fs.writeFileSync(fd, original); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+  if (!fs.readFileSync(backup).equals(original)) throw refuse(`The v${fromVersion} backup could not be verified; state.json was left unchanged.`, 'STATE_BACKUP');
+  return backup;
+}
+
+/**
+ * Migrate a stopped state directory in place, one version at a time
+ * (v1 -> v2 -> v3). The caller must already own the runtime lock. Before each
+ * step the exact current bytes are preserved in a 0600 backup that is never
+ * overwritten, then state.json is replaced atomically.
  */
 export function migrateStateDir(stateDir, { at = new Date().toISOString(), sourceExists } = {}) {
   const file = path.join(stateDir, 'state.json');
-  const original = fs.readFileSync(file);
-  let v1;
-  try { v1 = JSON.parse(original.toString('utf8')); } catch { throw refuse('Agent state is invalid JSON; it was not migrated.', 'STATE_INVALID'); }
-  if (v1?.version === STATE_VERSION) return { migrated: false, backup: null, state: v1 };
-  const state = convertV1(v1, { at, sourceExists });
-  const backup = path.join(stateDir, `state.v1-backup-${at.replace(/[:.]/g, '-')}.json`);
-  const fd = fs.openSync(backup, 'wx', 0o600);
-  try { fs.writeFileSync(fd, original); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
-  if (!fs.readFileSync(backup).equals(original)) throw refuse('The v1 backup could not be verified; state.json was left unchanged.', 'STATE_BACKUP');
-  writeState(stateDir, state);
-  return { migrated: true, backup, state };
+  const backups = [];
+  for (;;) {
+    const original = fs.readFileSync(file);
+    let state;
+    try { state = JSON.parse(original.toString('utf8')); } catch { throw refuse('Agent state is invalid JSON; it was not migrated.', 'STATE_INVALID'); }
+    if (state?.version === STATE_VERSION) return { migrated: backups.length > 0, backup: backups[0] ?? null, backups, state };
+    if (state?.version === LEGACY_STATE_VERSION) {
+      const next = convertV1(state, { at, sourceExists });
+      backups.push(backupOnce(stateDir, original, 1, at));
+      writeState(stateDir, next);
+    } else if (state?.version === V2_STATE_VERSION) {
+      for (const worker of state.workers ?? []) {
+        if (pidAlive(worker?.pid)) throw refuse(`A saved worker process (PID ${worker.pid}) may still be running. Stop it before migrating.`, 'STATE_BUSY');
+      }
+      const next = convertV2(state, { at });
+      backups.push(backupOnce(stateDir, original, 2, at));
+      writeState(stateDir, next);
+    } else throw refuse('Unsupported agent state; it was not migrated.', 'STATE_UNSUPPORTED');
+  }
 }

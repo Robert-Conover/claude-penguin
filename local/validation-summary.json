@@ -1,9 +1,10 @@
 {
   "current_status": {
-    "latest_live_evidence_date": "2026-11-05",
+    "latest_live_evidence_date": "2026-11-06",
     "status": "multi_project_browser_and_real_claude_acceptance_with_open_gaps",
     "scope": "Overview of existing dated evidence, not a new acceptance run or live machine state. Other top-level records retain their checkpoint-specific status.",
     "evidence_records": [
+      "project_adoption_teams_2026_11_06",
       "multi_project_experience_stage_3_2026_11_05",
       "postcards_playthrough"
     ],
@@ -14,6 +15,7 @@
       "Ordinary player browser logoff/relogin persistence (agent-page reconnect and resume were checked separately)",
       "Automatic interrupt confirmation on the tested CLI and cancellation during a running tool",
       "Individual real-agent animation frames and live puffle-name rejection/correction",
+      "Adoption edge paths covered only by tests: live retry after a failed puffle worktree setup, the server-side 440 refusal, and a repeated native p#pn purchase on the 8080 page",
       "Full-stack operation on Intel Macs or other host platforms"
     ]
   },
@@ -692,5 +694,89 @@
       }
     },
     "guide": "docs/first-task.md"
+  },
+  "project_adoption_teams_2026_11_06": {
+    "date": "2026-11-06",
+    "document": "local/VALIDATION.md#project-adoption-and-puffle-teams--november-6-2026",
+    "environment": {
+      "host": "macOS 27.2 arm64",
+      "node": "26.13.0",
+      "ruffle": "nightly-2026-11-03",
+      "claude_code": "2.1.318",
+      "visitor": "adoptcheck",
+      "engine_state": "private CP_ENGINE_STATE_DIR",
+      "repositories": [
+        "calc-app",
+        "notes-app (disposable)"
+      ]
+    },
+    "adoption": {
+      "ui_flow": "picker, original catalog, naming, certificate, travel",
+      "purchases": [
+        {
+          "puffle": "Moss",
+          "type": "green",
+          "cost": 400
+        },
+        {
+          "puffle": "Rex",
+          "type": "blue-dog",
+          "cost": 800
+        }
+      ],
+      "double_click_charges": 1,
+      "coins_shown_without_relog": true,
+      "visitor_puffles_after": 0
+    },
+    "one_charge": {
+      "replay_after_bind": "unknown-adoption, no charge",
+      "closed_mid_purchase": "two sends and reload: one receipt, one charge; reconcile bound it"
+    },
+    "capacity": {
+      "igloo_puffles": 10,
+      "eleventh": "refused by engine before reservation or charge",
+      "receipts": 12,
+      "coins_charged": 5200
+    },
+    "ordinary_page_8080": {
+      "derived_module": "404",
+      "archived_module_loaded": true,
+      "native_purchase_repeated": false,
+      "local_verify": "passed"
+    },
+    "real_claude": {
+      "concurrent_sessions_one_igloo": 2,
+      "distinct_sessions": true,
+      "task": "no-tool reply, both reached review"
+    },
+    "session_limits": {
+      "per_igloo": 3,
+      "overall": 6,
+      "fourth_start": "queued, launched after a stop"
+    },
+    "reconnect": "page reload kept five sessions with one process each",
+    "migration_rehearsal": {
+      "copies": 2,
+      "from": 2,
+      "to": 3,
+      "originals_unchanged": true,
+      "rerun": "no change"
+    },
+    "native_card_fixes": [
+      "close X and roster moved clear of the igloo Like widget click area",
+      "portrait uses the archived icon for the puffle color",
+      "attention rows carry puffle colors"
+    ],
+    "automated": {
+      "engine": 113,
+      "web": 48,
+      "overlay_contract": 22,
+      "client_bridge_python": 16,
+      "host_python": 32,
+      "houdini_container": 13
+    },
+    "not_rerun_live": [
+      "purchase hook fail-closed change made after the live run (module invariants passed)"
+    ]
   }
 }

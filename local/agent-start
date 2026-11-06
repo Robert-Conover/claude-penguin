@@ -19,8 +19,9 @@ if [ ! -f .local/env ]; then
   echo 'Missing local game configuration. Run ./local/start first.' >&2
   exit 1
 fi
-if [ ! -f .local/client-bridge/engine.swf ] || [ ! -f .local/client-bridge/build.json ]; then
-  echo 'Missing client overlay. Run python3 local/client-bridge/build.py first.' >&2
+if [ ! -f .local/client-bridge/engine.swf ] || [ ! -f .local/client-bridge/build.json ] ||
+   [ ! -f .local/client-bridge/puffle_adoption.swf ] || [ ! -f .local/client-bridge/adoption-build.json ]; then
+  echo 'Missing client overlay or adoption module. Run python3 local/client-bridge/build.py first.' >&2
   exit 1
 fi
 if [ ! -f .local/ruffle/ruffle.js ]; then
@@ -35,6 +36,12 @@ const hash = file => createHash('sha256').update(readFileSync(file)).digest('hex
 if (build.extensionSha256 !== hash('local/client-bridge/bridge.as') ||
     build.outputSha256 !== hash('.local/client-bridge/engine.swf') || build.originalTagsUnchanged !== true) {
   console.error('The game menu overlay is out of date. Run python3 local/client-bridge/build.py, then restart.');
+  process.exit(1);
+}
+const adoption = JSON.parse(readFileSync('.local/client-bridge/adoption-build.json', 'utf8'));
+if (adoption.extensionSha256 !== hash('local/client-bridge/ProjectAdoption.as') ||
+    adoption.outputSha256 !== hash('.local/client-bridge/puffle_adoption.swf') || adoption.deterministic !== true) {
+  console.error('The Pet Shop adoption module is out of date. Run python3 local/client-bridge/build.py, then restart.');
   process.exit(1);
 }
 CHECK_OVERLAY

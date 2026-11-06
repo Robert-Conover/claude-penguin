@@ -22,6 +22,9 @@ from verify_game import login_password_hash
 
 VISITOR_USERNAME = 'bridgecheck'
 VISITOR_NICKNAME = 'Bridge Check'
+# `adoptcheck` is the marked test visitor for mutating adoption checks, so
+# bridgecheck's coins and map stay untouched. Both carry the fixture marker.
+VISITOR_USERNAMES = {VISITOR_USERNAME: VISITOR_NICKNAME, 'adoptcheck': 'Adopt Check'}
 DEFAULT_TEST_PASSWORD = 'PenguinLocal2026!'
 FIXTURE_MARKER_DOMAIN = 'bridge.example.invalid'
 MANAGED_MARKER_DOMAIN = 'managed.claude-penguin.invalid'

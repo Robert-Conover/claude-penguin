@@ -14,7 +14,8 @@ Click a puffle in the original Club Penguin to give Claude Code a task. Waddle b
 
 | In the game | What happens on your Mac |
 | --- | --- |
-| **Igloos → Add project** | Choose a local Git repo and name its puffle. Its igloo appears in the original map’s igloo list. |
+| **Igloos → Add project** | Choose a local Git repo. Its igloo appears in the original map’s igloo list. |
+| **Pet Shop → Adopt a Puffle** | Pick the igloo, then a puffle and its name, and pay with your coins. Each puffle gets its own Git worktree, branch and Claude session. |
 | **Visit → click the puffle** | Its task card opens inside the game. **Start / Resume** opens a Claude session for that repo. Send a task from the card; use **Open Claude** for trust and permission prompts. |
 | **Walk into Town** | The session keeps running. **Work (2)** means two puffles need attention. **Work** reopens your selected puffle; **Igloos** lets you pick another. |
 | **Changes** | Inspect the files Claude actually changed. Copy the branch or worktree path when you’re ready to test or integrate the change with Git. |
@@ -23,7 +24,7 @@ Click a puffle in the original Club Penguin to give Claude Code a task. Waddle b
 | :---: | :---: |
 | [![Bridge Check standing next to the blue puffle in Snowcap’s igloo](docs/assets/snowcap-igloo.png)](docs/assets/snowcap-igloo.png) | [![Comet’s in-game task card showing Snowcap, Start / Resume, Open Claude, and Changes](docs/assets/inside-the-igloo.png)](docs/assets/inside-the-igloo.png) |
 
-Register up to **32 repositories**, with **one active puffle per repo**. Puffles in different igloos can work at the same time. Reloading the browser reconnects to a running session; after stopping the engine, **Start / Resume** returns to the same saved conversation.
+Register up to **32 repositories**, with up to **10 puffles per igloo**. Up to three puffles per igloo and six overall work at the same time; another start waits in line. Reloading the browser reconnects to a running session; after stopping the engine, **Start / Resume** returns to the same saved conversation.
 
 <details>
 <summary><strong>See two puffles working at once:</strong> Comet, Nova, and Work (2) in Town</summary>
@@ -56,7 +57,7 @@ python3 local/client-bridge/build.py
 ./local/agent-start
 ```
 
-Keep that terminal open. Open [the agent island on localhost:8081](http://localhost:8081/?bridge=1&agents=1#/login), sign in as **`bridgecheck`** with the same disposable password, and choose **Blizzard**. On a new account, finish the game's introductory tour if its dialogs cover the controls. Open **Igloos → Add project** and enter the path of a local repo with at least one commit. For a first visit, try **[Puffle Postcards](docs/first-task.md)**: one small bug, one failing test, and a diff you can check yourself.
+Keep that terminal open. Open [the agent island on localhost:8081](http://localhost:8081/?bridge=1&agents=1#/login), sign in as **`bridgecheck`** with the same disposable password, and choose **Blizzard**. On a new account, finish the game's introductory tour if its dialogs cover the controls. Open **Igloos → Add project** and enter the path of a local repo with at least one commit, then adopt a puffle for it at the Pet Shop. For a first visit, try **[Puffle Postcards](docs/first-task.md)**: one small bug, one failing test, and a diff you can check yourself.
 
 **Done for the day?** Press Ctrl+C in the engine terminal, then run `./local/stop` to stop the island and keep your progress. [Game setup & troubleshooting](LOCAL_SETUP.md) · [Agent setup & permissions](local/AGENT_ENGINE.md)
 
@@ -65,8 +66,8 @@ Keep that terminal open. Open [the agent island on localhost:8081](http://localh
 | Status | Milestone |
 | --- | --- |
 | **Playable** | Explore the original AS3 island through Ruffle. Login, travel, shops, purchases, and puffle adoption and walking have been checked. Player progress survives a restart. |
-| **Working today** | A repo has its own visitable igloo, named puffle, branch and worktree. Submit tasks inside the game, answer Claude in a real terminal, review changes, and resume the conversation. Two puffles have worked concurrently across two repos. |
-| **Next** | Give one repo a team of puffles, each working on its own branch. Make it clear which changes belong to whom and how to bring them together. |
+| **Working today** | A repo has its own visitable igloo. Adopt a team of up to 10 puffles for it at the Pet Shop, each on its own branch and worktree. Submit tasks inside the game, answer Claude in a real terminal, review changes, and resume the conversation. Two puffles have worked at once in one igloo. |
+| **Next** | Make it clear which changes belong to which puffle and how to bring a team’s branches together. |
 | **Later ideas** | A task board inside the igloo and temporary helper puffles for work a session delegates. |
 | **Still to verify** | Finish a minigame and collect its reward during a live Claude task; check furniture placement and puffle care in the browser; verify each puffle animation against the real agent state. |
 
