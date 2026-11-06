@@ -133,7 +133,7 @@ let pages = 0;
 
 // `transform` rewrites each overlay result, standing in for an older overlay
 // build; `prepare` runs inside the overlay before the panel loads.
-async function openPage({ agentMode = true, snapshot = engineSnapshot(), transform = result => result, prepare = '' } = {}) {
+async function openPage({ agentMode = true, snapshot = engineSnapshot(), transform = result => result, prepare = '', respond = () => ({}) } = {}) {
   const page = ++pages;
   const document = createDocument();
   const window = new EventTarget();
@@ -148,14 +148,18 @@ async function openPage({ agentMode = true, snapshot = engineSnapshot(), transfo
   const player = document.createElement('ruffle-player');
   player.ruffle = () => ({ callExternalInterface(name, ...args) {
     calls.push({ name, args });
-    return transform(overlay.callExternalInterface(name, ...args));
+    return transform(overlay.callExternalInterface(name, ...args), name);
   } });
   document.body.append(player);
 
   const actions = [], sockets = [];
   globalThis.fetch = async (url, options = {}) => {
     if (url === '/engine/bootstrap') return reply({ token: 'private-browser-token', snapshot });
-    if (url === '/engine/action') { actions.push(JSON.parse(options.body)); return reply({ result: {} }); }
+    if (url === '/engine/action') {
+      const action = JSON.parse(options.body);
+      actions.push(action);
+      return reply({ result: await respond(action) });
+    }
     if (url === '/bridge/fixtures.json') return reply(labManifest());
     throw new Error(`Unexpected request ${url}`);
   };
@@ -301,6 +305,73 @@ test('an overlay result without a contract version is refused before configurati
   await page.flush();
 });
 
+// ------------------------------------------------------------ adoption transport
+const ADOPTION_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+const reserveAdoption = ({ action }) => action === 'adopt' ? { id: ADOPTION_ID, ownerId: 105 } : {};
+const adoptionSuccess = { type: 'adoption-result', ok: true, adoptionId: ADOPTION_ID, puffleId: 41,
+  typeId: 0, subtypeId: 0, name: 'Atlas', coins: 4600, cost: 400, createdAt: 1 };
+
+test('the real panel preserves an explicit current-contract adoption refusal before dispatch', async () => {
+  const page = await openPage({ respond: reserveAdoption });
+  const adoption = page.window.ClaudePenguinAdoption;
+  // The visitor was verified, but the game connection disappears before Buy.
+  page.overlay.run('shell.AIRTOWER = undefined');
+  assert.equal(adoption.choose(PROJECT_A).ok, true);
+  assert.equal(adoption.buy(0, 0, 'Atlas').ok, true);
+  await page.flush();
+  assert.equal(adoption.status().state, 'failed');
+  assert.equal(adoption.status().code, 'not-sent');
+  assert.match(adoption.status().message, /not sent/);
+  assert.deepEqual(page.overlay.read('sent'), [], 'the real overlay refused before sending');
+  assert.deepEqual(page.actions.map(({ action }) => action), ['adopt', 'cancelAdoption']);
+  assert.equal(page.actions[1].adoptionId, ADOPTION_ID);
+});
+
+test('the real panel keeps a purchase uncertain when the game throws after dispatch', async () => {
+  const page = await openPage({ respond: reserveAdoption });
+  const adoption = page.window.ClaudePenguinAdoption;
+  page.overlay.run('var sendBeforeFailure = shell.AIRTOWER.send; shell.AIRTOWER.send = function() { sendBeforeFailure.apply(this, arguments); throw new Error("after dispatch"); }');
+  adoption.choose(PROJECT_A);
+  adoption.buy(0, 0, 'Atlas');
+  try {
+    await page.flush();
+    assert.equal(page.overlay.read('sent.length'), 1);
+    assert.equal(adoption.status().state, 'pending');
+    assert.equal(adoption.status().code, 'unknown');
+    assert.equal(adoption.buy(0, 0, 'Atlas').ok, false);
+    assert.deepEqual(page.actions.map(({ action }) => action), ['adopt'], 'an ambiguous dispatch never cancels or repurchases');
+    // The real overlay receive path still resolves a late server success.
+    page.overlay.run(`cpBridge.adoptionReply([7, '${ADOPTION_ID}', 'ok', 41, 0, 0, 'Atlas', 4600, 400, 1, 105])`);
+    assert.equal(adoption.status().state, 'done');
+    await page.flush();
+    assert.deepEqual(page.actions.map(({ action }) => action), ['adopt', 'adoptionResult']);
+  } finally {
+    adoption.onReply(adoptionSuccess); // Also clears the recovery timer if an assertion failed.
+    await page.flush();
+  }
+});
+
+test('the adoption transport does not trust stale or malformed bridge refusals as not sent', async () => {
+  for (const rewrite of [result => ({ ...result, version: 2 }), () => ({ ok: false }), () => null]) {
+    const page = await openPage({ respond: reserveAdoption,
+      transform: (result, name) => name === 'cpBridgeAdopt' ? rewrite(result) : result });
+    const adoption = page.window.ClaudePenguinAdoption;
+    page.overlay.run('shell.AIRTOWER = undefined');
+    adoption.choose(PROJECT_A);
+    adoption.buy(0, 0, 'Atlas');
+    try {
+      await page.flush();
+      assert.equal(adoption.status().state, 'pending');
+      assert.equal(adoption.status().code, 'unknown');
+      assert.equal(adoption.buy(0, 0, 'Atlas').ok, false);
+      assert.deepEqual(page.actions.map(({ action }) => action), ['adopt'], 'only a verified current-contract refusal permits cancellation');
+    } finally {
+      adoption.onReply(adoptionSuccess); // Resolve the synthetic attempt to clear its recovery timer.
+      await page.flush();
+    }
+  }
+});
+
 // ------------------------------------------------------------ bridge lab
 test('bridge lab still configures fixture IDs, accepts real clicks, and labels cues as simulated', async () => {
   const page = await openPage({ agentMode: false });
@@ -317,11 +388,11 @@ test('bridge lab still configures fixture IDs, accepts real clicks, and labels c
   assert.equal(page.overlay.read('events[events.length-1].simulated'), true);
 });
 
-test('Add project validates both names and creates only on the newly registered project', async () => {
+test('Add project validates the name and only registers: the igloo starts empty', async () => {
   const page = await openPage();
   page.el('cp-igloos').onclick();
   page.el('cp-add-project').onclick();
-  assert.equal(page.el('cp-worker-name').value, 'Pixel');
+  assert.equal(page.el('cp-worker-name'), null, 'puffles are adopted in the game, not named here');
   page.el('cp-repo-path').value = '/repos/--Moon  Base!';
   page.el('cp-repo-path').oninput();
   assert.equal(page.el('cp-project-name').value, 'Moon Base');
@@ -329,59 +400,88 @@ test('Add project validates both names and creates only on the newly registered 
   page.el('cp-project-name').value = ' Moon';
   await submit();
   assert.match(page.el('cp-agent-error').textContent, /begin and end/);
-  page.el('cp-project-name').value = 'Moon Base';
-  page.el('cp-worker-name').value = 'Pip1';
-  await submit();
-  assert.match(page.el('cp-agent-error').textContent, /1 to 12/);
   assert.deepEqual(page.actions, []);
   const actions = [];
   globalThis.fetch = async (_url, {body}) => {
     const request = JSON.parse(body);
     actions.push(request);
-    return reply({ result: { id: request.action === 'register' ? 'returned-project' : 'returned-worker' } });
+    return reply({ result: { id: 'returned-project' } });
   };
-  page.el('cp-worker-name').value = 'Pip';
+  page.el('cp-project-name').value = 'Moon Base';
   await submit();
-  assert.deepEqual(actions, [{action: 'register', path:'/repos/--Moon  Base!', name:'Moon Base'}, {action:'create', projectId:'returned-project', name:'Pip'}]);
+  assert.deepEqual(actions, [{action: 'register', path:'/repos/--Moon  Base!', name:'Moon Base'}]);
 });
 
-test('archive is read-only and creating the replacement is an explicit choice', async () => {
+test('reserved and charged purchases can be checked without buying again', async () => {
   const snapshot = engineSnapshot();
-  const project = snapshot.projects[0];
-  Object.assign(project, { legacy:true, activeWorkerId:null, setup:{phase:'needs-worker'} });
-  snapshot.workers.shift();
-  Object.assign(snapshot.archivedWorkers[0], {name:'Atlas', resumeCommand:'manual resume', taskHistory:[{prompt:'old task'}]});
-  const page = await openPage({snapshot});
+  snapshot.adoptions = [
+    { id: 'lost-report', projectId: PROJECT_A, state: 'reserved', request: { name: 'Pip' } },
+    { id: 'binding-pending', projectId: PROJECT_B, state: 'charged', request: { name: 'Snow' } },
+    { id: 'conflict', projectId: snapshot.projects[2].id, state: 'conflict', error: 'Inspect this receipt.' },
+    { id: 'expired', projectId: PROJECT_A, state: 'reserved', expired: true },
+  ];
+  const page = await openPage({ snapshot });
+  page.el('cp-igloos').onclick();
+  const checks = () => page.el('cp-agent-list').children.map(row => row.querySelectorAll('button').filter(button => button.textContent === 'Check purchase'));
+  assert.deepEqual(checks().map(buttons => buttons.length), [1, 1, 0], 'both unresolved purchase states expose recovery; expired and conflict records do not');
+  assert.equal(checks()[0][0].disabled, false);
+
+  const fetch = globalThis.fetch;
+  let finish;
+  globalThis.fetch = async (url, options) => {
+    const response = await fetch(url, options);
+    return new Promise(resolve => { finish = () => resolve(response); });
+  };
+  const checking = checks()[0][0].onclick();
+  await page.flush();
+  try { assert.ok(checks().slice(0, 2).every(([button]) => button.disabled), 'checking disables repeat requests while busy'); }
+  finally { finish(); globalThis.fetch = fetch; }
+  await checking;
+  await checks()[1][0].onclick();
+  assert.deepEqual(page.actions, [
+    { action: 'reconcile', projectId: PROJECT_A },
+    { action: 'reconcile', projectId: PROJECT_B },
+  ], 'recovery only checks the selected project; it never cancels or resends the purchase');
+
+  page.socket.onclose();
+  page.window.dispatchEvent(new Event('beforeunload'));
+  assert.ok(checks().slice(0, 2).every(([button]) => button.disabled), 'checking requires a live engine connection');
+});
+
+test('archive is read-only and creating the legacy replacement is an explicit choice', async () => {
+  const snapshot = engineSnapshot();
+  const project = snapshot.projects[1];
+  Object.assign(project, { setup:{phase:'needs-worker'} });
+  snapshot.workers = snapshot.workers.filter(worker => worker.projectId !== PROJECT_B);
+  Object.assign(snapshot.archivedWorkers[0], {projectId:PROJECT_B, name:'Comet', resumeCommand:'manual resume', taskHistory:[{prompt:'old task'}]});
+  const page = await openPage({snapshot, prepare:'ownerId=106;roomId=2106;puffle.id=5;engine.puffleManager._puffles=[puffle]'});
   page.clickPuffle();
   assert.equal(page.overlay.read(card + '.status.text'), 'Archived');
   for (const button of ['startButton','sendButton','interruptButton','terminalButton']) assert.equal(page.overlay.read(card + '.' + button + '._visible'), false);
   page.el('cp-igloos').onclick();
-  const old = page.el('cp-agent-list').children[0];
+  const old = page.el('cp-agent-list').children[1];
   await old.querySelectorAll('button').find(b=>b.textContent==='View archive').onclick();
   assert.equal(page.el('cp-session').hidden,true);
   assert.match(page.el('cp-archive-details').textContent,/manual resume/);
   assert.match(page.el('cp-archive-history').textContent,/old task/);
   assert.deepEqual(page.actions, []);
   page.el('cp-igloos').onclick();
-  await page.el('cp-agent-list').children[0].querySelectorAll('button').find(b=>b.textContent==='Create isolated Atlas').onclick();
-  assert.deepEqual(page.actions, [{action:'create',projectId:PROJECT_A,name:'Atlas'}]);
+  await page.el('cp-agent-list').children[1].querySelectorAll('button').find(b=>b.textContent==='Create isolated Atlas').onclick();
+  assert.deepEqual(page.actions, [{action:'create',projectId:PROJECT_B}]);
 });
 
-test('a selected project gains only its own active worker; replacement drafts and stale actions are isolated', async () => {
-  const snapshot = idle();
-  snapshot.projects[0].activeWorkerId = null;
-  snapshot.workers.shift();
-  const page = await openPage({snapshot});
+test('a puffle rebound to another worker gets its own draft slot; stale actions are isolated', async () => {
+  const page = await openPage({snapshot:idle()});
   page.clickPuffle();
-  page.publish({...idle(), revision:8});
   page.el('cp-work').onclick();
-  page.overlay.run(card + '.taskInput.text = "Comet must never see this draft"');
+  page.overlay.run(card + '.taskInput.text = "Only for the first worker"');
   const oldSlot = page.overlay.read('cpBridge.agentData.draftSlot');
   assert.ok(oldSlot > 0);
   const replacement = idle();
   replacement.revision = 9;
-  replacement.projects[0].activeWorkerId = replacement.workers[0].id = 'replacement';
+  replacement.workers[0].id = 'replacement';
   page.publish(replacement);
+  page.poll();
   page.clickPuffle();
   assert.notEqual(page.overlay.read('cpBridge.agentData.draftSlot'), oldSlot);
   assert.equal(page.overlay.read(card + '.taskInput.text'), '');
@@ -389,19 +489,36 @@ test('a selected project gains only its own active worker; replacement drafts an
   assert.deepEqual(page.actions, []);
 });
 
-test('project rows surface visitor and setup errors and keep the corrected name bound to the failed project', async () => {
+test('a second puffle in the same igloo opens its own card, and the roster switches between them', async () => {
+  const page = await openPage({snapshot:idle()});
+  page.overlay.run('cpBridge.tick(); puffle2.clip.onPress()');
+  assert.equal(page.overlay.read(card + '.title.text'), 'Pebble');
+  const pebbleSlot = page.overlay.read('cpBridge.agentData.draftSlot');
+  assert.equal(page.overlay.read(card + '.roster.row0.label.text'), 'Atlas');
+  assert.equal(page.overlay.read(card + '.roster.row1.label.text'), 'Pebble');
+  // A roster row's selection is handled synchronously, like a puffle click.
+  page.overlay.run(card + '.roster.row0.onRelease()');
+  assert.equal(page.overlay.read(card + '.title.text'), 'Atlas');
+  assert.notEqual(page.overlay.read('cpBridge.agentData.draftSlot'), pebbleSlot);
+  assert.doesNotMatch(JSON.stringify(page.calls), PRIVATE);
+});
+
+test('project rows surface visitor and setup errors and retry the failed destination', async () => {
   const snapshot = idle();
   snapshot.visitor = null;
   snapshot.visitorProblem = 'Visitor 107 is missing.';
-  snapshot.projects[1].setup = {phase:'failed',error:'Houdini rejected the name.',retryable:true,correction:'puffleName'};
+  snapshot.projects[1].setup = {phase:'failed',error:'The owner could not be verified.',retryable:true};
+  snapshot.workers.find(worker => worker.id === 'worker-a2').setup = {phase:'failed', error:'Worktree checkout failed.', retryable:true};
   const page = await openPage({snapshot});
   page.el('cp-igloos').onclick();
   assert.match(page.el('cp-visitor-problem').textContent,/Visitor 107/);
   const row = page.el('cp-agent-list').children[1];
-  assert.match(row.textContent,/Houdini rejected the name/);
-  row.querySelector('input').value = 'Maple';
-  await row.querySelectorAll('button').find(b=>b.textContent==='Retry').onclick();
-  assert.deepEqual(page.actions,[{action:'retry',projectId:PROJECT_B,puffleName:'Maple'}]);
+  assert.match(row.textContent,/could not be verified/);
+  await row.querySelectorAll('button').find(b=>b.textContent==='Retry setup').onclick();
+  const first = page.el('cp-agent-list').children[0];
+  assert.match(first.textContent, /Pebble[^]*Setup failed[^]*Worktree checkout failed/);
+  await first.querySelectorAll('button').find(b=>b.textContent==='Retry').onclick();
+  assert.deepEqual(page.actions,[{action:'retry',projectId:PROJECT_B},{action:'retryWorker',projectId:PROJECT_A,workerId:'worker-a2'}]);
 });
 
 test('switching workers restores their browser drafts and drops old diff, terminal replay and output', async () => {
@@ -449,7 +566,7 @@ test('native card displays setup, repair and source availability without leaking
     snapshot.projects[0].game.status = game;
     const page = await openPage({snapshot});
     page.el('cp-igloos').onclick();
-    await page.el('cp-agent-list').children[0].querySelectorAll('button').find(b=>b.textContent==='Open work').onclick();
+    await page.el('cp-agent-list').children[0].querySelectorAll('button').find(b=>b.textContent==='Open').onclick();
     assert.equal(page.overlay.read(card + '.status.text'), expected);
     assert.doesNotMatch(JSON.stringify(page.calls), PRIVATE);
     await page.flush();

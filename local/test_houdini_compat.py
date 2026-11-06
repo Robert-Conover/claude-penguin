@@ -234,5 +234,36 @@ class NativeIglooTests(unittest.IsolatedAsyncioTestCase):
                 listener.callback = callback
 
 
+class ProjectAdoptionInstallTests(unittest.IsolatedAsyncioTestCase):
+    async def test_cpadopt_is_registered_beside_the_pet_handlers_once_and_pn_is_unchanged(self):
+        from houdini.constants import ClientType
+        from houdini.handlers import XTPacket, XTListenerManager
+        from houdini.handlers.play import pet
+        from houdini_bootstrap import install_project_adoption
+        upstream_pn = pet.handle_adopt_puffle_vanilla
+        before = upstream_pn.callback
+        publication = SimpleNamespace(for_visitor=lambda penguin_id: None)
+        try:
+            self.assertTrue(install_project_adoption(publication))
+            self.assertFalse(install_project_adoption(publication), 'installation is idempotent')
+            listener = pet.handle_claude_penguin_project_adopt
+            self.assertEqual(listener.packet, XTPacket('p', 'cpadopt'))
+            self.assertEqual(listener.client_type, ClientType.Vanilla)
+            self.assertIs(upstream_pn.callback, before, 'upstream p#pn keeps its own callback')
+            manager = XTListenerManager(SimpleNamespace())
+            await manager.load(pet)
+            self.assertIn(listener, manager[XTPacket('p', 'cpadopt')], 'discovery finds the new listener')
+            # A penguin that is not the published visitor gets an error reply and nothing else. The
+            # packet goes through Houdini's own argument conversion (strings to str/int), as on the wire.
+            p = SimpleNamespace(id=5, send_xt=AsyncMock(), server=SimpleNamespace(puffles={}, penguins_by_id={}),
+                                joined_world=True, is_vanilla_client=True, is_legacy_client=False, client_type=ClientType.Vanilla)
+            await listener(p, ['0b6f8a52-5f1e-4f53-9d0e-4b8e8b7e2a11', '0', 'Pebble', '0'])
+            self.assertEqual(p.send_xt.await_args.args, ('cpadopt', '0b6f8a52-5f1e-4f53-9d0e-4b8e8b7e2a11', 'error', 'unknown-adoption'))
+        finally:
+            for name in ('handle_claude_penguin_project_adopt', 'claude_penguin_adoption_schema', '__local_project_adoption__'):
+                if hasattr(pet, name):
+                    delattr(pet, name)
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)

@@ -1,9 +1,10 @@
 # Project igloos and Claude Code sessions
 
-Each registered repository gets an igloo, a named puffle, a persistent Git worktree,
-and an independent Claude Code session on the host. The original client runs in
-Ruffle. Game services stay in Docker. The optional agent page listens on loopback
-and starts a puffle only when you choose **Start / Resume**.
+Each registered repository gets an igloo. You adopt its puffles at the Pet Shop:
+up to 10 per igloo, each with its own persistent Git worktree, branch, and
+independent Claude Code session on the host. The original client runs in Ruffle.
+Game services stay in Docker. The optional agent page listens on loopback and
+starts a puffle only when you choose **Start / Resume**.
 
 ## Start
 
@@ -44,26 +45,34 @@ The ordinary [game page](http://localhost:8080/) and
 
 ## Add and visit projects
 
-1. Open **Igloos → Add project** and enter the repository path, project name and
-   puffle name. The chooser shows setup progress, name corrections, retries and
+1. Open **Igloos → Add project** and enter the repository path and project name.
+   Setup prepares the project's igloo; the chooser shows its progress, retries and
    manual repair instructions. Registration supports up to 32 distinct repositories.
    Game acceptance creates permanent managed owner accounts. Project deletion is deferred.
-2. Travel using the original map's cluster of igloos or **Visit** in the chooser.
-   Click a mapped puffle to select its project. **Work** reopens that selection
-   from anywhere on the island. Without a selection it opens the chooser.
-3. Choose **Start / Resume** and **Open Claude**. On first launch Claude can ask
-   whether you trust the new worktree folder. Check the displayed path before
-   confirming. Claude runs in manual permission mode. Answer tool requests in
-   the terminal. Several puffles can run concurrently.
-4. Enter a task in the native card, or use the browser task card when the game
+2. Adopt puffles at the Pet Shop (Plaza). **Adopt a Puffle** first asks which
+   project igloo the puffle joins, then shows the original catalog, naming and
+   certificate. You pay with the visitor's own coins: 400 for the ten colors,
+   800 for the Blue Dog or Orange Cat. Rainbow and Gold are not offered. **OK** on
+   the certificate takes you to that igloo. Each adopted puffle gets its own
+   worktree in the background; its row in **Igloos** shows that setup.
+3. Travel using the original map's cluster of igloos or **Visit** in the chooser.
+   Click a puffle to select it. The card's **In this igloo** list switches between
+   the igloo's puffles. **Work** lists the puffles that need you, across igloos.
+4. Choose **Start / Resume** and **Open Claude**. On first launch Claude asks
+   whether you trust the new worktree folder; the highlighted answer is **No, exit**.
+   Check the displayed path, then choose **Yes, I trust this folder**. Claude runs
+   in manual permission mode. Answer tool requests in the terminal. Up to three
+   puffles per igloo and six overall run at once; a further start waits in line,
+   shows **Queued**, and launches when a session stops.
+5. Enter a task in the native card, or use the browser task card when the game
    cannot display it. Each surface keeps drafts per worker for the current page.
    Close the card or visit Town while work runs. The Work badge counts workers
    waiting for input, failed turns and turns ready for review.
-5. Open **Changes** to review agent commits and current edits from the immutable
+6. Open **Changes** to review agent commits and current edits from the immutable
    baseline. **Copy path** copies the worktree and **Copy branch** copies its
    current branch. The **Journal** tab shows the selected worker's task history.
    Verify task results yourself and stop the session before external Git operations.
-6. A migrated project also has **View archive**, with its original folder, session
+7. A migrated project also has **View archive**, with its original folder, session
    ID, task history and copyable resume command. Choose **Create isolated Atlas**
    on its row to give it a new worktree and conversation on the existing game mapping.
 
@@ -210,10 +219,15 @@ igloo does not terminate a running Claude process.
   letters, digits, single spaces, `-`, `_`, or `.`, and must begin and end with
   a letter or digit. The engine rejects names such as `100%`, `A|B`, or `a:b`.
   The default name is a sanitized repository basename, or `Project`.
-- **Puffles.** Each project has one active puffle named with 1–12 letters. The
-  first defaults to Atlas, and later defaults avoid names already in use. Every
-  action takes an explicit project ID and worker ID. There is no fallback to the
-  first project or worker.
+- **Puffles.** An igloo holds up to 10 adopted puffles, each a worker named with
+  1–12 letters. Houdini's name filter and title-casing apply at adoption: `nOVA`
+  becomes `Nova`, and the worker takes the server-normalized name. Every action
+  takes an explicit project ID and worker ID. There is no fallback to the first
+  project or worker.
+- **Session limits.** At most `CP_ENGINE_SESSIONS_PER_IGLOO` (default 3) puffles
+  per igloo and `CP_ENGINE_SESSIONS` (default 6) overall run at once; each accepts
+  1–32. A start beyond either limit is queued in order and shown as **Queued**,
+  and **Stop** withdraws it. A limit never stops a running session.
 - **Worktrees.** Each puffle gets one persistent, locked worktree at
   `~/.claude-penguin/worktrees/<worker-id>/<repo-folder>`, on branch
   `claude-penguin/<project-id>/<worker-id>`. `CP_ENGINE_WORKTREE_ROOT` (absolute;
@@ -296,43 +310,57 @@ igloo does not terminate a running Claude process.
   Git operations do not reset the baseline. Stop the session before changing the
   branch outside Claude Penguin.
 
-### State v2, migration, and rollback
+### State v3, migration, and rollback
 
-State v2 holds multiple projects, one active worker per project, and archived
-workers. The engine refuses version 1 state and never migrates it implicitly.
-Older engine code refuses version 2. The explicit command:
+State v3 holds up to 32 projects, their adopted puffles (one worker each, with
+its own `puffle` binding, setup progress and worktree), archived workers, and
+open adoptions. A project no longer has one active worker. The engine refuses
+version 1 and version 2 state and never migrates implicitly. Older engine code
+refuses version 3. The explicit command:
 
 ```sh
 node local/engine/migrate.mjs --state-dir .local/agent-engine-demo
 ```
 
 takes the runtime lock and fails closed if a saved engine or worker process may
-still be alive or a stale `runtime.lock` remains. It writes the original bytes
-to `state.v1-backup-<timestamp>.json` with mode `0600`, never overwriting an
-existing backup, and then replaces `state.json` atomically. The old Atlas
-worker is archived with its IDs, Claude session UUID, task history, original
-folder, and baseline. Execution controls are disabled, and the archive shows
-`cd '<original folder>' && claude --resume <session>` for manual use. The
-project UUID and Atlas game mapping are kept as a ready `legacy-fixture`
-mapping. Creating a new puffle on that project starts a separate isolated Atlas
-with a new conversation. The old conversation and its uncommitted files are not
-moved. If the source checkout is missing, migration still succeeds: the project
-shows as source-unavailable, and its history stays readable. A migrated project
-binds to a repository at its old path only if that repository contains the
-archived worker's baseline commit, so an unrelated repository created there
-later never inherits the history or the Atlas igloo.
+still be alive or a stale `runtime.lock` remains. It migrates one version at a
+time. Before each step it writes the current bytes to
+`state.v<N>-backup-<timestamp>.json` with mode `0600`, never overwriting an
+existing backup, and checks the copy; then it replaces `state.json` atomically.
+Running it on version 3 changes nothing.
+
+**From v1.** The old Atlas worker is archived with its IDs, Claude session UUID,
+task history, original folder, and baseline. Execution controls are disabled, and
+the archive shows `cd '<original folder>' && claude --resume <session>` for
+manual use. The project UUID and Atlas game mapping are kept as a ready
+`legacy-fixture` mapping. **Create isolated Atlas** on that project starts a
+separate Atlas with a new worktree and conversation on the existing mapping. The
+old conversation and its uncommitted files are not moved. If the source checkout
+is missing, migration still succeeds: the project shows as source-unavailable,
+and its history stays readable. A migrated project binds to a repository at its
+old path only if that repository contains the archived worker's baseline commit,
+so an unrelated repository created there later never inherits the history or the
+Atlas igloo. A legacy igloo belongs to the shared Bridge Alpha fixture, so the
+Pet Shop does not offer it as a destination.
+
+**From v2.** Each project's active worker keeps its ID, session, worktree, branch
+and task history, and takes over the project's managed puffle as its `puffle`
+binding. The project mapping keeps only its owner and igloo. Archived workers
+are unchanged.
 
 To roll back, stop the engine, then copy the backup over `state.json` and run
 the older engine. Copy, rather than rename, so the backup stays available.
-Worktrees and branches created by the v2 engine stay in place. They are locked,
+Puffles adopted after the migration stay in the game but are unknown to the
+older engine, whose verification then reports their igloo for repair.
+Worktrees and branches created by newer engines stay in place. They are locked,
 and you can remove them manually with `git worktree unlock` and
 `git worktree remove`.
 
 ### Game provisioning and native igloos
 
 The original server addresses an igloo by its owner (`ownerId + 2000`), so
-layouts alone cannot isolate puffles. Each project therefore gets one dedicated,
-engine-managed owner penguin. The bridge-only simulation (Bridge Alpha/Beta,
+layouts alone cannot isolate igloos. Each project therefore gets one dedicated,
+engine-managed owner penguin, and that owner holds the project's adopted puffles. The bridge-only simulation (Bridge Alpha/Beta,
 `./local/bridge-fixtures`) is separate and unchanged.
 
 **Setup.** After a project's worktree is ready, setup provisions its game
@@ -341,7 +369,9 @@ The project's operation lock covers each step, progress is saved after each one,
 and a failure is retryable without creating a second identity:
 
 1. **Visitor.** The engine verifies, or creates, only the marked `bridgecheck`
-   visitor. It shares the username, marker email, and disposable password source
+   visitor (`CP_ENGINE_VISITOR=adoptcheck` selects the separate test visitor, for
+   checks that spend coins; use it with its own `CP_ENGINE_STATE_DIR`, because a
+   state directory refuses a different visitor). It shares the username, marker email, and disposable password source
    (`CLUB_PENGUIN_TEST_PASSWORD`, default `PenguinLocal2026!`) with the fixture
    seeder through `local/game_accounts.py`, so either accepts the other's
    account. The engine sends that password in the stdin request, never as a
@@ -354,22 +384,19 @@ and a failure is retryable without creating a second identity:
    database's 12-character limit; a username taken by any other account is
    regenerated and saved before the next attempt. The project name becomes the
    owner's nickname, approved for English so the igloo list shows it.
-3. **Igloo and puffle.** The engine logs in as that owner through the ordinary
-   login and world servers on loopback. It checks the requested name with
-   `p#checkpufflename`, adopts one blue puffle (`p#pn`), loads the owner's
-   default igloo (`g#gm`), enters it, and confirms the puffle is there. Houdini's
-   name filter and title-casing apply: `nOVA` becomes `Nova`, and the puffle
-   records that server-normalized name. If the game rejects the name (a failed
-   check or error 441), setup fails with `correction: "puffleName"`; retry with
-   a new `puffleName` (1–12 letters).
+3. **Igloo.** The engine logs in as that owner through the ordinary login and
+   world servers on loopback, loads the owner's default igloo (`g#gm`), enters
+   it, and confirms the room. It adopts nothing: the igloo starts empty.
 4. **Verification.** The provisioning service checks the complete mapping in the
    database: exactly one account carries the marker, its active layout is the
-   recorded igloo, that igloo is still **locked**, and the owner has exactly the
-   recorded puffle. Only then is the mapping `ready`.
+   recorded igloo, that igloo is still **locked**, and the owner's puffles are
+   exactly the project's recorded puffles (ID, name and type, indoors, at most
+   10). Only then is the mapping `ready`. Before verifying, setup checks stored
+   adoption receipts, so a paid puffle whose report was lost is bound first.
 
 A retry reconciles against the same marker, username, and recorded IDs. Several
 marked accounts, a marker under another username, a different owner ID, extra
-or renamed puffles, a changed layout, or an unlocked igloo stop with status
+puffles without a receipt, missing or renamed puffles, a changed layout, or an unlocked igloo stop with status
 `repair`. Once an owner ID is recorded, the service only verifies that owner:
 if the account is gone or no longer carries the marker, setup stops with
 `repair` (code `MISSING`) and no replacement is created. Nothing is remapped,
@@ -387,7 +414,9 @@ check finishes.
 
 The snapshot adds `visitor` (`penguinId`, `username`, `verifiedAt`) and an
 allowlisted `project.game` (`source`, `status`, `ownerId`, `iglooId`, `roomId`,
-`puffleId`, `puffleName`, `fixtureId`, `verifiedAt`). Owner usernames,
+`verifiedAt`, plus `puffleId`, `puffleName` and `fixtureId` for a legacy fixture),
+each worker's `puffle` (`puffleId`, `typeId`, `subtypeId`, `name`), and each
+project's `capacity`, `adoptionBlocked` reason and open `adoptions`. Owner usernames,
 passwords, and markers never appear in `state.json`, snapshots, published
 files, command arguments, or engine logs. Houdini's own login and world logs
 (`.local/logs/`, ignored by Git) record owner usernames when the engine's game
@@ -397,9 +426,9 @@ sessions log in; they never record passwords. A migrated legacy Atlas keeps its
 **Provisioning service.** Database work runs in the `provision` Compose service
 (`local/game_provision.py`, tools profile). The engine runs
 `./local/compose run --rm --no-deps -T provision` with fixed arguments and sends
-one JSON request on stdin (`visitor`, `owner`, or `verify`). The database
-password stays in the container environment, and only the three scripts it needs
-are mounted, so private engine state is not visible to it. The game stack must
+one JSON request on stdin (`visitor`, `owner`, `verify`, or the read-only
+`receipts`). The database password stays in the container environment, and only
+the scripts it needs are mounted, so private engine state is not visible to it. The game stack must
 already be running. With `CP_ENGINE_GAME_PROVISIONING=off`, setup stops at
 `game-pending` instead.
 
@@ -408,7 +437,8 @@ already be running. With `CP_ENGINE_GAME_PROVISIONING=off`, setup stops at
 change:
 
 ```json
-{ "version": 1, "visitorId": 107, "igloos": [{ "ownerId": 201, "iglooId": 9 }] }
+{ "version": 2, "visitorId": 107, "igloos": [{ "ownerId": 201, "iglooId": 9 }],
+  "adoptions": [{ "adoptionId": "<uuid>", "ownerId": 201, "expiresAt": 1800000000 }] }
 ```
 
 It lists only `ready` mappings from this engine's own state (never
@@ -436,6 +466,8 @@ locked in the database. Only for the published visitor:
   the published igloo is skipped.
 - `g#pio` (the player card's "is this igloo open?") answers open for published
   owners.
+- `p#cpadopt` is a new command, not an upstream one; see
+  [Adoption](#adoption-into-a-project-igloo).
 
 Every other penguin, including `player`, gets the upstream handlers unchanged.
 Only the callbacks are replaced, so authorization and cooldown metadata stay on
@@ -454,9 +486,56 @@ vendored handler source:
 
 ```sh
 npm test --prefix local/engine
-python3 -m unittest local/test_game_provision.py local/test_native_igloos.py
+python3 -m unittest local/test_game_provision.py local/test_native_igloos.py local/test_project_adoption.py
 ```
 
 The container regression suite (`local/test_houdini_compat.py`) and live
 provisioning against the running stack are recorded in the dated validation
 record. See the Stage 3 entry for Ruffle map, player-card and concurrent Claude acceptance.
+
+### Adoption into a project igloo
+
+The agent page (8081) loads a derived copy of the archived Pet Shop module;
+the ordinary game page (8080) never receives it and keeps the original module
+and upstream `p#pn`. `python3 local/client-bridge/build.py` derives it
+reproducibly (see the [build notes](client-bridge/README.md#project-adoption-module)).
+One purchase runs as follows:
+
+1. **Choose.** The module's destination picker lists every registered igloo with
+   its count, five per page with Previous/Next controls. A full igloo, one still
+   being set up, or a legacy igloo is shown with the reason it cannot be chosen.
+2. **Reserve.** **Adopt** asks the engine for a reservation: an adoption UUID for
+   that igloo's owner, the catalog entry, and the name, valid for 10 minutes. The
+   engine refuses while the project is busy with setup, when the igloo is full
+   (counting open reservations), or while the visitor has another open adoption.
+   It publishes the reservation in `published.json`.
+3. **Buy.** The overlay sends `p#cpadopt` with the UUID, type, name and subtype
+   through the game's own connection. Houdini's added handler
+   (`local/project_adoption.py`) accepts it only from the published visitor for a
+   published, unexpired reservation, checks the catalog and Houdini's name rules,
+   and then, in one database transaction, locks the visitor and the owner, takes
+   coins from the visitor, adds the puffle to the owner (indoors, at most 10) and
+   stores a receipt keyed by the UUID. It then updates the visitor's in-memory
+   coins and replies with the receipt; the module shows the new balance without
+   a relog. A repeated UUID returns the stored receipt and is never charged
+   again; a bound or withdrawn reservation is refused (`unknown-adoption`).
+   Not enough coins (401), a rejected name (441) and a full igloo (440) are
+   refused before anything is charged.
+4. **Bind.** The page reports the reply. The engine reads the receipt from the
+   database itself, binds the puffle to a new worker, withdraws the reservation,
+   and prepares that worker's worktree in the background. The certificate names
+   the destination igloo; **OK** travels there.
+
+The receipt always wins. If the page closes, the reply is lost or the engine
+restarts mid-purchase, the engine checks receipts at startup, on **Check
+purchase** in the chooser (available for reserved and charged operations), and on
+setup retry: a receipt binds the puffle even if its reservation expired or was
+withdrawn. A timeout, failed lookup, or missing receipt does not prove that no
+coins were taken. The page keeps the purchase pending, shows its recovery notice,
+and checks again every 20 seconds without cancelling or sending another purchase.
+Matching late replies still resolve it, including after closing the module. A
+confirmed receipt shows the certificate independently of worktree setup; a
+definitive pre-charge refusal allows another attempt. The visitor's own collection
+never gets the puffle. Adoption creates the receipt
+table `claude_penguin_adoption_receipt` (with `claude_penguin_schema`) in the
+game database when the world server starts.

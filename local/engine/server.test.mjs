@@ -217,7 +217,7 @@ test('the engine starts without a preview gate, holds its lock, and releases it 
     assert.deepEqual(await exit, [0, null]);
     assert.equal(existsSync(path.join(dir, 'state', 'runtime.lock')), false);
     assert.equal(existsSync(path.join(dir, 'native-igloos', 'owner.lock')), false, 'a clean shutdown releases publication');
-    assert.deepEqual(JSON.parse(await readFile(path.join(dir, 'native-igloos', 'published.json'), 'utf8')), { version: 1, visitorId: null, igloos: [] });
+    assert.deepEqual(JSON.parse(await readFile(path.join(dir, 'native-igloos', 'published.json'), 'utf8')), { version: 2, visitorId: null, igloos: [], adoptions: [] });
   } finally { child.kill('SIGKILL'); await rm(dir, { recursive: true, force: true }); }
 });
 

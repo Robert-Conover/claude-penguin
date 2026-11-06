@@ -9,36 +9,40 @@ export const PROJECT_B = '7d6c5b4a-3e2f-4a1b-9c8d-7e6f5a4b3c2d';
 export const PROJECT_C = '11111111-2222-4333-8444-555555555555';
 export const PRIVATE = /private|\/Users\/|sessionId|sourcePath|workspace|token|verifiedAt|fixtureId|worker-/;
 
-const game = (ownerId, puffleId, puffleName, extra = {}) => ({ source: 'managed', status: 'ready', ownerId, iglooId: puffleId,
-  roomId: ownerId + 2000, puffleId, puffleName, fixtureId: null, verifiedAt: '2026-11-04T12:00:00.000Z', ...extra });
-const worker = (id, projectId, name, status, extra = {}) => ({ id, projectId, name, status, sessionId: `private-session-${id}`,
-  activity: `private activity ${id}`, established: true, running: true, recoveryBlocked: false, updatedAt: '2026-11-04T12:00:00.000Z',
-  taskHistory: [{ prompt: 'private task' }], workspace: { kind: 'worktree', path: `/Users/private/worktrees/${id}`, state: 'ready' }, ...extra });
+const game = (ownerId, iglooId, extra = {}) => ({ source: 'managed', status: 'ready', ownerId, iglooId,
+  roomId: ownerId + 2000, puffleId: null, puffleName: null, fixtureId: null, verifiedAt: '2026-11-04T12:00:00.000Z', ...extra });
+const worker = (id, projectId, name, status, puffleId, extra = {}) => ({ id, projectId, name, status, sessionId: `private-session-${id}`,
+  activity: `private activity ${id}`, established: true, running: true, queued: false, recoveryBlocked: false, updatedAt: '2026-11-04T12:00:00.000Z',
+  taskHistory: [{ prompt: 'Fix the login bug' }], workspace: { kind: 'worktree', path: `/Users/private/worktrees/${id}`, state: 'ready' },
+  setup: { phase: 'ready' }, puffle: { puffleId, typeId: 0, subtypeId: 0, name, adoptionId: null, color: 'blue' }, ...extra });
 
+// Project A (owner 105) has two puffles (4, 9); legacy project B (106) one (5);
+// project C is still provisioning. Workers are snapshot.workers (active only).
 export function engineSnapshot({ visitor = true, projects = ['a', 'b', 'c'] } = {}) {
   const all = {
     a: { id: PROJECT_A, name: 'Atlas Repo', sourcePath: '/Users/private/atlas', sourceAvailable: true, legacy: false,
-      setup: { phase: 'ready' }, activeWorkerId: 'worker-a', game: game(105, 4, 'Atlas') },
+      setup: { phase: 'ready' }, game: game(105, 4) },
     b: { id: PROJECT_B, name: 'Comet Repo', sourcePath: '/Users/private/comet', sourceAvailable: true, legacy: true,
-      setup: { phase: 'ready' }, activeWorkerId: 'worker-b', game: game(106, 5, 'Comet', { source: 'legacy-fixture', fixtureId: 'bridge-beta' }) },
+      setup: { phase: 'ready' }, game: game(106, 5, { source: 'legacy-fixture', fixtureId: 'bridge-beta', puffleId: 5, puffleName: 'Comet' }) },
     c: { id: PROJECT_C, name: 'Pending Repo', sourcePath: '/Users/private/pending', sourceAvailable: true, legacy: false,
-      setup: { phase: 'provisioning' }, activeWorkerId: 'worker-c', game: game(108, 6, 'Nova', { status: 'provisioning' }) },
+      setup: { phase: 'provisioning' }, game: game(108, 6, { status: 'provisioning' }) },
   };
-  const workers = { a: worker('worker-a', PROJECT_A, 'Atlas', 'working'), b: worker('worker-b', PROJECT_B, 'Comet', 'needs-you'),
-    c: worker('worker-c', PROJECT_C, 'Nova', 'review') };
+  const workers = { a: [worker('worker-a', PROJECT_A, 'Atlas', 'working', 4), worker('worker-a2', PROJECT_A, 'Pebble', 'review', 9, { puffle: { puffleId: 9, typeId: 3, subtypeId: 0, name: 'Pebble', adoptionId: null, color: 'green' } })],
+    b: [worker('worker-b', PROJECT_B, 'Comet', 'needs-you', 5)], c: [worker('worker-c', PROJECT_C, 'Nova', 'review', 6)] };
   return {
-    revision: 7, limits: { maxProjects: 32 }, worktreeRoot: '/Users/private/.claude-penguin/worktrees',
+    revision: 7, limits: { maxProjects: 32, maxPuffles: 10 }, worktreeRoot: '/Users/private/.claude-penguin/worktrees', visitorUsername: 'bridgecheck',
     visitor: visitor ? { penguinId: 107, username: 'bridgecheck', verifiedAt: '2026-11-04T12:00:00.000Z' } : null,
     projects: projects.map(key => all[key]),
-    workers: projects.map(key => workers[key]),
+    workers: projects.flatMap(key => workers[key]),
     archivedWorkers: [{ id: 'worker-old', projectId: PROJECT_A, sessionId: 'private-archived-session', originalPath: '/Users/private/atlas' }],
+    adoptions: [],
   };
 }
 
 // ------------------------------------------------------------ overlay double
 // Runs the real `client-bridge/bridge.as` (its shared ES3 subset) against narrow
-// game doubles: a shell, engine, and interface with one puffle (4) in owner
-// 105's igloo, and the visitor 107 logged in. This checks identity and state
+// game doubles: a shell (with an Airtower), engine, and interface with two
+// puffles (4 and 9) in owner 105's igloo, and the visitor 107 logged in. This checks identity and state
 // decisions; it does not emulate AVM1 or Ruffle.
 export const bridgeSource = () => readFileSync(new URL('../../client-bridge/bridge.as', import.meta.url), 'utf8');
 
@@ -47,29 +51,37 @@ const gameDoubles = `
   var playerId = 107, roomId = 2105, ownerId = 105, roomReady = true, inIgloo = true, gameRoom;
   var originalPress = function() { events.push({type:'original'}); };
   var puffle = {id:4, clip:{_visible:true, _x:200, _y:200, onPress:originalPress}, _artClip:{_totalframes:35}};
+  var puffle2 = {id:9, clip:{_visible:true, _x:260, _y:220, onPress:originalPress}, _artClip:{_totalframes:35}};
+  var listeners = {}, sent = [], coins = [];
   var shell = {
     getMyPlayerId:function(){return playerId;}, getCurrentRoomId:function(){return roomId;},
     // The newer IglooContext uses getIglooPlayerID, not the legacy stored igloo object.
     getPlayerIglooObject:function(){return undefined;}, getIglooPlayerID:function(){return ownerId;},
     getCurrentGameRoomId:function(){return gameRoom;}, getRoomNameById:function(){return 'town';},
     sendJoinPlayerIgloo:function(id){navigations.push(id);}, sendJoinRoom:function(name){navigations.push(name);},
+    getCurrentServerRoomId:function(){return 7;}, setMyPlayerTotalCoins:function(amount){coins.push(amount);},
+    AIRTOWER:{addListener:function(type,fn,scope){listeners[type]={fn:fn,scope:scope};},
+      send:function(ext,command,args,type,room){sent.push({ext:ext,command:command,args:args,type:type,room:room});}},
     hideCount:0, hideTriggers:function(){this.hideCount++;}, showTriggers:function(){this.hideCount--;}
   };
   var engine = {
     isRoomReady:function(){return roomReady;}, isInAnIgloo:function(){return inIgloo;},
-    puffleManager:{_puffles:[puffle],getPuffleByID:function(id){return id==4?puffle:undefined;},
+    puffleManager:{_puffles:[puffle,puffle2],getPuffleByID:function(id){return id==4?puffle:id==9?puffle2:undefined;},
       updatePuffleFrameByID:function(id,frame){animations.push({id:id,frame:frame});}}
   };
-  function Clip(parent, name) { this._parent=parent; this._name=name; this.depth=0; this._visible=true; }
+  function Clip(parent, name, depth) { this._parent=parent; this._name=name; this.depth=0; this._depth=depth; this._visible=true; }
   Clip.prototype.getNextHighestDepth=function(){return ++this.depth;};
-  Clip.prototype.createEmptyMovieClip=function(name){var clip=new Clip(this,name);this[name]=clip;return clip;};
-  Clip.prototype.removeMovieClip=function(){if(this._parent)delete this._parent[this._name];this.removed=true;};
+  Clip.prototype.getDepth=function(){return this._depth;};
+  Clip.prototype.swapDepths=function(depth){this._depth=depth;};
+  Clip.prototype.createEmptyMovieClip=function(name,depth){var clip=new Clip(this,name,depth);this[name]=clip;return clip;};
+  // Like Flash, a clip outside depths 0 to 1048575 cannot be removed.
+  Clip.prototype.removeMovieClip=function(){if(this._depth<0||this._depth>1048575)return;if(this._parent)delete this._parent[this._name];this.removed=true;};
   Clip.prototype.createTextField=function(name){this[name]={text:'',setTextFormat:function(){},setNewTextFormat:function(){}};};
   Clip.prototype.lineStyle=Clip.prototype.beginFill=Clip.prototype.moveTo=Clip.prototype.lineTo=Clip.prototype.curveTo=Clip.prototype.endFill=function(){};
   var TextFormat=function(){};
   var MovieClipLoader=function(){};
   MovieClipLoader.prototype.addListener=function(listener){this.listener=listener;};
-  MovieClipLoader.prototype.loadClip=function(url,clip){clip.url=url;clip._width=366;clip._height=319;this.listener.onLoadInit(clip);};
+  MovieClipLoader.prototype.loadClip=function(url,clip){clip.url=url;clip.stop=function(){};clip.getBounds=function(){return {xMin:-45,xMax:45,yMin:-40,yMax:40};};this.listener.onLoadInit(clip);};
   var Selection={setFocus:function(value){this.focus=value;}};
   var ui={interface_mc:new Clip(null,'interface'),is_quick_keys_active:true,widgets:false,
     getWidgetsActive:function(){return this.widgets;},setWidgetsActive:function(value){this.widgets=value;},

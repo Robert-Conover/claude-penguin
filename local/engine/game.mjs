@@ -3,14 +3,20 @@
 // Database work runs in the dedicated `provision` Compose service
 // (local/game_provision.py) with a structured JSON request on stdin, so the
 // database password stays inside the container network and managed-owner
-// credentials never appear in command arguments. Igloo creation and puffle
-// adoption use the owner's ordinary game session on the loopback login/world
-// ports. The engine never authenticates as the shared `bridgecheck` visitor.
+// credentials never appear in command arguments. Igloo creation uses the
+// owner's ordinary game session on the loopback login/world ports. Puffles are
+// adopted only by the visitor's own purchase (local/project_adoption.py); the
+// engine reads their receipts here. The engine never authenticates as the
+// fixture visitor.
 import path from 'node:path';
 import { spawn as spawnProcess } from 'node:child_process';
 import { GameProtocolError, worldSession } from './game-protocol.mjs';
 
 export const VISITOR_USERNAME = 'bridgecheck';
+// `adoptcheck` is the marked test visitor for mutating adoption checks
+// (CP_ENGINE_VISITOR=adoptcheck with a dedicated CP_ENGINE_STATE_DIR).
+export const VISITOR_USERNAMES = Object.freeze(['bridgecheck', 'adoptcheck']);
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 export const MANAGED_USERNAME = /^cp[a-z0-9]{10}$/;
 const MAX_OUTPUT = 256 * 1024;
 const ROOM_OFFSET = 2000;
@@ -40,51 +46,12 @@ function protocolFailure(error) {
   return new ProvisionError(`Game session failed: ${error.message}`);
 }
 
-async function listPuffles(world) {
-  world.xt('p#pgu');
-  return (await world.waitXt('pgu')).filter(Boolean).map(raw => {
-    const fields = raw.split('|');
-    if (fields.length < 9 || !asId(fields[0])) throw new ProvisionError('The game returned incomplete puffle data.');
-    return { id: asId(fields[0]), parent: fields[1], name: fields[3] };
-  });
-}
-
 /**
- * Within an authenticated owner session: reconcile or adopt the one blue
- * puffle, create/load the owner's igloo, enter it, and confirm the puffle is
- * in that igloo. `recorded` holds identities saved by an earlier attempt.
+ * Within an authenticated owner session: create or load the owner's igloo,
+ * enter it, and confirm the room. No puffle is adopted here. `recorded` holds
+ * the igloo ID saved by an earlier attempt.
  */
-export async function prepareOwnerIgloo(world, { ownerId, requestedName, recorded = {} }) {
-  const pets = await listPuffles(world);
-  const expectedName = recorded.puffleName ?? titleCase(requestedName);
-  let puffle;
-  if (recorded.puffleId) {
-    if (pets.length !== 1 || pets[0].id !== recorded.puffleId || pets[0].name !== recorded.puffleName) {
-      throw new ProvisionError('The managed owner\'s puffles no longer match the recorded puffle. Nothing was changed; repair the game mapping explicitly.', 'MISMATCH');
-    }
-    puffle = pets[0];
-  } else if (pets.length === 0) {
-    world.xt('p#checkpufflename', requestedName);
-    const [, ok] = await world.waitXt('checkpufflename');
-    if (ok !== '1') throw new ProvisionError(`The game rejected the puffle name "${requestedName}". Choose another name and retry.`, 'NAME_REJECTED');
-    world.xt('p#pn', 0, requestedName, 0); // Blue puffle, no subtype.
-    let adoption;
-    try { adoption = await world.waitXt('pn'); }
-    catch (error) {
-      if (error.gameError === 441) throw new ProvisionError(`The game rejected the puffle name "${requestedName}" during adoption. Choose another name and retry.`, 'NAME_REJECTED');
-      if (error.gameError === 401) throw new ProvisionError('The managed owner does not have enough coins to adopt a puffle.');
-      throw error;
-    }
-    const fields = String(adoption[1] ?? '').split('|');
-    if (!asId(fields[0]) || !fields[3]) throw new ProvisionError('The game returned an incomplete adoption response.');
-    puffle = { id: asId(fields[0]), parent: fields[1], name: fields[3] };
-  } else if (pets.length === 1 && pets[0].name === expectedName) {
-    puffle = pets[0]; // An earlier attempt adopted it before its result was recorded.
-  } else {
-    throw new ProvisionError('The managed owner has puffles that do not match this project. Nothing was adopted; repair the game mapping explicitly.', 'MISMATCH');
-  }
-  if (puffle.parent !== '0') throw new ProvisionError('The managed puffle is not the expected blue puffle.', 'MISMATCH');
-
+export async function prepareOwnerIgloo(world, { ownerId, recorded = {} }) {
   world.xt('g#gm', ownerId);
   const details = await world.waitXt('gm');
   if (details[0] !== String(ownerId)) throw new ProvisionError('The igloo response belongs to another player.', 'MISMATCH');
@@ -100,12 +67,7 @@ export async function prepareOwnerIgloo(world, { ownerId, requestedName, recorde
   if (entered[0] !== String(roomId) || entered.at(-1) !== 'igloo') throw new ProvisionError('The game entered the wrong igloo room.', 'MISMATCH');
   const joined = await world.waitXt('jr');
   if (joined[0] !== String(roomId)) throw new ProvisionError('The joined room does not match the managed owner.', 'MISMATCH');
-  world.xt('p#pg', ownerId, 'igloo');
-  const present = (await world.waitXt('pg')).slice(1).filter(Boolean).map(raw => raw.split('|'));
-  if (!present.some(fields => asId(fields[0]) === puffle.id && fields[3] === puffle.name)) {
-    throw new ProvisionError('The adopted puffle is not in the managed igloo.', 'MISMATCH');
-  }
-  return { iglooId, roomId, puffleId: puffle.id, puffleName: puffle.name };
+  return { iglooId, roomId };
 }
 
 function lastJson(text) {
@@ -120,7 +82,8 @@ function lastJson(text) {
  * Real provisioner. `spawn` and `session` are injectable for tests.
  */
 export function createGameProvisioner({ root, compose = path.join(root, 'local/compose'), spawn = spawnProcess, session = worldSession,
-  loginPort = 6112, worldPort = 9875, timeoutMs = 15000, seedTimeoutMs = 120000, env = process.env } = {}) {
+  loginPort = 6112, worldPort = 9875, timeoutMs = 15000, seedTimeoutMs = 120000, env = process.env, visitorUsername = VISITOR_USERNAME } = {}) {
+  if (!VISITOR_USERNAMES.includes(visitorUsername)) throw new ProvisionError(`The visitor must be one of ${VISITOR_USERNAMES.join(', ')}.`);
   const children = new Set();
   // The fixture visitor password travels in the stdin request like owner
   // credentials, so neither the Compose process nor the container gets it as
@@ -166,10 +129,10 @@ export function createGameProvisioner({ root, compose = path.join(root, 'local/c
   /** With a recorded `penguinId` the service only verifies that visitor and never creates one. */
   async function ensureVisitor({ penguinId = null } = {}) {
     const recorded = positive(penguinId) ? penguinId : null;
-    const result = await runSeed({ op: 'visitor', penguinId: recorded, ...(visitorPassword ? { password: visitorPassword } : {}) }, { secrets: [visitorPassword] });
+    const result = await runSeed({ op: 'visitor', username: visitorUsername, penguinId: recorded, ...(visitorPassword ? { password: visitorPassword } : {}) }, { secrets: [visitorPassword] });
     if (result.status !== 'ok') throw seedFailure(result);
-    if (result.username !== VISITOR_USERNAME || !positive(result.penguinId)) throw new ProvisionError('The provisioning service returned an unexpected visitor identity.', 'MISMATCH');
-    if (recorded !== null && result.penguinId !== recorded) throw new ProvisionError(`The ${VISITOR_USERNAME} visitor has game ID ${result.penguinId}, not the recorded ${recorded}.`, 'MISMATCH');
+    if (result.username !== visitorUsername || !positive(result.penguinId)) throw new ProvisionError('The provisioning service returned an unexpected visitor identity.', 'MISMATCH');
+    if (recorded !== null && result.penguinId !== recorded) throw new ProvisionError(`The ${visitorUsername} visitor has game ID ${result.penguinId}, not the recorded ${recorded}.`, 'MISMATCH');
     return { penguinId: result.penguinId, username: result.username, created: Boolean(result.created) };
   }
 
@@ -184,8 +147,8 @@ export function createGameProvisioner({ root, compose = path.join(root, 'local/c
     return { ownerId: result.ownerId, created: Boolean(result.created) };
   }
 
-  async function prepareIgloo({ username, password, ownerId, requestedName, recorded }) {
-    if (!MANAGED_USERNAME.test(username) || username === VISITOR_USERNAME) throw new ProvisionError('Refusing to authenticate as a non-managed account.');
+  async function prepareIgloo({ username, password, ownerId, recorded }) {
+    if (!MANAGED_USERNAME.test(username) || VISITOR_USERNAMES.includes(username)) throw new ProvisionError('Refusing to authenticate as a non-managed account.');
     const wait = COOLDOWN_MS - (Date.now() - (lastSession.get(ownerId) ?? 0));
     if (wait > 0) await pause(wait);
     let world;
@@ -193,18 +156,36 @@ export function createGameProvisioner({ root, compose = path.join(root, 'local/c
       const opened = await session({ username, password, loginPort, worldPort, timeoutMs });
       world = opened.world;
       if (opened.penguinId !== ownerId) throw new ProvisionError('The managed credentials logged in as a different penguin.', 'MISMATCH');
-      return await prepareOwnerIgloo(world, { ownerId, requestedName, recorded });
+      return await prepareOwnerIgloo(world, { ownerId, recorded });
     } catch (error) { throw protocolFailure(error); }
     finally { world?.close(); lastSession.set(ownerId, Date.now()); }
   }
 
-  /** Database-side verification of complete owner/layout/puffle mappings, batched in one service run. */
+  /**
+   * Database-side verification of complete owner/layout/puffle mappings,
+   * batched in one service run. A managed mapping lists its recorded puffles;
+   * the result names any unrecorded puffle with its adoption receipt ID.
+   */
   async function verifyOwners(mappings) {
     if (!mappings.length) return [];
     for (const mapping of mappings) if (!Object.hasOwn(mapping, 'fixtureId') && !MANAGED_USERNAME.test(mapping.username)) throw new ProvisionError('Refusing to verify a non-managed account.');
     const result = await runSeed({ op: 'verify', mappings });
     if (result.status !== 'ok' || !Array.isArray(result.results)) throw seedFailure(result);
-    return result.results.map(item => ({ key: item.key, ok: item.ok === true, problems: Array.isArray(item.problems) ? item.problems.map(String).slice(0, 10) : [] }));
+    return result.results.map(item => ({ key: item.key, ok: item.ok === true, problems: Array.isArray(item.problems) ? item.problems.map(String).slice(0, 10) : [],
+      unrecorded: Array.isArray(item.unrecorded) ? item.unrecorded.filter(entry => positive(entry?.puffleId))
+        .map(entry => ({ puffleId: entry.puffleId, adoptionId: UUID.test(entry.adoptionId ?? '') ? entry.adoptionId : null })).slice(0, 20) : [] }));
+  }
+
+  /** Read-only: stored project-adoption receipts for these adoption IDs. */
+  async function readReceipts(adoptionIds) {
+    if (!adoptionIds.length) return [];
+    if (adoptionIds.length > 256 || !adoptionIds.every(id => UUID.test(id))) throw new ProvisionError('Invalid adoption IDs.');
+    const result = await runSeed({ op: 'receipts', adoptionIds });
+    if (result.status !== 'ok' || !Array.isArray(result.receipts)) throw seedFailure(result);
+    return result.receipts.filter(item => UUID.test(item?.adoption_id ?? '') && adoptionIds.includes(item.adoption_id)
+      && ['visitor_id', 'owner_id', 'penguin_puffle_id', 'puffle_id', 'cost', 'coins_after', 'created_at'].every(key => Number.isSafeInteger(item[key]))
+      && typeof item.name === 'string').map(item => ({ adoptionId: item.adoption_id, visitorId: item.visitor_id, ownerId: item.owner_id,
+      puffleId: item.penguin_puffle_id, puffleType: item.puffle_id, name: item.name, cost: item.cost, coinsAfter: item.coins_after, createdAt: item.created_at }));
   }
 
   function close() {
@@ -212,5 +193,5 @@ export function createGameProvisioner({ root, compose = path.join(root, 'local/c
     for (const child of children) child.kill('SIGTERM');
   }
 
-  return { ensureVisitor, ensureOwner, prepareIgloo, verifyOwners, close };
+  return { visitorUsername, ensureVisitor, ensureOwner, prepareIgloo, verifyOwners, readReceipts, close };
 }

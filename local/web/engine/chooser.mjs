@@ -1,4 +1,4 @@
-import { defaultProjectName, suggestPuffleName, validateProjectName, validatePuffleName } from './names.mjs';
+import { defaultProjectName, validateProjectName } from './names.mjs';
 import { statusLabels } from './ui-model.mjs';
 
 function element(tag, text, className) {
@@ -18,45 +18,49 @@ export function copyButton(label, value, report) {
   return button;
 }
 
-function rowState(project, worker) {
+function projectState(project) {
   const { setup = {}, game } = project;
-  if (game?.status === 'repair' || worker?.inspection?.repair) return 'Needs repair';
-  if (setup.phase === 'failed') return setup.correction ? 'Puffle name rejected' : 'Setup failed';
+  if (game?.status === 'repair') return 'Needs repair';
+  if (setup.phase === 'failed') return 'Setup failed';
   if (setup.phase === 'needs-worker') return 'Archived';
+  if (setup.phase === 'game-pending') return 'Waiting for game provisioning';
   if (setup.phase !== 'ready') return 'Setting up';
-  return worker?.running ? 'Running' : worker?.status === 'failed' ? 'Stopped' : 'Ready';
+  return 'Ready';
 }
 
+function workerState(worker) {
+  if (worker.inspection?.repair) return 'Needs repair';
+  if (worker.setup?.phase === 'failed') return 'Setup failed';
+  if (worker.workspace?.state !== 'ready') return 'Setting up';
+  if (worker.queued) return statusLabels.queued;
+  return worker.running ? statusLabels[worker.status] ?? 'Running' : worker.status === 'failed' ? 'Stopped' : 'Taking a break';
+}
+
+/**
+ * Your Igloos: add a repository (an empty project igloo), retry setup, and see
+ * each igloo's puffles. Puffles are adopted in the game at the Pet Shop.
+ */
 export function setupChooser({ el, action, report, openWork, visit, getState }) {
-  let previous = '', editedName = false, editedPuffle = false;
-  const corrections = new Map();
+  let previous = '', editedName = false;
   const addForm = el('cp-register-form');
-  const name = el('cp-project-name'), path = el('cp-repo-path'), puffle = el('cp-worker-name');
-  const suggest = () => suggestPuffleName([
-    ...getState().snapshot.workers, ...(getState().snapshot.archivedWorkers ?? []),
-  ].map(worker => worker.name)) ?? '';
+  const name = el('cp-project-name'), path = el('cp-repo-path');
   path.oninput = () => {
     if (!editedName) name.value = defaultProjectName(path.value.split('/').filter(Boolean).at(-1));
   };
   name.oninput = () => { editedName = Boolean(name.value); };
-  puffle.oninput = () => { editedPuffle = Boolean(puffle.value); };
   el('cp-add-project').onclick = () => {
     addForm.hidden = !addForm.hidden;
-    if (!addForm.hidden) { path.focus?.(); if (!editedPuffle) puffle.value = suggest(); }
+    if (!addForm.hidden) path.focus?.();
   };
   addForm.onsubmit = async event => {
     event.preventDefault();
     try {
       const repo = path.value.trim();
       const projectName = validateProjectName(name.value || defaultProjectName(repo.split('/').filter(Boolean).at(-1)));
-      const puffleName = validatePuffleName(puffle.value);
       const project = await action('register', { path: repo, name: projectName });
       if (!project?.id) throw new Error('Registration returned no project ID.');
-      if (project.legacy || project.activeWorkerId) throw new Error('This repository is already registered. Use its project row.');
-      await action('create', { projectId: project.id, name: puffleName });
       path.value = name.value = '';
-      editedName = editedPuffle = false;
-      puffle.value = suggest();
+      editedName = false;
       addForm.hidden = true;
     } catch (problem) { report(problem.message); }
   };
@@ -68,62 +72,71 @@ export function setupChooser({ el, action, report, openWork, visit, getState }) 
     el('cp-visitor-problem').textContent = snapshot.visitorProblem ? snapshot.visitorProblem + ' Igloos will appear after the visitor verifies.' : '';
     el('cp-add-project').disabled = !connected || busy || snapshot.projects.length >= max;
     addForm.querySelector('button').disabled = el('cp-add-project').disabled;
-    if (!editedPuffle) puffle.value = suggest();
-    // Preserve focused correction fields across game polls and unrelated terminal activity.
-    const rows = snapshot.projects.map(project => {
-      const worker = snapshot.workers.find(w => w.id === project.activeWorkerId && w.projectId === project.id);
-      const archives = (snapshot.archivedWorkers ?? []).filter(w => w.projectId === project.id);
-      return { project, worker, archives };
-    });
-    const signature = JSON.stringify([rows.map(({project, worker, archives}) => [project, worker?.name, worker?.status,
-      worker?.running, worker?.inspection?.repair, worker?.workspace?.sourceDirtyAtCreation, archives.map(w => w.id)]), destinations, connected, busy]);
+    const rows = snapshot.projects.map(project => ({
+      project,
+      workers: snapshot.workers.filter(worker => worker.projectId === project.id),
+      archives: (snapshot.archivedWorkers ?? []).filter(worker => worker.projectId === project.id),
+      adoptions: (snapshot.adoptions ?? []).filter(item => item.projectId === project.id && ['reserved', 'charged', 'conflict'].includes(item.state) && !item.expired),
+    }));
+    const signature = JSON.stringify([rows.map(({ project, workers, archives, adoptions }) => [project,
+      workers.map(worker => [worker.id, worker.name, worker.status, worker.running, worker.queued, worker.setup, worker.inspection?.repair, worker.puffle?.color, worker.workspace?.state]),
+      archives.map(worker => worker.id), adoptions.map(item => [item.id, item.state, item.error])]), destinations, connected, busy]);
     if (signature === previous) return;
     previous = signature;
     const list = el('cp-agent-list');
     list.replaceChildren();
-    for (const {project, worker, archives} of rows) {
+    for (const { project, workers, archives, adoptions } of rows) {
       const row = element('article', '', 'cp-project-row');
-      const title = element('h3', project.name);
-      const state = rowState(project, worker);
-      const pet = worker?.name ?? project.game?.puffleName;
-      const showActivity = worker?.running || ['review', 'needs-you', 'failed'].includes(worker?.status);
-      row.append(title, element('p', [pet, state, showActivity && statusLabels[worker.status],
+      row.append(element('h3', project.name));
+      const capacity = project.capacity ?? { max: 10, puffles: workers.length };
+      row.append(element('p', [projectState(project), `${capacity.puffles} of ${capacity.max} puffles`,
         project.sourceAvailable === false && 'Source unavailable'].filter(Boolean).join(' · ')));
       const setup = project.setup ?? {};
-      for (const note of [setup.step, setup.error, worker?.inspection?.repair, setup.note ||
-        (worker?.workspace?.sourceDirtyAtCreation && 'Uncommitted changes stayed in the source checkout.')].filter(Boolean)) row.append(element('p', note));
+      for (const note of [setup.step, setup.error, setup.note].filter(Boolean)) row.append(element('p', note));
       if (project.game?.status === 'repair') row.append(element('p', project.legacy
         ? 'Restore the recorded fixture in the game database and restart the engine to verify it.'
-        : 'Restore the recorded owner, igloo and puffle before retrying verification.'));
+        : 'Restore the recorded owner, igloo and puffles before retrying verification.'));
       if (!project.sourceAvailable) row.append(element('p', 'Restore the original checkout at ' + project.sourcePath));
+      if (!workers.length && setup.phase === 'ready' && !project.adoptionBlocked) row.append(element('p', 'Adopt puffles at the Pet Shop in the game. Each one becomes a coding puffle here.'));
+      if (project.adoptionBlocked && project.legacy) row.append(element('p', project.adoptionBlocked));
       const buttons = element('div', '', 'cp-row-actions');
-      function button(label, handler, disabled = false) {
+      function button(parent, label, handler, disabled = false) {
         const b = element('button', label);
         b.disabled = disabled;
         b.onclick = async () => { try { await handler(); } catch (problem) { report(problem.message); } };
-        buttons.append(b);
+        parent.append(b);
       }
-      button('Visit', () => visit(project.id), !destinations.includes(project.id));
-      button('Open work', () => openWork(project.id, worker?.id ?? null));
-      if (setup.retryable && worker) {
-        let input;
-        if (setup.correction === 'puffleName') {
-          const label = element('label', 'New puffle name');
-          input = element('input', '');
-          input.maxLength = 12;
-          input.value = corrections.get(project.id) ?? '';
-          input.oninput = () => corrections.set(project.id, input.value);
-          label.append(input);
-          row.append(label);
-        }
-        button('Retry', () => action('retry', { projectId: project.id, ...(input ? { puffleName: validatePuffleName(input.value) } : {}) }), !connected || busy);
+      button(buttons, 'Visit', () => visit(project.id), !destinations.includes(project.id));
+      if (setup.retryable) button(buttons, 'Retry setup', () => action('retry', { projectId: project.id }), !connected || busy);
+      if (project.legacy && !workers.length && ['needs-worker', 'ready'].includes(setup.phase)) {
+        button(buttons, 'Create isolated Atlas', () => action('create', { projectId: project.id }), !project.sourceAvailable || !connected || busy);
       }
-      if (!project.activeWorkerId && ['needs-worker', 'registered'].includes(setup.phase)) {
-        button(project.legacy ? 'Create isolated Atlas' : 'Create puffle', () => action('create',
-          { projectId: project.id, name: project.game?.puffleName ?? suggest() }), !project.sourceAvailable || !connected || busy);
-      }
-      for (const archived of archives) button('View archive', () => openWork(project.id, archived.id, 'archive'));
+      for (const archived of archives) button(buttons, 'View archive', () => openWork(project.id, archived.id, 'archive'));
       row.append(buttons);
+      if (workers.length) {
+        const team = element('ul', '', 'cp-puffle-list');
+        for (const worker of workers) {
+          const item = element('li', '', 'cp-puffle-row');
+          const dot = element('span', '', 'cp-puffle-dot');
+          dot.dataset.color = worker.puffle?.color ?? 'blue';
+          item.append(dot, element('strong', worker.name), element('span', ' · ' + workerState(worker)));
+          if (worker.setup?.phase === 'failed' && worker.setup.error) item.append(element('p', worker.setup.error));
+          if (worker.inspection?.repair) item.append(element('p', worker.inspection.repair));
+          const actions = element('span', '', 'cp-row-actions');
+          button(actions, 'Open', () => openWork(project.id, worker.id));
+          if (worker.setup?.retryable) button(actions, 'Retry', () => action('retryWorker', { projectId: project.id, workerId: worker.id }), !connected || busy);
+          item.append(actions);
+          team.append(item);
+        }
+        row.append(team);
+      }
+      for (const adoption of adoptions) {
+        const note = element('p', adoption.state === 'conflict' ? `An adoption needs inspection: ${adoption.error}`
+          : adoption.state === 'charged' ? `A purchase of ${adoption.request?.name ?? 'a puffle'} is being confirmed. ${adoption.error ?? ''}`.trim()
+            : `Adopting ${adoption.request?.name ?? 'a puffle'}…`);
+        row.append(note);
+        if (['reserved', 'charged'].includes(adoption.state)) button(row, 'Check purchase', () => action('reconcile', { projectId: project.id }), !connected || busy);
+      }
       list.append(row);
     }
   };

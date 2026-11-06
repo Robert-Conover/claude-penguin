@@ -1,6 +1,7 @@
 // Native igloo publication: the world container's visitor-only adapter reads
 // <dir>/published.json (mounted read-only as a directory). It contains only the
-// visitor's game ID and verified owner/igloo IDs for ready mappings.
+// visitor's game ID, verified owner/igloo IDs for ready mappings, and (version 2)
+// the outstanding adoption reservations the visitor may complete with p#cpadopt.
 //
 // One engine owns publication across all state directories. Ownership is an
 // exclusive owner.lock in the publication directory. A stale lock fails closed
@@ -17,10 +18,18 @@ export const OWNER_LOCK = 'owner.lock';
 function refuse(message) { return Object.assign(new Error(message), { statusCode: 409, code: 'PUBLICATION_OWNED' }); }
 const positive = value => Number.isSafeInteger(value) && value > 0;
 
-/** The publication payload for the owning engine's state. Only ready mappings are listed. */
-export function publicationFor(state) {
+export const PUBLICATION_VERSION = 2;
+export const MAX_PUBLISHED_ADOPTIONS = 8;
+const empty = (visitorId = null) => ({ version: PUBLICATION_VERSION, visitorId, igloos: [], adoptions: [] });
+
+/**
+ * The publication payload for the owning engine's state. Only ready mappings
+ * are listed, and only unexpired `reserved` or `charged` adoptions for listed
+ * owners (a charged one stays listed so a replay returns its stored receipt).
+ */
+export function publicationFor(state, now = Date.now()) {
   const visitorId = positive(state.visitor?.penguinId) ? state.visitor.penguinId : null;
-  if (visitorId === null) return { version: 1, visitorId: null, igloos: [] };
+  if (visitorId === null) return empty();
   const seen = new Set([visitorId]);
   const igloos = [];
   for (const project of state.projects) {
@@ -29,7 +38,13 @@ export function publicationFor(state) {
     seen.add(game.ownerId);
     igloos.push({ ownerId: game.ownerId, iglooId: game.iglooId });
   }
-  return { version: 1, visitorId, igloos };
+  const listed = new Set(igloos.map(item => item.ownerId));
+  const adoptions = (state.adoptions ?? [])
+    .filter(item => ['reserved', 'charged'].includes(item.state) && item.visitorId === visitorId && listed.has(item.ownerId)
+      && Date.parse(item.expiresAt) > now)
+    .slice(-MAX_PUBLISHED_ADOPTIONS)
+    .map(item => ({ adoptionId: item.id, ownerId: item.ownerId, expiresAt: Math.floor(Date.parse(item.expiresAt) / 1000) }));
+  return { version: PUBLICATION_VERSION, visitorId, igloos, adoptions };
 }
 
 function pidAlive(pid) {
@@ -100,7 +115,7 @@ export function acquirePublication({ dir, stateDir, pid = process.pid }) {
     /** Clean shutdown: publish an empty list, then release ownership. */
     close(visitorId = null) {
       if (released) return;
-      try { if (owned()) write({ version: 1, visitorId: positive(visitorId) ? visitorId : null, igloos: [] }); }
+      try { if (owned()) write(empty(positive(visitorId) ? visitorId : null)); }
       finally {
         released = true;
         if (owned()) fs.rmSync(lockPath);

@@ -1,0 +1,224 @@
+{
+  "version": 1,
+  "kind": "puffle-adoption-method-map",
+  "source": "vanilla-media/media/play/v2/client/puffle_adoption.swf",
+  "sourceSha256": "8b93c984367cbc547abe40c65d9d0635e95b2bb4f83e0d200e4990df83b09e39",
+  "decompiler": {
+    "name": "JPEXS",
+    "version": "26.4.0",
+    "librarySha256": "ed9314b24190f497a9e02236dae7caaf69062cbbe9d98157c005c3f1c25481d4",
+    "format": "script:pcode",
+    "normalized": [
+      "newfunction <method index>"
+    ]
+  },
+  "methods": [
+    {
+      "role": "entry",
+      "class": "com.clubpenguin.puffles.adoption.commands.SetupViewsCommand",
+      "kind": "method",
+      "method": "execute",
+      "instructions": 420,
+      "sha256": "9b2d3483b1e78bfb4739d2bd48ca4135f8ca2bbdd4fcc4c6e9d416dc34c45c9a",
+      "note": "Routes puffleAdoptionType to the pen (default) or a special view; insertion point for a destination picker."
+    },
+    {
+      "role": "entry",
+      "class": "com.clubpenguin.puffles.adoption.AdoptionContext",
+      "kind": "method",
+      "method": "startup",
+      "instructions": 183,
+      "sha256": "0eae79b1ff491309edd12de2dc089beeb3a0b79de443e25099925a651121779f",
+      "note": "Builds the model from the host local PlayerVO and socket connection."
+    },
+    {
+      "role": "catalog",
+      "class": "com.clubpenguin.puffles.adoption.mediators.PufflePenMediator",
+      "kind": "method",
+      "method": "setupPuffleViews",
+      "instructions": 100,
+      "sha256": "7b4439be72a6f03c1a37426572b2255d1381a9d60add2840ed42557d09cf8776",
+      "note": "Pen list: ten colors plus ORANGE_TABBY_CAT (1007) and BLUE_BORDER_COLLIE (1006)."
+    },
+    {
+      "role": "catalog",
+      "class": "com.clubpenguin.puffles.adoption.mediators.PufflePenMediator",
+      "kind": "method",
+      "method": "onViewComplete",
+      "instructions": 309,
+      "sha256": "f3ccd5a7d2c0d834d08bb4201f3533713e4e27eeb6c0e4c2deac54e16eaf74bb",
+      "note": "Stats board shows the visitor puffle count and coins; Rainbow and Gold poster buttons."
+    },
+    {
+      "role": "purchase",
+      "class": "com.clubpenguin.puffles.adoption.mediators.PufflePenMediator",
+      "kind": "method",
+      "method": "onAdoptClick",
+      "instructions": 191,
+      "sha256": "2df53a6b7dbfa4cd29bd61f1c3ff9e642b17d4576eb9b35a89b61d2d7fb22922",
+      "note": "Client checks: visitor coins < price (401 prompt), member and 75-puffle limit (440)."
+    },
+    {
+      "role": "purchase",
+      "class": "com.clubpenguin.puffles.adoption.mediators.PufflePenMediator",
+      "kind": "method",
+      "method": "showAdoptionDialog",
+      "instructions": 73,
+      "sha256": "7d51bfbfb4b86e64c714dfa0f1d1437c3005b0c7304399aec7137777d907051e",
+      "note": "Opens the naming dialog."
+    },
+    {
+      "role": "purchase",
+      "class": "com.clubpenguin.puffles.adoption.mediators.AdoptionDialogMediator",
+      "kind": "method",
+      "method": "onAdoptClicked",
+      "instructions": 23,
+      "sha256": "d7d826ff144baedeef089e117efe2247469e73917028e469cf215671283fe346",
+      "note": "Buy button; sends only after the name is pre-approved."
+    },
+    {
+      "role": "purchase",
+      "class": "com.clubpenguin.puffles.adoption.mediators.AdoptionDialogMediator",
+      "kind": "method",
+      "method": "activateAdoptButton",
+      "instructions": 46,
+      "sha256": "ea49a7a510bd506c7c5de3b70e7f631dcd507207a9f246408fbf4742554b9bdb",
+      "note": "Re-arms the buy click listener (no in-flight guard)."
+    },
+    {
+      "role": "purchase",
+      "class": "com.clubpenguin.puffles.adoption.model.AdoptionModel",
+      "kind": "method",
+      "method": "adoptSelectedPuffle",
+      "instructions": 19,
+      "sha256": "a0048995c407b57aa51eab3b7c7a34449dcae5a729e1618e487b49edb9ed99ed",
+      "note": "Model entry for the purchase."
+    },
+    {
+      "role": "purchase",
+      "class": "com.clubpenguin.puffles.adoption.services.PuffleAdoptionSocketService",
+      "kind": "method",
+      "method": "adoptPuffle",
+      "instructions": 62,
+      "sha256": "2c46cb5601b221fafaa917cb8fd25c487eefb820b81bb7257825e4d1066d1108",
+      "note": "Sends p#pn [typeId, name, subtypeId] through the host Connection."
+    },
+    {
+      "role": "naming",
+      "class": "com.clubpenguin.puffles.adoption.services.PuffleAdoptionSocketService",
+      "kind": "method",
+      "method": "checkPuffleNameWithResponse",
+      "instructions": 23,
+      "sha256": "53ea75ce09cd9f188236a0fea7ba8486f20a2dd5f16f044335ce8259995a1778",
+      "note": "p#checkpufflename; the server check_name result is cached by the model."
+    },
+    {
+      "role": "response",
+      "class": "com.clubpenguin.puffles.adoption.services.PuffleAdoptionSocketService",
+      "kind": "method",
+      "method": "onResponded",
+      "instructions": 367,
+      "sha256": "2f5ecc134bf3189969bc3c58624355880ad2b0fa90918bc2f7f89833f0453b19",
+      "note": "Handles pn: sets the id, adds the puffle to the visitor PlayerVO, dispatches puffleAdopted; handles 441/401 errors."
+    },
+    {
+      "role": "response",
+      "class": "com.clubpenguin.puffles.adoption.services.PuffleAdoptionDataParser",
+      "kind": "method",
+      "method": "getAdoptedPuffleID",
+      "instructions": 50,
+      "sha256": "d71c79137f3a14a6474c26a6009028dba4e85db70b5defc60f00ce63031dc952",
+      "note": "Parses the puffle id from the pn reply field 2."
+    },
+    {
+      "role": "response",
+      "class": "com.clubpenguin.puffles.adoption.mediators.AdoptionDialogMediator",
+      "kind": "method",
+      "method": "onPuffleAdopted",
+      "instructions": 36,
+      "sha256": "f383e91b9ce5d3277e841314ceff727d986ec241236e420619632c034aad7dfa",
+      "note": "Opens the certificate (PuffleCongratsView)."
+    },
+    {
+      "role": "response",
+      "class": "com.clubpenguin.puffles.adoption.mediators.PufflePenMediator",
+      "kind": "method",
+      "method": "onPuffleAdopted",
+      "instructions": 17,
+      "sha256": "fa6140799673c169bc34d76433db61f826188f313905e20b96de4a9612bec728",
+      "note": "Shows the Gold puffle poster after any adoption."
+    },
+    {
+      "role": "response",
+      "class": "com.clubpenguin.puffles.adoption.mediators.PufflePenMediator",
+      "kind": "method",
+      "method": "onPuffleAdoptionNotEnoughCoins",
+      "instructions": 19,
+      "sha256": "ae90c91f58e4b27a82cae1e9fdabc39053fca6049bd9f9e650d4a28ca20a6669",
+      "note": "Hides the modal on a 401 reply."
+    },
+    {
+      "role": "certificate",
+      "class": "com.clubpenguin.puffles.adoption.mediators.PuffleCongratsMediator",
+      "kind": "method",
+      "method": "onComplete",
+      "instructions": 63,
+      "sha256": "eca6dda1592e1067929a977dfa26873371d4a20b422a78e73a271d6515303209",
+      "note": "Certificate setup; loads care-item icons for ordinary colors."
+    },
+    {
+      "role": "certificate",
+      "class": "com.clubpenguin.puffles.adoption.mediators.PuffleCongratsMediator",
+      "kind": "method",
+      "method": "setView",
+      "instructions": 52,
+      "sha256": "3f24dbb2a966d052a7c6a278034e2ddd0c61ebe66c7964cd16f738c6358d05dd",
+      "note": "Frame by color name, or wild_<subtype> for the dog and cat."
+    },
+    {
+      "role": "certificate",
+      "class": "com.clubpenguin.puffles.adoption.mediators.PuffleCongratsMediator",
+      "kind": "method",
+      "method": "setPuffleName",
+      "instructions": 40,
+      "sha256": "ebcccc000fcc494c17d161b729210b51457880babf7660438a1985c26c60216b",
+      "note": "Name text from the model."
+    },
+    {
+      "role": "certificate",
+      "class": "com.clubpenguin.puffles.adoption.mediators.PuffleCongratsMediator",
+      "kind": "method",
+      "method": "localizeText",
+      "instructions": 214,
+      "sha256": "7351877a9faa9b5abdb57346b6759b77268c533438fe29e52431fb619782163b",
+      "note": "Ordinary colors list 5 x item 3 and 1 x item 79 as supplies; wild uses adopted-by username and date."
+    },
+    {
+      "role": "certificate",
+      "class": "com.clubpenguin.puffles.adoption.mediators.PuffleCongratsMediator",
+      "kind": "method",
+      "method": "getAdoptionDateString",
+      "instructions": 174,
+      "sha256": "a6a624d037c5e7b33c6006868fa4c669e477330049870a22b785efdb5af780d4",
+      "note": "Date from selectedPuffle.adoptionDate."
+    },
+    {
+      "role": "walk",
+      "class": "com.clubpenguin.puffles.adoption.mediators.PuffleCongratsMediator",
+      "kind": "method",
+      "method": "closeCurrentModule",
+      "instructions": 68,
+      "sha256": "1119ae833c4710e7cba42d118120f96d531308bc232759aa1be18bdea596d291",
+      "note": "OK and close both walk the new puffle, then close the module."
+    },
+    {
+      "role": "walk",
+      "class": "com.clubpenguin.puffles.adoption.mediators.PuffleCongratsMediator",
+      "kind": "method",
+      "method": "walkPuffle",
+      "instructions": 42,
+      "sha256": "b8551520a500ade16d27ffd7c2284f638ea709ddd401d5be9768a68cb6b0eaff",
+      "note": "AVM bridge walkPuffle {puffleID, showAdoptionAnimation} to the AS2 shell."
+    }
+  ]
+}

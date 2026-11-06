@@ -174,7 +174,12 @@ export function createLocalServer(options = {}) {
       if (urlPath === '/bridge/assets/engine.swf') {
         return await serveFile(req, res, path.join(root, '.local/client-bridge'), '/' + path.basename(urlPath));
       }
-      if (/^\/bridge\/(bootstrap\.js|panel\.mjs|model\.mjs|native-menu\.mjs|panel\.css)$/.test(urlPath)) {
+      // The derived adoption module exists only for the agent page (8081). The
+      // ordinary page keeps the archived module and native p#pn adoption.
+      if (urlPath === '/bridge/assets/puffle_adoption.swf' && options.agentMode === true) {
+        return await serveFile(req, res, path.join(root, '.local/client-bridge'), '/' + path.basename(urlPath));
+      }
+      if (/^\/bridge\/(bootstrap\.js|panel\.mjs|model\.mjs|native-menu\.mjs|adoption\.mjs|panel\.css)$/.test(urlPath)) {
         return await serveFile(req, res, path.join(here, 'bridge'), '/' + path.basename(urlPath));
       }
       if (['/', '/index.html', '/en/', '/en/index.html', '/es/', '/fr/', '/pt/'].includes(urlPath)) {

@@ -7,7 +7,7 @@ import path from 'node:path';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import { GameProtocolError, loginPasswordHash, worldSession } from './game-protocol.mjs';
-import { ProvisionError, createGameProvisioner, prepareOwnerIgloo, titleCase } from './game.mjs';
+import { createGameProvisioner, prepareOwnerIgloo, titleCase } from './game.mjs';
 import { SECRETS_FILE, generateUsername, newOwnerCredentials, readSecrets, writeSecrets } from './game-secrets.mjs';
 import { acquirePublication, publicationFor } from './publication.mjs';
 
@@ -77,50 +77,29 @@ test('the login hash matches the Python reference implementation', () => {
   assert.equal(loginPasswordHash('PenguinLocal2026!', 'houdini'), 'e2432dfd22246f839435aadeabff48a0');
 });
 
-test('an owner session validates, adopts, and records the server-normalized puffle name', async t => {
+test('an owner session creates or loads the igloo, enters it, and never adopts', async t => {
   const server = await fakeHoudini(t);
   const { world, penguinId } = await open(server);
   try {
     assert.equal(penguinId, 201);
-    const result = await prepareOwnerIgloo(world, { ownerId: 201, requestedName: 'aTLAS' });
-    assert.deepEqual(result, { iglooId: 9, roomId: 2201, puffleId: 31, puffleName: 'Atlas' });
+    assert.deepEqual(await prepareOwnerIgloo(world, { ownerId: 201 }), { iglooId: 9, roomId: 2201 });
   } finally { world.close(); }
-  assert.deepEqual(server.world.packets.filter(packet => packet !== 'j#js'), ['p#pgu', 'p#checkpufflename', 'p#pn', 'g#gm', 'j#jp', 'p#pg']);
+  assert.deepEqual(server.world.packets.filter(packet => packet !== 'j#js'), ['g#gm', 'j#jp']);
+  assert.equal(server.world.pets.length, 0, 'registration creates an empty igloo');
 });
 
-test('filtered names are rejected before adoption; error 441 is an explicit rejection', async t => {
-  const server = await fakeHoudini(t);
-  let session = await open(server);
-  await assert.rejects(prepareOwnerIgloo(session.world, { ownerId: 201, requestedName: 'Badword' }), error => error instanceof ProvisionError && error.code === 'NAME_REJECTED');
+test('an owner with puffles is entered unchanged; a changed layout or an unlocked igloo needs repair', async t => {
+  const existing = await fakeHoudini(t, { pets: [{ id: 44, name: 'Atlas' }, { id: 45, name: 'Comet' }] });
+  let session = await open(existing);
+  assert.deepEqual(await prepareOwnerIgloo(session.world, { ownerId: 201, recorded: { iglooId: 9 } }), { iglooId: 9, roomId: 2201 });
   session.world.close();
-  assert.equal(server.world.packets.includes('p#pn'), false, 'nothing is adopted after the pre-check fails');
-  server.world.reject441 = true;
-  session = await open(server);
-  await assert.rejects(prepareOwnerIgloo(session.world, { ownerId: 201, requestedName: 'Atlas' }), error => error.code === 'NAME_REJECTED' && /during adoption/.test(error.message));
-  session.world.close();
-  assert.equal(server.world.pets.length, 0);
-});
-
-test('retries reconcile an adopted puffle; unexpected puffles, layouts, or unlocked igloos need repair', async t => {
-  const reconcile = await fakeHoudini(t, { pets: [{ id: 44, name: 'Atlas' }] });
-  let session = await open(reconcile);
-  assert.deepEqual(await prepareOwnerIgloo(session.world, { ownerId: 201, requestedName: 'atlas' }), { iglooId: 9, roomId: 2201, puffleId: 44, puffleName: 'Atlas' });
-  session.world.close();
-  assert.equal(reconcile.world.packets.includes('p#pn'), false, 'an adopted puffle is never adopted twice');
-  session = await open(reconcile);
-  await assert.rejects(prepareOwnerIgloo(session.world, { ownerId: 201, requestedName: 'Atlas', recorded: { puffleId: 45, puffleName: 'Atlas' } }), error => error.code === 'MISMATCH');
-  session.world.close();
-  session = await open(reconcile);
-  await assert.rejects(prepareOwnerIgloo(session.world, { ownerId: 201, requestedName: 'Atlas', recorded: { iglooId: 8 } }), /active igloo changed/);
-  session.world.close();
-
-  const several = await fakeHoudini(t, { pets: [{ id: 44, name: 'Atlas' }, { id: 45, name: 'Comet' }] });
-  session = await open(several);
-  await assert.rejects(prepareOwnerIgloo(session.world, { ownerId: 201, requestedName: 'Atlas' }), error => error.code === 'MISMATCH' && /do not match/.test(error.message));
+  assert.equal(existing.world.packets.includes('p#pn'), false, 'the owner session never adopts');
+  session = await open(existing);
+  await assert.rejects(prepareOwnerIgloo(session.world, { ownerId: 201, recorded: { iglooId: 8 } }), error => error.code === 'MISMATCH' && /active igloo changed/.test(error.message));
   session.world.close();
   const unlocked = await fakeHoudini(t, { locked: '0' });
   session = await open(unlocked);
-  await assert.rejects(prepareOwnerIgloo(session.world, { ownerId: 201, requestedName: 'Atlas' }), /must stay locked/);
+  await assert.rejects(prepareOwnerIgloo(session.world, { ownerId: 201 }), /must stay locked/);
   session.world.close();
 });
 
@@ -138,11 +117,12 @@ test('wrong credentials and a stopped game fail without exposing secrets', async
 test('the provisioner uses the owner session against loopback ports and refuses non-managed accounts', async t => {
   const server = await fakeHoudini(t);
   const provisioner = createGameProvisioner({ root: os.tmpdir(), loginPort: server.loginPort, worldPort: server.worldPort, timeoutMs: 3000 });
-  const result = await provisioner.prepareIgloo({ username: server.username, password: server.password, ownerId: 201, requestedName: 'Nova', recorded: {} });
-  assert.equal(result.puffleName, 'Nova');
-  await assert.rejects(provisioner.prepareIgloo({ username: 'bridgecheck', password: 'PenguinLocal2026!', ownerId: 107, requestedName: 'Nova' }), /non-managed/);
-  await assert.rejects(provisioner.prepareIgloo({ username: 'player', password: 'x'.repeat(20), ownerId: 101, requestedName: 'Nova' }), /non-managed/);
-  await assert.rejects(provisioner.prepareIgloo({ username: server.username, password: server.password, ownerId: 999, requestedName: 'Nova', recorded: {} }), error => error.code === 'MISMATCH');
+  assert.deepEqual(await provisioner.prepareIgloo({ username: server.username, password: server.password, ownerId: 201, recorded: {} }), { iglooId: 9, roomId: 2201 });
+  for (const username of ['bridgecheck', 'adoptcheck', 'player']) {
+    await assert.rejects(provisioner.prepareIgloo({ username, password: 'PenguinLocal2026!', ownerId: 107 }), /non-managed/, username);
+  }
+  await assert.rejects(provisioner.prepareIgloo({ username: server.username, password: server.password, ownerId: 999, recorded: {} }), error => error.code === 'MISMATCH');
+  assert.throws(() => createGameProvisioner({ root: os.tmpdir(), visitorUsername: 'player' }), /visitor must be one of/);
   assert.deepEqual(server.world.logins.filter(name => !name.includes('|')), [server.username, server.username], 'only the managed owner ever logged in');
 });
 
@@ -175,7 +155,7 @@ test('seed requests and credentials travel on stdin only, with fixed Compose arg
   const password = 'Generated-Secret-Value-1234';
   const { spawn, runs } = fakeSpawn(request => request.op === 'owner'
     ? { stdout: `Creating container\n${JSON.stringify({ status: 'ok', ownerId: 201, created: true })}\n` }
-    : request.op === 'visitor' ? { stdout: JSON.stringify({ status: 'ok', penguinId: 107, username: 'bridgecheck', created: false }) }
+    : request.op === 'visitor' ? { stdout: JSON.stringify({ status: 'ok', penguinId: 107, username: request.username, created: false }) }
       : { stdout: JSON.stringify({ status: 'ok', results: request.mappings.map(mapping => ({ key: mapping.key, ok: true, problems: [] })) }) });
   const visitorPassword = 'Visitor-Fixture-Secret-77';
   const env = { PATH: process.env.PATH, CLUB_PENGUIN_TEST_PASSWORD: visitorPassword };
@@ -184,10 +164,10 @@ test('seed requests and credentials travel on stdin only, with fixed Compose arg
   const marker = 'f'.repeat(8) + '-0000-4000-8000-' + '0'.repeat(12);
   assert.deepEqual(await provisioner.ensureOwner({ marker, username: 'cpabcdefgh12', password, nickname: 'My Project' }), { ownerId: 201, created: true });
   const verified = await provisioner.verifyOwners([{ key: 'p', username: 'cpabcdefgh12' }]);
-  assert.deepEqual(verified, [{ key: 'p', ok: true, problems: [] }]);
+  assert.deepEqual(verified, [{ key: 'p', ok: true, problems: [], unrecorded: [] }]);
   assert.deepEqual(runs.map(run => [run.command, run.args]), Array(3).fill(['/repo/local/compose', ['run', '--rm', '--no-deps', '-T', 'provision']]));
   assert.equal(runs[1].request.password, password, 'the credential is in the stdin request');
-  assert.deepEqual(runs[0].request, { op: 'visitor', penguinId: null, password: visitorPassword }, 'the visitor password is in the stdin request, not the container environment');
+  assert.deepEqual(runs[0].request, { op: 'visitor', username: 'bridgecheck', penguinId: null, password: visitorPassword }, 'the visitor password is in the stdin request, not the container environment');
   assert.equal(runs[1].request.ownerId, null);
   for (const run of runs) {
     assert.equal([password, visitorPassword, 'cpabcdefgh12'].some(secret => run.args.join(' ').includes(secret)), false);
@@ -200,9 +180,24 @@ test('seed requests and credentials travel on stdin only, with fixed Compose arg
   assert.equal(runs[4].request.ownerId, 201);
   // Without a host override the service applies its own default, as before.
   await createGameProvisioner({ root: '/repo', spawn, env: { PATH: process.env.PATH } }).ensureVisitor();
-  assert.deepEqual(runs.at(-1).request, { op: 'visitor', penguinId: null });
+  assert.deepEqual(runs.at(-1).request, { op: 'visitor', username: 'bridgecheck', penguinId: null });
+  // The adoption test visitor is a separate marked fixture.
+  assert.equal((await createGameProvisioner({ root: '/repo', spawn, env: { PATH: process.env.PATH }, visitorUsername: 'adoptcheck' }).ensureVisitor()).username, 'adoptcheck');
+  assert.equal(runs.at(-1).request.username, 'adoptcheck');
   await assert.rejects(provisioner.ensureOwner({ marker: 'x', username: 'bridgecheck', password, nickname: 'X' }), /managed-owner namespace/);
   await assert.rejects(provisioner.verifyOwners([{ key: 'p', username: 'player' }]), /non-managed/);
+});
+
+test('receipts are read through the service by adoption ID and validated before use', async () => {
+  const id = '0b6f8a52-5f1e-4f53-9d0e-4b8e8b7e2a11';
+  const row = { adoption_id: id, visitor_id: 107, owner_id: 201, penguin_puffle_id: 40, puffle_id: 1006, name: 'Rex', cost: 800, coins_after: 4200, created_at: 1800000000 };
+  const { spawn, runs } = fakeSpawn(() => ({ stdout: JSON.stringify({ status: 'ok', schema: true, receipts: [row, { ...row, adoption_id: 'not-a-uuid' }, { ...row, adoption_id: id.replace('0b', '1b'), cost: 'x' }] }) }));
+  const provisioner = createGameProvisioner({ root: '/repo', spawn });
+  assert.deepEqual(await provisioner.readReceipts([id]), [{ adoptionId: id, visitorId: 107, ownerId: 201, puffleId: 40, puffleType: 1006, name: 'Rex', cost: 800, coinsAfter: 4200, createdAt: 1800000000 }]);
+  assert.deepEqual(runs[0].request, { op: 'receipts', adoptionIds: [id] });
+  assert.deepEqual(await provisioner.readReceipts([]), [], 'nothing to read runs nothing');
+  assert.equal(runs.length, 1);
+  await assert.rejects(provisioner.readReceipts(['nope']), /Invalid adoption IDs/);
 });
 
 test('seed failures map to explicit codes and redact credentials from diagnostics', async () => {
@@ -238,12 +233,18 @@ test('managed credentials use a 12-character namespace and a separate 0600 secre
   assert.throws(() => readSecrets(dir), /invalid entry/);
 });
 
-test('publication lists only the visitor and ready mappings, including the legacy fixture', () => {
+test('publication lists the visitor, ready mappings, and only open unexpired reservations for listed owners', () => {
   const project = (status, ownerId, iglooId, source = 'managed') => ({ game: { source, status, ownerId, iglooId } });
+  const now = Date.parse('2026-11-06T12:00:00.000Z');
+  const adoption = (id, state, ownerId, minutes) => ({ id: `0b6f8a52-5f1e-4f53-9d0e-4b8e8b7e2a1${id}`, state, visitorId: 107, ownerId, expiresAt: new Date(now + minutes * 60000).toISOString() });
   const state = { visitor: { penguinId: 107 }, projects: [project('ready', 201, 9), project('failed', 202, 10), project('repair', 203, 11),
-    project('provisioning', null, null), project('ready', 105, 4, 'legacy-fixture'), { game: null }] };
-  assert.deepEqual(publicationFor(state), { version: 1, visitorId: 107, igloos: [{ ownerId: 201, iglooId: 9 }, { ownerId: 105, iglooId: 4 }] });
-  assert.deepEqual(publicationFor({ ...state, visitor: null }), { version: 1, visitorId: null, igloos: [] });
+    project('provisioning', null, null), project('ready', 105, 4, 'legacy-fixture'), { game: null }],
+  adoptions: [adoption(1, 'reserved', 201, 5), adoption(2, 'charged', 201, 5), adoption(3, 'bound', 201, 5), adoption(4, 'withdrawn', 201, 5),
+    adoption(5, 'reserved', 201, -1), adoption(6, 'reserved', 202, 5)] };
+  assert.deepEqual(publicationFor(state, now), { version: 2, visitorId: 107, igloos: [{ ownerId: 201, iglooId: 9 }, { ownerId: 105, iglooId: 4 }],
+    adoptions: [{ adoptionId: state.adoptions[0].id, ownerId: 201, expiresAt: Math.floor((now + 300000) / 1000) },
+      { adoptionId: state.adoptions[1].id, ownerId: 201, expiresAt: Math.floor((now + 300000) / 1000) }] });
+  assert.deepEqual(publicationFor({ ...state, visitor: null }, now), { version: 2, visitorId: null, igloos: [], adoptions: [] });
 });
 
 test('one engine owns publication across state directories; stale owners fail closed and are never removed', t => {
@@ -258,7 +259,7 @@ test('one engine owns publication across state directories; stale owners fail cl
   assert.equal(fs.statSync(path.join(dir, 'published.json')).mode & 0o777, 0o644);
   assert.deepEqual(fs.readdirSync(dir).sort(), ['owner.lock', 'published.json'], 'no temporary files remain');
   first.close(107);
-  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(dir, 'published.json'), 'utf8')), { version: 1, visitorId: 107, igloos: [] });
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(dir, 'published.json'), 'utf8')), { version: 2, visitorId: 107, igloos: [], adoptions: [] });
   assert.equal(fs.existsSync(path.join(dir, 'owner.lock')), false);
 
   // An unclean exit leaves the lock and the last list; both stay until explicit recovery.

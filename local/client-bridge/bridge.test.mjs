@@ -12,7 +12,29 @@ const source = readFileSync(new URL('./bridge.as', import.meta.url), 'utf8');
 
 const fixture = () => overlayDouble().run;
 
-const configure = 'cpBridge.configure(107,[{projectId:"one",ownerId:105,puffleId:4},{projectId:"two",ownerId:106,puffleId:5}])';
+const configure = 'cpBridge.configure(107,[{projectId:"one",ownerId:105,puffles:[{puffleId:4,slot:1}]},{projectId:"two",ownerId:106,puffles:[{puffleId:5,slot:2}]}])';
+
+test('project adoption sends p#cpadopt through the shell and relays the reply; coins come only from the server', () => {
+  const run = fixture();
+  const read = expression => JSON.parse(run('JSON.stringify(' + expression + ')'));
+  const id = '0b6f8a52-5f1e-4f53-9d0e-4b8e8b7e2a11';
+  assert.equal(read(`cpBridge.adopt("${id}",3,"Moss",0)`).error, 'not-configured', 'only the configured visitor can buy');
+  run(configure);
+  for (const bad of [`"NOT-A-UUID",3,"Moss",0`, `"${id}",10,"Moss",0`, `"${id}",11,"Moss",0`, `"${id}",0,"Moss",1000`, `"${id}",3,"Two Words",0`, `"${id}",3,"",0`]) {
+    assert.equal(read(`cpBridge.adopt(${bad})`).error, 'invalid-adoption', bad);
+  }
+  assert.equal(read('sent.length'), 0);
+  assert.equal(read(`cpBridge.adopt("${id}",0,"Rex",1006)`).ok, true);
+  assert.deepEqual(read('sent[0]'), { ext: 's', command: 'p#cpadopt', args: [id, 0, 'Rex', 1006], type: 'str', room: 7 });
+  // Houdini's reply, as Airtower delivers it: the room first, then the fields.
+  run(`listeners.cpadopt.fn.call(listeners.cpadopt.scope, ["-1","${id}","ok","41","0","1006","Rex","4200","800","1800000000","201"])`);
+  assert.deepEqual(read('coins'), [4200], 'the shell shows the committed balance without a relog');
+  assert.deepEqual(read('events[events.length-1]'), { type: 'adoption-result', ok: true, adoptionId: id, puffleId: 41, typeId: 0, subtypeId: 1006,
+    name: 'Rex', coins: 4200, cost: 800, createdAt: 1800000000, ownerId: 201 });
+  run(`listeners.cpadopt.fn.call(listeners.cpadopt.scope, ["-1","${id}","error","401"])`);
+  assert.deepEqual(read('events[events.length-1]'), { type: 'adoption-result', ok: false, adoptionId: id, code: '401' });
+  assert.deepEqual(read('coins'), [4200], 'a refusal never changes coins');
+});
 
 test('only the configured visitor and current mapped puffle can animate', () => {
   const run = fixture();
@@ -55,10 +77,10 @@ test('real mapped clip emits its identity and restores the ordinary handler on d
 
 test('project configuration rejects duplicate ownership and invalid identifiers', () => {
   const run = fixture();
-  assert.equal(run('cpBridge.configure(107,[{projectId:"one",ownerId:107,puffleId:4}]).ok'), false);
-  assert.equal(run('cpBridge.configure(107,[{projectId:"one",ownerId:105,puffleId:4},{projectId:"two",ownerId:105,puffleId:5}]).ok'), false);
-  assert.equal(run('cpBridge.configure(107,[{projectId:"one",ownerId:105,puffleId:4.5}]).ok'), false);
-  assert.equal(run('cpBridge.configure(107,[{projectId:"one",ownerId:105,puffleId:4},{projectId:"one",ownerId:106,puffleId:5}]).ok'), false, 'duplicate project identity');
+  assert.equal(run('cpBridge.configure(107,[{projectId:"one",ownerId:107,puffles:[{puffleId:4,slot:4}]}]).ok'), false);
+  assert.equal(run('cpBridge.configure(107,[{projectId:"one",ownerId:105,puffles:[{puffleId:4,slot:4}]},{projectId:"two",ownerId:105,puffles:[{puffleId:5,slot:5}]}]).ok'), false);
+  assert.equal(run('cpBridge.configure(107,[{projectId:"one",ownerId:105,puffles:[{puffleId:4.5,slot:1}]}]).ok'), false);
+  assert.equal(run('cpBridge.configure(107,[{projectId:"one",ownerId:105,puffles:[{puffleId:4,slot:4}]},{projectId:"one",ownerId:106,puffles:[{puffleId:5,slot:5}]}]).ok'), false, 'duplicate project identity');
   assert.equal(run('cpBridge.configure(0,[]).ok'), false, 'an empty neighborhood still needs a verified visitor');
   assert.equal(run('cpBridge.configure(107,{length:0}).ok'), false);
   assert.equal(run('cpBridge.configured'), false);
@@ -76,7 +98,8 @@ test('native menu preserves modal state, submits only its explicit mapped fixtur
   assert.equal(run('ui.is_quick_keys_active'), false);
   assert.equal(run('ui.widgets'), true);
   assert.equal(run('shell.hideCount'), 1);
-  assert.equal(run('cpBridge.agentMenu.card.portrait.url'), '/engine/art/puffle-blue.png');
+  assert.equal(run('cpBridge.agentMenu.card.portrait.url'), '/media/play/v2/content/global/puffle/icons/blue.swf');
+  assert.deepEqual([run('cpBridge.agentMenu.card.portrait._x'), run('cpBridge.agentMenu.card.portrait._y')], [62.5, 105], 'centered art fits the portrait box');
   assert.equal(run('cpBridge.agentMenu.card.taskInput.type'), 'input');
   run('cpBridge.agentMenu.card.taskInput.text="Fix the greeting";cpBridge.agentMenu.card.sendButton.onRelease()');
   assert.equal(run('events[events.length-1].action'), 'submit');
@@ -91,6 +114,46 @@ test('native menu preserves modal state, submits only its explicit mapped fixtur
   assert.equal(run('ui.is_quick_keys_active'), true);
   assert.equal(run('ui.widgets'), false);
   assert.equal(run('shell.hideCount'), 0);
+});
+
+test('the card shows each puffle\'s own archived icon; the Blue Dog and Orange Cat use their base color', () => {
+  const run = fixture();
+  run(configure);
+  const portrait = color => {
+    run('cpBridge.hideAgentMenu();cpBridge.setAgentMenu(' + nativePayload.replace('attention:0', 'attention:0,color:' + JSON.stringify(color)) + ');cpBridge.showAgentMenu()');
+    return run('cpBridge.agentMenu.card.portrait.url').replace('/media/play/v2/content/global/puffle/icons/', '');
+  };
+  assert.deepEqual(['green', 'blue-dog', 'orange-cat', 'constructor', '../x'].map(portrait), ['green.swf', 'blue.swf', 'orange.swf', 'blue.swf', 'blue.swf']);
+});
+
+test('the X and roster rows stay clear of the igloo Like widget, which takes clicks in the stage\'s top-right corner', () => {
+  const run = fixture();
+  run(configure);
+  const roster = '[' + Array.from({ length: 10 }, (_, i) => '{slot:1,name:"P' + i + '",color:"green",status:"Ready",task:""}').join(',') + ']';
+  run('cpBridge.setAgentMenu(' + nativePayload.replace('attention:0', 'attention:0,roster:' + roster) + ');cpBridge.showAgentMenu()');
+  const card = { x: run('cpBridge.agentMenu.card._x'), y: run('cpBridge.agentMenu.card._y') };
+  const blocked = (x, y, w, h) => x + w > 600 && y < 166;
+  const close = run('[cpBridge.agentMenu.card.closeButton._x, cpBridge.agentMenu.card.closeButton._y]');
+  assert.equal(blocked(card.x + close[0], card.y + close[1], 27, 27), false);
+  assert.equal(run('cpBridge.agentMenu.card.roster.row9 != undefined'), true, 'all ten puffles are listed');
+  for (let i = 0; i < 10; i++) {
+    const [x, y] = run('[cpBridge.agentMenu.card.roster.row' + i + '._x, cpBridge.agentMenu.card.roster.row' + i + '._y]');
+    assert.equal(blocked(card.x + x, card.y + y, 176, 20), false, 'row ' + i);
+    assert.ok(y + 20 <= 342, 'row ' + i + ' fits the column');
+  }
+  assert.equal(run('cpBridge.agentMenu.card.roster.count.text'), '10 of 10 puffles');
+  assert.equal(run('cpBridge.agentMenu.card.roster.note.text'), 'This igloo is full.');
+});
+
+test('cards placed above the removable depth range still close', () => {
+  const run = fixture();
+  run(configure + ';ui.interface_mc.depth=2000000;cpBridge.setAgentMenu(' + nativePayload + ');cpBridge.showAgentMenu()');
+  assert.equal(run('cpBridge.agentMenu.getDepth() > 1048575'), true);
+  const menu = run('cpBridge.agentMenu');
+  assert.equal(run('cpBridge.hideAgentMenu().menuVisible'), false);
+  assert.equal(menu.removed, true, 'the owned card was moved into range and removed');
+  run('cpBridge.setAgentMenu({enabled:false})');
+  assert.equal(run('ui.interface_mc.__cpAgentHUD'), undefined, 'the HUD is removed too');
 });
 
 test('native controls fail closed for disconnected, stale, or mismatched sessions', () => {
@@ -184,15 +247,15 @@ test('reconfiguration replaces mappings without reload, advances the generation,
   const run = fixture();
   assert.equal(run('cpBridge.configure(107,[]).generation'), 1);
   // Dynamic addition: the project UUID maps to the current igloo.
-  assert.equal(run(`cpBridge.configure(107,[{projectId:"${uuidA}",ownerId:105,puffleId:4}]).generation`), 2);
+  assert.equal(run(`cpBridge.configure(107,[{projectId:"${uuidA}",ownerId:105,puffles:[{puffleId:4,slot:4}]}]).generation`), 2);
   run('cpBridge.tick();puffle.clip.onPress()');
   assert.equal(run('events[events.length-1].type'), 'puffle-click');
   assert.equal(run('events[events.length-1].projectId'), uuidA);
   assert.equal(run('events[events.length-1].generation'), 2);
-  assert.equal(run(`cpBridge.setAgentMenu({enabled:true,connected:true,projectId:"${uuidA}",name:"Atlas",status:"idle",canSubmit:true,running:true}).ok`), true);
+  assert.equal(run(`cpBridge.setAgentMenu({enabled:true,connected:true,projectId:"${uuidA}",draftSlot:4,name:"Atlas",status:"idle",canSubmit:true,running:true}).ok`), true);
   assert.equal(run('cpBridge.showAgentMenu().menuVisible'), true);
   // Same igloo, reassigned to another project: the hook is replaced and the old card closes.
-  assert.equal(run(`cpBridge.configure(107,[{projectId:"${uuidB}",ownerId:105,puffleId:4}]).generation`), 3);
+  assert.equal(run(`cpBridge.configure(107,[{projectId:"${uuidB}",ownerId:105,puffles:[{puffleId:4,slot:4}]}]).generation`), 3);
   assert.equal(run('puffle.clip.onPress === originalPress'), true, 'configure restores handlers before re-hooking');
   assert.equal(run('cpBridge.agentMenu==undefined'), true);
   assert.equal(run('cpBridge.agentData.projectId'), '');
@@ -208,9 +271,9 @@ test('reconfiguration replaces mappings without reload, advances the generation,
 
 test('a card for a project that stays mapped survives reconfiguration and reports the new generation', () => {
   const run = fixture();
-  run(`cpBridge.configure(107,[{projectId:"${uuidA}",ownerId:105,puffleId:4}])`);
-  run(`cpBridge.setAgentMenu({enabled:true,connected:true,projectId:"${uuidA}",name:"Atlas",status:"idle",canStart:true});cpBridge.showAgentMenu()`);
-  run(`cpBridge.configure(107,[{projectId:"${uuidA}",ownerId:105,puffleId:4},{projectId:"${uuidB}",ownerId:106,puffleId:5}])`);
+  run(`cpBridge.configure(107,[{projectId:"${uuidA}",ownerId:105,puffles:[{puffleId:4,slot:4}]}])`);
+  run(`cpBridge.setAgentMenu({enabled:true,connected:true,projectId:"${uuidA}",draftSlot:4,name:"Atlas",status:"idle",canStart:true});cpBridge.showAgentMenu()`);
+  run(`cpBridge.configure(107,[{projectId:"${uuidA}",ownerId:105,puffles:[{puffleId:4,slot:4}]},{projectId:"${uuidB}",ownerId:106,puffles:[{puffleId:5,slot:5}]}])`);
   assert.equal(run('cpBridge.agentMenu!=undefined'), true);
   run('cpBridge.menuAction("start")');
   assert.equal(run('events[events.length-1].action'), 'start');
@@ -253,11 +316,15 @@ test('overlay and browser share the contract version and identity bounds', () =>
   assert.equal(overlay.read('cpBridge.maxGameId'), contract.MAX_GAME_ID);
   assert.equal(overlay.read('cpBridge.maxProjects'), contract.MAX_MAPPINGS);
   const configure = projects => overlay.callExternalInterface('cpBridgeConfigure', 107, projects);
-  const mapping = index => ({ projectId: 'p' + index, ownerId: 200 + index, puffleId: 900 + index });
-  assert.equal(configure([{ projectId: 'edge', ownerId: contract.MAX_GAME_ID - 2000, puffleId: contract.MAX_GAME_ID }]).ok, true);
-  assert.equal(configure([{ projectId: 'over', ownerId: contract.MAX_GAME_ID + 1, puffleId: 4 }]).error, 'invalid-project');
+  assert.equal(overlay.read('cpBridge.maxPuffles'), contract.MAX_PUFFLES);
+  const mapping = index => ({ projectId: 'p' + index, ownerId: 200 + index, puffles: [{ puffleId: 900 + index, slot: index + 1 }] });
+  assert.equal(configure([{ projectId: 'edge', ownerId: contract.MAX_GAME_ID - 2000, puffles: [{ puffleId: contract.MAX_GAME_ID, slot: 1 }] }]).ok, true);
+  assert.equal(configure([{ projectId: 'over', ownerId: contract.MAX_GAME_ID + 1, puffles: [{ puffleId: 4, slot: 1 }] }]).error, 'invalid-project');
   assert.equal(configure(Array.from({ length: contract.MAX_MAPPINGS }, (_, index) => mapping(index))).ok, true);
   assert.equal(configure(Array.from({ length: contract.MAX_MAPPINGS + 1 }, (_, index) => mapping(index))).error, 'invalid-configuration');
+  const team = count => [{ projectId: 'team', ownerId: 300, puffles: Array.from({ length: count }, (_, index) => ({ puffleId: 700 + index, slot: 50 + index })) }];
+  assert.equal(configure(team(contract.MAX_PUFFLES)).ok, true, 'ten puffles in one igloo');
+  assert.equal(configure(team(contract.MAX_PUFFLES + 1)).error, 'invalid-project', 'an eleventh is refused');
 });
 
 test('every callback result carries the contract version, refusals included', () => {
@@ -267,10 +334,11 @@ test('every callback result carries the contract version, refusals included', ()
   const results = [
     call('cpBridgeSnapshot'), call('cpBridgeJoinIgloo', 105), call('cpBridgeAnimate', 4, 'working'),
     call('cpBridgeSetAgentMenu', null), call('cpBridgeShowAgentMenu'), call('cpBridgeHideAgentMenu'),
-    call('cpBridgeConfigure', 0, []), call('cpBridgeConfigure', 107, [{ projectId: 'one', ownerId: 105, puffleId: 4 }]),
+    call('cpBridgeConfigure', 0, []), call('cpBridgeConfigure', 107, [{ projectId: 'one', ownerId: 105, puffles: [{ puffleId: 4, slot: 1 }] }]),
     call('cpBridgeJoinIgloo', 105), call('cpBridgeJoinRoom', 1), call('cpBridgeJoinRoom', 100), call('cpBridgeAnimate', 4, 'working'),
     call('cpBridgeSetAgentMenu', { enabled: true, connected: true, projectId: 'missing' }),
-    call('cpBridgeSetAgentMenu', { enabled: true, connected: true, projectId: 'one' }), call('cpBridgeShowAgentMenu'),
+    call('cpBridgeSetAgentMenu', { enabled: true, connected: true, projectId: 'one', draftSlot: 1 }), call('cpBridgeShowAgentMenu'),
+    call('cpBridgeAdopt', 'nope', 0, 'Atlas', 0), call('cpBridgeAdopt', '0b6f8a52-5f1e-4f53-9d0e-4b8e8b7e2a11', 0, 'Atlas', 0),
     call('cpBridgeRejectAgentAction', 'submit', 'one'), call('cpBridgeRejectAgentAction', 1, 'one'), call('cpBridgeHideAgentMenu'),
     call('cpBridgeSetAgentMenu', { enabled: false }),
   ];
@@ -359,7 +427,7 @@ test('ES3 guard rejects constructs outside the AVM1 subset and accepts the overl
 test('overlay source documents every callback', () => {
   const readme = readFileSync(new URL('./README.md', import.meta.url), 'utf8');
   const callbacks = [...source.matchAll(/addCallback\("(\w+)"/g)].map(match => match[1]);
-  assert.equal(callbacks.length, 9);
+  assert.equal(callbacks.length, 10);
   for (const name of callbacks) assert.ok(readme.includes('`' + name + '('), `README.md documents ${name}`);
 });
 
@@ -402,7 +470,8 @@ test('browser mapping flow: empty neighborhood, dynamic addition, UUID routing, 
   assert.equal(read('cpBridge.joinIgloo(105)').ok, true);
   run('cpBridge.tick();puffle.clip.onPress()');
   const click = lastEvent();
-  assert.deepEqual(click, { type: 'puffle-click', ownerId: 105, puffleId: 4, projectId: PROJECT_A, generation: 2 });
+  const slot = configured.mappings.projects[0].puffles[0].slot;
+  assert.deepEqual(click, { type: 'puffle-click', ownerId: 105, puffleId: 4, projectId: PROJECT_A, slot, generation: 2 });
   const selection = selectionForClick(activeMappingsFor(key, configured), read('cpBridge.snapshot()'), configured.generation, click, engine);
   assert.deepEqual(selection, { projectId: PROJECT_A, workerId: 'worker-a' });
 

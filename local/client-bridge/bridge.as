@@ -1,14 +1,16 @@
 // Opt-in game bridge. Native menus display host-reported state; animation alone is not execution.
 // Added as a separate DoAction; none of the original client's actions are changed.
 if (_global.__claudePenguinBridge == undefined) {
-    _global.__claudePenguinBridge = {version:4, visitorId:0, projects:[], configured:false, generation:0};
+    _global.__claudePenguinBridge = {version:5, visitorId:0, projects:[], configured:false, generation:0};
 }
 var cpBridge = _global.__claudePenguinBridge;
-// Contract version 4: every callback result carries `version`, refusals included.
-// The browser mirrors the version and both bounds (web/bridge/model.mjs).
-cpBridge.version = 4;
+// Contract version 5: every callback result carries `version`, refusals included.
+// Each project maps a set of up to ten puffles with page-local draft slots.
+// The browser mirrors the version and the bounds (web/bridge/model.mjs).
+cpBridge.version = 5;
 cpBridge.maxGameId = 999999999;
 cpBridge.maxProjects = 32;
+cpBridge.maxPuffles = 10;
 if (typeof cpBridge.generation != "number") cpBridge.generation = 0;
 cpBridge.validId = function(value) {
     return typeof value == "number" && !isNaN(value) && value > 0 && value <= this.maxGameId && Math.floor(value) == value;
@@ -23,6 +25,9 @@ cpBridge.emit = function(event) {
 // generation. Hooks, snapshots, and events carry it so the browser can reject
 // controls prepared against an older mapping. An empty list is a valid empty
 // neighborhood for the verified visitor.
+cpBridge.validSlot = function(value) {
+    return typeof value == "number" && !isNaN(value) && value > 0 && value <= 100000 && Math.floor(value) == value;
+};
 cpBridge.configure = function(visitorId, projects) {
     if (!this.validId(visitorId) || !(projects instanceof Array) || projects.length > this.maxProjects) {
         return this.fail("invalid-configuration");
@@ -30,18 +35,28 @@ cpBridge.configure = function(visitorId, projects) {
     var checked = [];
     var owners = {};
     var puffles = {};
+    var slots = {};
     var ids = {};
     for (var i = 0; i < projects.length; i++) {
         var project = projects[i];
-        if (!this.validId(project.ownerId) || !this.validId(project.puffleId) || project.ownerId == visitorId ||
+        if (project == undefined || !this.validId(project.ownerId) || project.ownerId == visitorId ||
             typeof project.projectId != "string" || project.projectId.length < 1 || project.projectId.length > 100 ||
-            owners[project.ownerId] || puffles[project.puffleId] || ids["id:" + project.projectId]) {
+            owners[project.ownerId] || ids["id:" + project.projectId] || !(project.puffles instanceof Array) || project.puffles.length > this.maxPuffles) {
             return this.fail("invalid-project");
         }
+        var mapped = [];
+        for (var j = 0; j < project.puffles.length; j++) {
+            var puffle = project.puffles[j];
+            if (puffle == undefined || !this.validId(puffle.puffleId) || !this.validSlot(puffle.slot) || puffles[puffle.puffleId] || slots[puffle.slot]) {
+                return this.fail("invalid-project");
+            }
+            puffles[puffle.puffleId] = true;
+            slots[puffle.slot] = true;
+            mapped.push({puffleId:puffle.puffleId, slot:puffle.slot});
+        }
         owners[project.ownerId] = true;
-        puffles[project.puffleId] = true;
         ids["id:" + project.projectId] = true;
-        checked.push({ownerId:project.ownerId, puffleId:project.puffleId, projectId:project.projectId});
+        checked.push({ownerId:project.ownerId, projectId:project.projectId, puffles:mapped});
     }
     this.projects = checked;
     this.visitorId = visitorId;
@@ -53,6 +68,7 @@ cpBridge.configure = function(visitorId, projects) {
         this.hideAgentMenu();
         this.agentData.projectId = "";
     }
+    this.hideAlerts();
     return {ok:true, version:this.version, generation:this.generation};
 };
 cpBridge.snapshot = function() {
@@ -90,12 +106,26 @@ cpBridge.snapshot = function() {
     }
     return result;
 };
+// The project mapped to an owner, and (with a puffle ID) that puffle's entry.
 cpBridge.mapping = function(ownerId, puffleId) {
     for (var i = 0; i < this.projects.length; i++) {
         var project = this.projects[i];
-        if (project.ownerId == ownerId && (puffleId == undefined || project.puffleId == puffleId)) return project;
+        if (project.ownerId != ownerId) continue;
+        if (puffleId == undefined) return {project:project, puffle:null};
+        for (var j = 0; j < project.puffles.length; j++) {
+            if (project.puffles[j].puffleId == puffleId) return {project:project, puffle:project.puffles[j]};
+        }
+        return null;
     }
     return null;
+};
+cpBridge.slotMapped = function(projectId, slot) {
+    var project = this.menuMapping(projectId);
+    if (!project) return false;
+    for (var i = 0; i < project.puffles.length; i++) {
+        if (project.puffles[i].slot == slot) return true;
+    }
+    return false;
 };
 cpBridge.authorized = function() {
     var result = this.snapshot();
@@ -104,11 +134,13 @@ cpBridge.authorized = function() {
     if (result.playerId != this.visitorId) return this.fail("visitor-mismatch");
     return result;
 };
-cpBridge.joinIgloo = function(ownerId) {
+// `force` rejoins the igloo the visitor is already in, so a newly adopted puffle renders.
+cpBridge.joinIgloo = function(ownerId, force) {
     var current = this.authorized();
     if (!current.ok) return current;
     if (!this.validId(ownerId) || !this.mapping(ownerId)) return this.fail("unknown-project");
     if (_global.getCurrentShell().getCurrentGameRoomId() != undefined) return this.fail("leave-minigame-first");
+    if (current.ownerId == ownerId && force != true) return {ok:true, version:this.version, requestedOwnerId:ownerId, alreadyThere:true};
     _global.getCurrentShell().sendJoinPlayerIgloo(ownerId);
     return {ok:true, version:this.version, requestedOwnerId:ownerId};
 };
@@ -138,6 +170,15 @@ cpBridge.animate = function(puffleId, state) {
 };
 // The coding menu is drawn in the existing AVM1 display list. Host credentials,
 // repository paths, terminal bytes, and Claude session IDs never enter Flash.
+// removeMovieClip only works at depths 0 to 1048575. Owned clips are created
+// at getNextHighestDepth(), which is out of that range once any clip above it
+// exists in the parent, so move an owned clip into range before removing it.
+cpBridge.removeClip = function(clip) {
+    if (clip == undefined) return;
+    var depth = clip.getDepth();
+    if (depth < 0 || depth > 1048575) clip.swapDepths(1048000);
+    clip.removeMovieClip();
+};
 cpBridge.menuText = function(value, fallback, limit) {
     return typeof value == "string" ? value.substr(0, limit) : fallback;
 };
@@ -206,7 +247,7 @@ cpBridge.setAgentMenu = function(payload) {
     if (payload == undefined || typeof payload != "object" || typeof payload.enabled != "boolean") return this.fail("invalid-agent-menu");
     if (!payload.enabled) {
         this.hideAgentMenu();
-        if (this.agentHUD != undefined) this.agentHUD.removeMovieClip();
+        this.removeClip(this.agentHUD);
         this.agentHUD = undefined;
         this.agentData = {enabled:false};
         return this.menuResult();
@@ -214,13 +255,117 @@ cpBridge.setAgentMenu = function(payload) {
     var projectId = this.menuText(payload.projectId, "", 100);
     if (projectId != "" && payload.readOnly != true && !this.menuMapping(projectId)) return this.fail("unknown-project");
     var slot = typeof payload.draftSlot == "number" ? payload.draftSlot : 0;
+    // An editable card must name one of its project's mapped puffles.
+    if (projectId != "" && payload.readOnly != true && !this.slotMapped(projectId, slot)) return this.fail("unknown-puffle");
     if (this.agentData.projectId != projectId || this.agentData.draftSlot != slot) this.hideAgentMenu();
     this.agentData = {enabled:true, connected:payload.connected == true, projectId:projectId, draftSlot:slot, readOnly:payload.readOnly == true,
-        name:this.menuText(payload.name, "Your puffle", 80), projectName:this.menuText(payload.projectName, "Your igloo", 80),
+        name:this.menuText(payload.name, "Your puffle", 80), color:this.menuText(payload.color, "blue", 12), projectName:this.menuText(payload.projectName, "Your igloo", 80),
         status:this.menuText(payload.status, "offline", 30), activity:this.menuText(payload.activity, "", 160),
         canStart:payload.canStart == true, canSubmit:payload.canSubmit == true, running:payload.running == true,
-        attention:typeof payload.attention == "number" ? Math.max(0, Math.min(99, Math.floor(payload.attention))) : 0};
+        attention:typeof payload.attention == "number" ? Math.max(0, Math.min(99, Math.floor(payload.attention))) : 0,
+        roster:this.menuRows(payload.roster, projectId, 10, false), alerts:this.menuRows(payload.alerts, "", 20, true)};
     this.syncAgentMenu();
+    return this.menuResult();
+};
+// Bounded display rows. A roster row names a slot of the card's own project; an
+// attention row names a mapped project and slot. Anything else is dropped.
+cpBridge.menuRows = function(rows, projectId, limit, alerts) {
+    var checked = [];
+    if (!(rows instanceof Array)) return checked;
+    for (var i = 0; i < rows.length && checked.length < limit; i++) {
+        var row = rows[i];
+        if (row == undefined || typeof row != "object" || !this.validSlot(row.slot)) continue;
+        var owner = alerts ? this.menuText(row.projectId, "", 100) : projectId;
+        if (owner == "" || !this.slotMapped(owner, row.slot)) continue;
+        checked.push({projectId:owner, slot:row.slot, name:this.menuText(row.name, "Puffle", 16), status:this.menuText(row.status, "", 24),
+            task:alerts ? "" : this.menuText(row.task, "", 60), projectName:alerts ? this.menuText(row.projectName, "", 30) : "",
+            color:this.menuText(row.color, "blue", 12), selected:row.selected == true});
+    }
+    return checked;
+};
+cpBridge.puffleColors = {blue:0x2B6FD6, pink:0xF27FC3, black:0x333333, green:0x3FB34F, purple:0x8E4FC9, red:0xD9342B, yellow:0xF5D328,
+    white:0xF4F4F4, orange:0xF28C28, brown:0x8A5A35};
+cpBridge.puffleColors["blue-dog"] = 0x2B6FD6;
+cpBridge.puffleColors["orange-cat"] = 0xF28C28;
+// The archived puffle icon for a color. The Blue Dog and Orange Cat have only
+// AS3 art in the archive, which AVM1 cannot load, so they use their base color.
+cpBridge.portraitUrl = function(color) {
+    var base = color == "blue-dog" ? "blue" : color == "orange-cat" ? "orange" : color;
+    if (typeof this.puffleColors[base] != "number") base = "blue";
+    return "/media/play/v2/content/global/puffle/icons/" + base + ".swf";
+};
+cpBridge.dot = function(mc, x, y, color) {
+    var fill = typeof this.puffleColors[color] == "number" ? this.puffleColors[color] : 0x2B6FD6;
+    mc.lineStyle(1, 0x003858, 100);
+    mc.beginFill(fill, 100);
+    mc.moveTo(x + 5, y);
+    mc.curveTo(x + 10, y, x + 10, y + 5);
+    mc.curveTo(x + 10, y + 10, x + 5, y + 10);
+    mc.curveTo(x, y + 10, x, y + 5);
+    mc.curveTo(x, y, x + 5, y);
+    mc.endFill();
+};
+// One clickable row that selects a mapped puffle by project and slot. A compact
+// row is one line: the name, then the detail.
+cpBridge.selectRow = function(parent, name, row, x, y, width, label, detail, compact) {
+    var clip = parent.createEmptyMovieClip(name, parent.getNextHighestDepth());
+    clip._x = x;
+    clip._y = y;
+    this.roundBox(clip, 0, 0, width, compact ? 20 : 24, 7, row.selected ? 0xFFF4B8 : 0xF5FBFE, 0x00538E, 1);
+    this.dot(clip, 6, compact ? 5 : 7, row.color);
+    if (compact) {
+        this.textField(clip, "label", label, 20, 2, 80, 16, 11, 0x002849, true);
+        this.textField(clip, "detail", detail, 100, 4, width - 104, 14, 9, 0x254356, false);
+    } else {
+        this.textField(clip, "label", label, 20, 0, width - 24, 14, 11, 0x002849, true);
+        this.textField(clip, "detail", detail, 20, 11, width - 24, 13, 9, 0x254356, false);
+    }
+    clip.label.wordWrap = false;
+    clip.detail.wordWrap = false;
+    clip.projectId = row.projectId;
+    clip.slot = row.slot;
+    clip.onRelease = function() { _global.__claudePenguinBridge.selectPuffle(this.projectId, this.slot); };
+    return clip;
+};
+cpBridge.selectPuffle = function(projectId, slot) {
+    var current = this.authorized();
+    if (!current.ok) return current;
+    if (!this.slotMapped(projectId, slot)) return this.fail("unknown-puffle");
+    this.hideAlerts();
+    this.emit({type:"agent-menu-action", projectId:projectId, draftSlot:slot, action:"select", generation:this.generation});
+    return this.menuResult();
+};
+// Work: the actual puffles that need permission, an answer, recovery, or review.
+cpBridge.showAlerts = function() {
+    var current = this.authorized();
+    if (!current.ok) return current;
+    var ui = _global.getCurrentInterface();
+    if (ui == undefined || ui.interface_mc == undefined) return this.fail("interface-not-ready");
+    if (_global.getCurrentShell().getCurrentGameRoomId() != undefined) return this.fail("leave-minigame-first");
+    var alerts = this.agentData.alerts;
+    if (!(alerts instanceof Array) || alerts.length < 1) {
+        this.emit({type:"agent-menu-action", action:"work", generation:this.generation});
+        return this.menuResult();
+    }
+    this.hideAgentMenu();
+    this.hideAlerts();
+    var list = ui.interface_mc.createEmptyMovieClip("__cpAgentAlerts", ui.interface_mc.getNextHighestDepth());
+    this.agentAlerts = list;
+    list._x = 230;
+    list._y = 52;
+    var height = 70 + alerts.length * 28;
+    this.roundBox(list, -3, -3, 306, height + 6, 20, 0xFFFFFF, 0x003858, 2);
+    this.roundBox(list, 0, 0, 300, height, 18, 0x087AC1, 0x79DEFF, 3);
+    this.textField(list, "title", "Puffles that need you", 18, 12, 240, 26, 17, 0xFFFFFF, true);
+    this.menuButton(list, "closeButton", "X", "alerts-close", 262, 10, 27, 27);
+    for (var i = 0; i < alerts.length; i++) {
+        this.selectRow(list, "row" + i, alerts[i], 14, 48 + i * 28, 272, alerts[i].name + " \u00B7 " + alerts[i].projectName, alerts[i].status);
+    }
+    return this.menuResult();
+};
+cpBridge.hideAlerts = function() {
+    this.removeClip(this.agentAlerts);
+    this.agentAlerts = undefined;
     return this.menuResult();
 };
 cpBridge.hideAgentMenu = function() {
@@ -229,7 +374,7 @@ cpBridge.hideAgentMenu = function() {
     if (this.agentMenu != undefined) {
         this.agentDrafts["worker:" + this.agentMenuSlot] = this.agentMenu.card.taskInput.text;
         Selection.setFocus(null);
-        this.agentMenu.removeMovieClip();
+        this.removeClip(this.agentMenu);
         this.agentMenu = undefined;
         var ui = this.agentInterface;
         var shell = this.agentShell;
@@ -277,27 +422,45 @@ cpBridge.showAgentMenu = function() {
     shield.onPress = function() {};
     shield.useHandCursor = false;
     var card = menu.createEmptyMovieClip("card", menu.getNextHighestDepth());
-    card._x = 160;
+    card._x = 60;
     card._y = 62;
-    this.roundBox(card, -3, -3, 446, 356, 24, 0xFFFFFF, 0x003858, 2);
-    this.roundBox(card, 0, 0, 440, 350, 22, 0x087AC1, 0x79DEFF, 3);
+    this.roundBox(card, -3, -3, 646, 356, 24, 0xFFFFFF, 0x003858, 2);
+    this.roundBox(card, 0, 0, 640, 350, 22, 0x087AC1, 0x79DEFF, 3);
     this.roundBox(card, 8, 8, 424, 334, 17, 0x087AC1, 0x005B9F, 1);
-    this.textField(card, "title", "", 22, 12, 350, 30, 23, 0x001A2B, false);
+    this.roundBox(card, 440, 8, 192, 334, 17, 0x0B69A8, 0x005B9F, 1);
+    this.textField(card, "title", "", 22, 12, 366, 30, 23, 0x001A2B, false);
     this.textField(card, "project", "", 23, 43, 365, 22, 13, 0xFFFFFF, false);
-    this.menuButton(card, "closeButton", "X", "close", 400, 12, 27, 27);
+    this.textField(card, "rosterTitle", "In this igloo", 452, 16, 140, 22, 14, 0xFFFFFF, true);
+    card.createEmptyMovieClip("roster", card.getNextHighestDepth());
+    // The igloo Like widget sits in the host's AS3 layer above this card and
+    // takes clicks across the stage's top-right corner (about x >= 600 and
+    // y <= 165), so the X and the roster rows stay out of that area.
+    this.menuButton(card, "closeButton", "X", "close", 396, 12, 27, 27);
     this.roundBox(card, 20, 72, 400, 65, 12, 0xF5FBFE, 0x00538E, 2);
     var portrait = card.createEmptyMovieClip("portrait", card.getNextHighestDepth());
-    portrait._x = 30;
-    portrait._y = 78;
     var loader = new MovieClipLoader();
     var listener = {};
+    // Fit the loaded art inside the 65x54 portrait box at (30, 78), whatever
+    // its registration point (the archived icons are centered on 0,0).
     listener.onLoadInit = function(clip) {
-        var scale = Math.min(65 / clip._width, 54 / clip._height) * 100;
-        clip._xscale = scale;
-        clip._yscale = scale;
+        clip.stop();
+        var bounds = clip.getBounds(clip);
+        var width = bounds.xMax - bounds.xMin;
+        var height = bounds.yMax - bounds.yMin;
+        if (!(width > 0 && height > 0)) return;
+        var scale = Math.min(65 / width, 54 / height);
+        clip._xscale = scale * 100;
+        clip._yscale = scale * 100;
+        clip._x = 30 + (65 - width * scale) / 2 - bounds.xMin * scale;
+        clip._y = 78 + (54 - height * scale) / 2 - bounds.yMin * scale;
+    };
+    listener.onLoadError = function(clip) {
+        if (clip.cpFallback == true) return;
+        clip.cpFallback = true;
+        loader.loadClip("/engine/art/puffle-blue.png", clip);
     };
     loader.addListener(listener);
-    loader.loadClip("/engine/art/puffle-blue.png", portrait);
+    loader.loadClip(this.portraitUrl(this.agentData.color), portrait);
     menu.portraitLoader = loader;
     this.textField(card, "status", "", 105, 80, 305, 24, 17, 0x003B67, true);
     this.textField(card, "activity", "", 105, 104, 305, 31, 11, 0x254356, false);
@@ -320,6 +483,8 @@ cpBridge.showAgentMenu = function() {
 };
 cpBridge.menuAction = function(action) {
     if (action == "close") return this.hideAgentMenu();
+    if (action == "alerts-close") return this.hideAlerts();
+    if (action == "work" && this.agentMenu == undefined) return this.showAlerts();
     var current = this.authorized();
     if (!current.ok) { this.hideAgentMenu(); return current; }
     var data = this.agentData;
@@ -377,7 +542,8 @@ cpBridge.syncAgentMenu = function() {
     var available = this.agentData.enabled == true && current.ok && ui != undefined && ui.interface_mc != undefined && shell.getCurrentGameRoomId() == undefined;
     if (!available) {
         this.hideAgentMenu();
-        if (this.agentHUD != undefined) this.agentHUD.removeMovieClip();
+        this.hideAlerts();
+        this.removeClip(this.agentHUD);
         this.agentHUD = undefined;
         return;
     }
@@ -426,6 +592,26 @@ cpBridge.syncAgentMenu = function() {
     this.enableMenuButton(card.sendButton, data.connected && data.canSubmit && this.agentSubmitPending != true);
     this.enableMenuButton(card.changesButton, data.connected);
     card.taskInput.type = data.connected && data.canSubmit ? "input" : "dynamic";
+    this.syncRoster(card, data);
+};
+// Redraws the roster column only when its rows change.
+cpBridge.syncRoster = function(card, data) {
+    var rows = data.roster instanceof Array ? data.roster : [];
+    var key = "";
+    for (var i = 0; i < rows.length; i++) key += rows[i].slot + "|" + rows[i].name + "|" + rows[i].status + "|" + rows[i].task + "|" + rows[i].selected + ";";
+    if (card.roster.key == key) return;
+    this.removeClip(card.roster);
+    var roster = card.createEmptyMovieClip("roster", card.getNextHighestDepth());
+    roster.key = key;
+    var count = rows.length + " of " + this.maxPuffles + " puffles";
+    var note = rows.length >= this.maxPuffles ? "This igloo is full." : "Adopt more at the Pet Shop.";
+    this.textField(roster, "count", count, 452, 42, 168, 18, 12, 0xFFFFFF, true);
+    this.textField(roster, "note", note, 452, 62, 168, 36, 11, 0xFFFFFF, false);
+    // Rows start below the igloo Like widget's click area (see showAgentMenu).
+    for (var j = 0; j < rows.length; j++) {
+        var row = rows[j];
+        this.selectRow(roster, "row" + j, row, 448, 116 + j * 22, 176, row.name, row.status, true);
+    }
 };
 cpBridge.agentData = {enabled:false};
 cpBridge.agentDrafts = {};
@@ -437,19 +623,20 @@ cpBridge.tick = function() {
     for (var i = 0; i < puffles.length; i++) {
         var puffle = puffles[i];
         var clip = puffle.clip;
-        var project = current.ok ? this.mapping(current.ownerId, puffle.id) : null;
-        if (project && clip._visible && puffle._artClip._totalframes > 1) {
+        var found = current.ok ? this.mapping(current.ownerId, puffle.id) : null;
+        if (found && clip._visible && puffle._artClip._totalframes > 1) {
             if (!clip.__cpBridgeHook) {
                 clip.__cpBridgePreviousPress = clip.onPress;
                 clip.__cpBridgeHook = true;
                 clip.__cpBridgePuffleId = puffle.id;
-                clip.__cpBridgeOwnerId = project.ownerId;
+                clip.__cpBridgeOwnerId = found.project.ownerId;
                 clip.onPress = function() {
                     var bridge = _global.__claudePenguinBridge;
                     var snapshot = bridge.authorized();
                     var mapping = bridge.mapping(snapshot.ownerId, this.__cpBridgePuffleId);
                     if (snapshot.ok && mapping && snapshot.ownerId == this.__cpBridgeOwnerId) {
-                        bridge.emit({type:"puffle-click", ownerId:snapshot.ownerId, puffleId:this.__cpBridgePuffleId, projectId:mapping.projectId, generation:bridge.generation});
+                        bridge.emit({type:"puffle-click", ownerId:snapshot.ownerId, puffleId:this.__cpBridgePuffleId, projectId:mapping.project.projectId,
+                            slot:mapping.puffle.slot, generation:bridge.generation});
                     }
                 };
             }
@@ -472,6 +659,63 @@ cpBridge.unhookAll = function() {
         if (puffles[i].clip.__cpBridgeHook) this.unhook(puffles[i].clip);
     }
 };
+// Project adoption (Plan B4). The browser passes the adoption ID the engine
+// reserved and published; the overlay sends p#cpadopt through the shell's own
+// connection and relays the reply. Only the world server debits coins; on
+// success the shell shows the committed balance without a relog. The reply is
+// never forwarded to AS3, so no puffle enters the visitor's own collections.
+cpBridge.adoptionId = function(value) {
+    if (typeof value != "string" || value.length != 36) return false;
+    for (var i = 0; i < 36; i++) {
+        var c = value.charAt(i);
+        var dash = i == 8 || i == 13 || i == 18 || i == 23;
+        if (dash ? c != "-" : !((c >= "0" && c <= "9") || (c >= "a" && c <= "f"))) return false;
+    }
+    return true;
+};
+cpBridge.puffleName = function(value) {
+    if (typeof value != "string" || value.length < 1 || value.length > 12) return false;
+    for (var i = 0; i < value.length; i++) {
+        var c = value.charAt(i);
+        if (!((c >= "a" && c <= "z") || (c >= "A" && c <= "Z"))) return false;
+    }
+    return true;
+};
+cpBridge.adopt = function(adoptionId, typeId, name, subtypeId) {
+    var current = this.authorized();
+    if (!current.ok) return current;
+    if (!this.adoptionId(adoptionId) || typeof typeId != "number" || typeId < 0 || typeId > 9 || Math.floor(typeId) != typeId ||
+        typeof subtypeId != "number" || (subtypeId != 0 && subtypeId != 1006 && subtypeId != 1007) || !this.puffleName(name)) {
+        return this.fail("invalid-adoption");
+    }
+    var shell = _global.getCurrentShell();
+    var airtower = shell.AIRTOWER;
+    if (airtower == undefined) return this.fail("connection-not-ready");
+    if (this.adoptionListener == undefined) {
+        this.adoptionListener = function(event) { _global.__claudePenguinBridge.adoptionReply(event); };
+    }
+    // Registered once per connection; Airtower ignores a duplicate listener.
+    airtower.addListener("cpadopt", this.adoptionListener, this);
+    airtower.send("s", "p#cpadopt", [adoptionId, typeId, name, subtypeId], "str", shell.getCurrentServerRoomId());
+    return {ok:true, version:this.version, adoptionId:adoptionId};
+};
+// Reply fields after the command: [room, adoptionId, "ok", puffleId, typeId, subtypeId, name, coins, cost, createdAt, ownerId]
+// or [room, adoptionId, "error", code]. Airtower passes them with the room first.
+cpBridge.adoptionReply = function(event) {
+    var fields = [];
+    for (var i = 0; i < event.length; i++) fields.push(event[i]);
+    if (fields.length > 0 && !this.adoptionId(String(fields[0])) && String(fields[0]) != "") fields.shift();
+    var adoptionId = String(fields[0]);
+    if (fields[1] == "ok" && fields.length >= 10) {
+        var coins = Number(fields[6]);
+        if (!isNaN(coins)) _global.getCurrentShell().setMyPlayerTotalCoins(coins);
+        this.emit({type:"adoption-result", ok:true, adoptionId:adoptionId, puffleId:Number(fields[2]), typeId:Number(fields[3]), subtypeId:Number(fields[4]),
+            name:String(fields[5]), coins:coins, cost:Number(fields[7]), createdAt:Number(fields[8]), ownerId:Number(fields[9])});
+    } else {
+        this.emit({type:"adoption-result", ok:false, adoptionId:adoptionId, code:String(fields[2])});
+    }
+};
+flash.external.ExternalInterface.addCallback("cpBridgeAdopt", cpBridge, cpBridge.adopt);
 flash.external.ExternalInterface.addCallback("cpBridgeSetAgentMenu", cpBridge, cpBridge.setAgentMenu);
 flash.external.ExternalInterface.addCallback("cpBridgeShowAgentMenu", cpBridge, cpBridge.showAgentMenu);
 flash.external.ExternalInterface.addCallback("cpBridgeHideAgentMenu", cpBridge, cpBridge.hideAgentMenu);

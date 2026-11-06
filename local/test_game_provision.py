@@ -26,6 +26,8 @@ class FakeConnection:
         self.penguins = []
         self.rooms = {}
         self.pets = []
+        self.receipts = []
+        self.schema = None
         self.statements = []
 
     @contextlib.asynccontextmanager
@@ -37,6 +39,10 @@ class FakeConnection:
 
     async def fetch(self, query, value):
         self.statements.append(query)
+        if 'FROM claude_penguin_adoption_receipt' in query and 'penguin_puffle_id = ANY' in query:
+            return [row for row in self.receipts if row['penguin_puffle_id'] in value]
+        if 'FROM claude_penguin_adoption_receipt' in query:
+            return [row for row in self.receipts if row['adoption_id'] in value]
         if 'FROM penguin_puffle' in query:
             return [pet for pet in self.pets if pet['penguin_id'] == value]
         if 'WHERE email' in query:
@@ -53,6 +59,10 @@ class FakeConnection:
 
     async def fetchval(self, query, *values):
         self.statements.append(query)
+        if 'to_regclass' in query:
+            return self.schema is not None
+        if 'FROM claude_penguin_schema' in query:
+            return self.schema
         if 'FROM penguin WHERE id' in query:
             return next((row['id'] for row in self.penguins if row['id'] == values[0]), None)
         if 'lower(username)' in query:
@@ -120,21 +130,73 @@ class ProvisionTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'unrelated'):
             run(game_provision.handle({'op': 'visitor'}, db, {}))
 
-    def test_verify_requires_complete_locked_mapping(self):
+    def test_the_adoption_test_visitor_is_a_separate_marked_fixture(self):
         db = FakeConnection()
+        result = run(game_provision.handle({'op': 'visitor', 'username': 'adoptcheck'}, db, {}))
+        self.assertEqual((result['username'], db.penguins[0]['email'], db.penguins[0]['nickname']),
+                         ('adoptcheck', 'adoptcheck@bridge.example.invalid', 'Adopt Check'))
+        for username in ('player', 'localcheck', 'cpabcdefgh12'):
+            with self.assertRaises(game_provision.RequestError):
+                run(game_provision.handle({'op': 'visitor', 'username': username}, db, {}))
+
+    def managed(self, db, pets):
         db.penguins.append({'id': 201, 'username': 'cpabcdefgh12', 'email': EMAIL, 'igloo': 9})
         db.rooms[9] = {'penguin_id': 201, 'locked': True}
-        db.pets.append({'id': 31, 'penguin_id': 201, 'puffle_id': 0, 'name': 'Atlas', 'backyard': False})
-        mapping = {'key': 'p1', 'marker': MARKER, 'username': 'cpabcdefgh12', 'ownerId': 201, 'iglooId': 9,
-                   'puffleId': 31, 'puffleName': 'Atlas'}
-        result = run(game_provision.handle({'op': 'verify', 'mappings': [mapping]}, db))
-        self.assertEqual(result, {'status': 'ok', 'results': [{'key': 'p1', 'ok': True, 'problems': []}]})
+        db.pets.extend({'penguin_id': 201, 'backyard': False, **pet} for pet in pets)
+        return {'key': 'p1', 'marker': MARKER, 'username': 'cpabcdefgh12', 'ownerId': 201, 'iglooId': 9,
+                'puffles': [{'puffleId': pet['id'], 'name': pet['name'], 'puffleType': pet['puffle_id']} for pet in pets]}
+
+    def verify(self, db, mapping):
+        return run(game_provision.handle({'op': 'verify', 'mappings': [mapping]}, db))['results'][0]
+
+    def test_verify_requires_a_locked_layout_and_exactly_the_recorded_puffles(self):
+        db = FakeConnection()
+        mapping = self.managed(db, [{'id': 31, 'puffle_id': 0, 'name': 'Atlas'}, {'id': 33, 'puffle_id': 1006, 'name': 'Rex'}])
+        self.assertEqual(self.verify(db, mapping), {'key': 'p1', 'ok': True, 'problems': []})
+        self.assertTrue(self.verify(db, {**mapping, 'puffles': []})['problems'], 'unrecorded puffles fail')
         db.rooms[9]['locked'] = False
-        db.pets.append({'id': 32, 'penguin_id': 201, 'puffle_id': 0, 'name': 'Extra', 'backyard': False})
-        problems = run(game_provision.handle({'op': 'verify', 'mappings': [{**mapping, 'iglooId': 9}]}, db))['results'][0]
-        self.assertFalse(problems['ok'])
-        self.assertTrue(any('locked' in problem for problem in problems['problems']))
-        self.assertTrue(any('exactly one' in problem for problem in problems['problems']))
+        self.assertTrue(any('locked' in problem for problem in self.verify(db, mapping)['problems']))
+        db.rooms[9]['locked'] = True
+        db.pets[1]['backyard'] = True
+        self.assertTrue(any('backyard' in problem for problem in self.verify(db, mapping)['problems']))
+        db.pets[1].update(backyard=False, puffle_id=1007)
+        self.assertTrue(any('different name or type' in problem for problem in self.verify(db, mapping)['problems']))
+
+    def test_an_empty_igloo_verifies_and_extra_puffles_carry_their_receipts(self):
+        db = FakeConnection()
+        mapping = self.managed(db, [])
+        self.assertTrue(self.verify(db, mapping)['ok'], 'a new project igloo has no puffles')
+        db.pets.append({'id': 40, 'penguin_id': 201, 'puffle_id': 3, 'name': 'Moss', 'backyard': False})
+        result = self.verify(db, mapping)
+        self.assertFalse(result['ok'])
+        self.assertEqual(result['unrecorded'], [{'puffleId': 40, 'adoptionId': None}])
+        db.schema = 1
+        db.receipts.append({'adoption_id': '0b6f8a52-5f1e-4f53-9d0e-4b8e8b7e2a11', 'penguin_puffle_id': 40})
+        self.assertEqual(self.verify(db, mapping)['unrecorded'], [{'puffleId': 40, 'adoptionId': '0b6f8a52-5f1e-4f53-9d0e-4b8e8b7e2a11'}])
+
+    def test_recorded_puffle_lists_are_bounded_and_typed(self):
+        db = FakeConnection()
+        mapping = self.managed(db, [])
+        for puffles in ([{'puffleId': n, 'name': 'A', 'puffleType': 0} for n in range(1, 12)],
+                        [{'puffleId': 1, 'name': 'A', 'puffleType': 10}], [{'puffleId': 1, 'name': 'A'}],
+                        [{'puffleId': 1, 'name': 'A', 'puffleType': 0}, {'puffleId': 1, 'name': 'B', 'puffleType': 0}]):
+            with self.assertRaises(game_provision.RequestError):
+                self.verify(db, {**mapping, 'puffles': puffles})
+
+    def test_receipts_are_read_only_and_absent_before_the_world_creates_the_table(self):
+        db = FakeConnection()
+        adoption = '0b6f8a52-5f1e-4f53-9d0e-4b8e8b7e2a11'
+        self.assertEqual(run(game_provision.handle({'op': 'receipts', 'adoptionIds': [adoption]}, db)),
+                         {'status': 'ok', 'schema': False, 'receipts': []})
+        db.schema = 1
+        row = {'adoption_id': adoption, 'visitor_id': 7, 'owner_id': 201, 'penguin_puffle_id': 40, 'puffle_id': 3,
+               'name': 'Moss', 'cost': 400, 'coins_after': 600, 'created_at': 1}
+        db.receipts.append(row)
+        self.assertEqual(run(game_provision.handle({'op': 'receipts', 'adoptionIds': [adoption]}, db))['receipts'], [row])
+        for bad in ([adoption.upper()], [adoption, adoption], ['x'], 'nope'):
+            with self.assertRaises(game_provision.RequestError):
+                run(game_provision.handle({'op': 'receipts', 'adoptionIds': bad}, db))
+        self.assertFalse(any(statement.lstrip().upper().startswith(('INSERT', 'UPDATE', 'DELETE')) for statement in db.statements))
 
     def test_protocol_verifiers_refuse_interactive_accounts_before_connecting(self):
         from types import SimpleNamespace
