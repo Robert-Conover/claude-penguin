@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "start": "node server.mjs",
-    "test": "node --test server.test.mjs bridge/model.test.mjs bridge/native-menu.test.mjs engine/ui-model.test.mjs",
+    "test": "node --test server.test.mjs bridge/model.test.mjs bridge/native-menu.test.mjs bridge/panel.test.mjs engine/ui-model.test.mjs",
     "verify:http": "node verify-http.mjs"
   },
   "engines": {

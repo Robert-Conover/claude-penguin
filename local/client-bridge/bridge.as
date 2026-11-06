@@ -1,40 +1,59 @@
-// Opt-in fixture bridge. Native menus display host-reported state; animation alone is not execution.
+// Opt-in game bridge. Native menus display host-reported state; animation alone is not execution.
 // Added as a separate DoAction; none of the original client's actions are changed.
 if (_global.__claudePenguinBridge == undefined) {
-    _global.__claudePenguinBridge = {version:1, visitorId:0, projects:[], configured:false};
+    _global.__claudePenguinBridge = {version:4, visitorId:0, projects:[], configured:false, generation:0};
 }
 var cpBridge = _global.__claudePenguinBridge;
+// Contract version 4: every callback result carries `version`, refusals included.
+// The browser mirrors the version and both bounds (web/bridge/model.mjs).
+cpBridge.version = 4;
+cpBridge.maxGameId = 999999999;
+cpBridge.maxProjects = 32;
+if (typeof cpBridge.generation != "number") cpBridge.generation = 0;
 cpBridge.validId = function(value) {
-    return typeof value == "number" && !isNaN(value) && value > 0 && value < 1000000000 && Math.floor(value) == value;
+    return typeof value == "number" && !isNaN(value) && value > 0 && value <= this.maxGameId && Math.floor(value) == value;
 };
 cpBridge.fail = function(reason) {
-    return {ok:false, error:reason, version:1};
+    return {ok:false, error:reason, version:this.version};
 };
 cpBridge.emit = function(event) {
     flash.external.ExternalInterface.call("window.ClaudePenguinBridge.receive", event);
 };
+// Each successful configuration replaces every mapping and advances the
+// generation. Hooks, snapshots, and events carry it so the browser can reject
+// controls prepared against an older mapping. An empty list is a valid empty
+// neighborhood for the verified visitor.
 cpBridge.configure = function(visitorId, projects) {
-    if (!this.validId(visitorId) || !(projects instanceof Array) || projects.length < 1 || projects.length > 32) {
+    if (!this.validId(visitorId) || !(projects instanceof Array) || projects.length > this.maxProjects) {
         return this.fail("invalid-configuration");
     }
     var checked = [];
     var owners = {};
     var puffles = {};
+    var ids = {};
     for (var i = 0; i < projects.length; i++) {
         var project = projects[i];
         if (!this.validId(project.ownerId) || !this.validId(project.puffleId) || project.ownerId == visitorId ||
             typeof project.projectId != "string" || project.projectId.length < 1 || project.projectId.length > 100 ||
-            owners[project.ownerId] || puffles[project.puffleId]) {
+            owners[project.ownerId] || puffles[project.puffleId] || ids["id:" + project.projectId]) {
             return this.fail("invalid-project");
         }
         owners[project.ownerId] = true;
         puffles[project.puffleId] = true;
+        ids["id:" + project.projectId] = true;
         checked.push({ownerId:project.ownerId, puffleId:project.puffleId, projectId:project.projectId});
     }
     this.projects = checked;
     this.visitorId = visitorId;
     this.configured = true;
-    return {ok:true, version:1};
+    this.generation = this.generation + 1;
+    // Drop every existing click hook; tick re-attaches only currently mapped puffles.
+    this.unhookAll();
+    if (this.agentData.projectId != undefined && this.agentData.projectId != "" && !this.menuMapping(this.agentData.projectId)) {
+        this.hideAgentMenu();
+        this.agentData.projectId = "";
+    }
+    return {ok:true, version:this.version, generation:this.generation};
 };
 cpBridge.snapshot = function() {
     var shell = _global.getCurrentShell();
@@ -47,7 +66,7 @@ cpBridge.snapshot = function() {
         ownerId = Number(shell.getIglooPlayerID());
         ready = this.validId(ownerId) && roomId == ownerId + 2000;
     }
-    var result = {ok:ready, version:1, configured:this.configured, playerId:0, roomId:0, ownerId:0, puffles:[], nativeMenuReady:this.agentHUD != undefined};
+    var result = {ok:ready, version:this.version, configured:this.configured, generation:this.generation, playerId:0, roomId:0, ownerId:0, puffles:[], nativeMenuReady:this.agentHUD != undefined};
     if (!ready) {
         result.error = "room-not-ready";
         return result;
@@ -91,7 +110,7 @@ cpBridge.joinIgloo = function(ownerId) {
     if (!this.validId(ownerId) || !this.mapping(ownerId)) return this.fail("unknown-project");
     if (_global.getCurrentShell().getCurrentGameRoomId() != undefined) return this.fail("leave-minigame-first");
     _global.getCurrentShell().sendJoinPlayerIgloo(ownerId);
-    return {ok:true, requestedOwnerId:ownerId};
+    return {ok:true, version:this.version, requestedOwnerId:ownerId};
 };
 cpBridge.joinRoom = function(roomId) {
     var current = this.authorized();
@@ -101,7 +120,7 @@ cpBridge.joinRoom = function(roomId) {
     var shell = _global.getCurrentShell();
     if (shell.getCurrentGameRoomId() != undefined) return this.fail("leave-minigame-first");
     shell.sendJoinRoom(shell.getRoomNameById(roomId), 0, 0);
-    return {ok:true, requestedRoomId:roomId};
+    return {ok:true, version:this.version, requestedRoomId:roomId};
 };
 cpBridge.animate = function(puffleId, state) {
     var current = this.authorized();
@@ -115,16 +134,16 @@ cpBridge.animate = function(puffleId, state) {
     if (puffle == undefined || !puffle.clip._visible || puffle._artClip._totalframes < 2) return this.fail("puffle-not-ready");
     engine.puffleManager.updatePuffleFrameByID(puffleId, frames[state]);
     this.emit({type:"animation", ownerId:current.ownerId, puffleId:puffleId, state:state, simulated:true});
-    return {ok:true, state:state, simulated:true};
+    return {ok:true, version:this.version, state:state, simulated:true};
 };
 // The coding menu is drawn in the existing AVM1 display list. Host credentials,
 // repository paths, terminal bytes, and Claude session IDs never enter Flash.
 cpBridge.menuText = function(value, fallback, limit) {
     return typeof value == "string" ? value.substr(0, limit) : fallback;
 };
-cpBridge.menuMapping = function(fixtureId) {
+cpBridge.menuMapping = function(projectId) {
     for (var i = 0; i < this.projects.length; i++) {
-        if (this.projects[i].projectId == fixtureId) return this.projects[i];
+        if (this.projects[i].projectId == projectId) return this.projects[i];
     }
     return null;
 };
@@ -181,7 +200,7 @@ cpBridge.enableMenuButton = function(button, enabled) {
     button._alpha = enabled ? 100 : 45;
 };
 cpBridge.menuResult = function() {
-    return {ok:true, nativeMenu:this.agentHUD != undefined, hudReady:this.agentHUD != undefined, menuVisible:this.agentMenu != undefined};
+    return {ok:true, version:this.version, nativeMenu:this.agentHUD != undefined, hudReady:this.agentHUD != undefined, menuVisible:this.agentMenu != undefined};
 };
 cpBridge.setAgentMenu = function(payload) {
     if (payload == undefined || typeof payload != "object" || typeof payload.enabled != "boolean") return this.fail("invalid-agent-menu");
@@ -192,10 +211,11 @@ cpBridge.setAgentMenu = function(payload) {
         this.agentData = {enabled:false};
         return this.menuResult();
     }
-    var fixtureId = this.menuText(payload.fixtureId, "", 100);
-    if (fixtureId != "" && !this.menuMapping(fixtureId)) return this.fail("unknown-project");
-    if (this.agentData.fixtureId != fixtureId) this.hideAgentMenu();
-    this.agentData = {enabled:true, connected:payload.connected == true, fixtureId:fixtureId,
+    var projectId = this.menuText(payload.projectId, "", 100);
+    if (projectId != "" && payload.readOnly != true && !this.menuMapping(projectId)) return this.fail("unknown-project");
+    var slot = typeof payload.draftSlot == "number" ? payload.draftSlot : 0;
+    if (this.agentData.projectId != projectId || this.agentData.draftSlot != slot) this.hideAgentMenu();
+    this.agentData = {enabled:true, connected:payload.connected == true, projectId:projectId, draftSlot:slot, readOnly:payload.readOnly == true,
         name:this.menuText(payload.name, "Your puffle", 80), projectName:this.menuText(payload.projectName, "Your igloo", 80),
         status:this.menuText(payload.status, "offline", 30), activity:this.menuText(payload.activity, "", 160),
         canStart:payload.canStart == true, canSubmit:payload.canSubmit == true, running:payload.running == true,
@@ -205,8 +225,9 @@ cpBridge.setAgentMenu = function(payload) {
 };
 cpBridge.hideAgentMenu = function() {
     this.agentSubmitPending = false;
+    this.agentNotice = undefined;
     if (this.agentMenu != undefined) {
-        this.agentDrafts["fixture:" + this.agentMenuFixture] = this.agentMenu.card.taskInput.text;
+        this.agentDrafts["worker:" + this.agentMenuSlot] = this.agentMenu.card.taskInput.text;
         Selection.setFocus(null);
         this.agentMenu.removeMovieClip();
         this.agentMenu = undefined;
@@ -231,8 +252,8 @@ cpBridge.showAgentMenu = function() {
     var ui = _global.getCurrentInterface();
     if (shell.getCurrentGameRoomId() != undefined) return this.fail("leave-minigame-first");
     if (ui == undefined || ui.interface_mc == undefined) return this.fail("interface-not-ready");
-    if (!this.menuMapping(this.agentData.fixtureId)) {
-        this.emit({type:"agent-menu-action", action:"work"});
+    if (this.agentData.projectId == "" || (this.agentData.readOnly != true && !this.menuMapping(this.agentData.projectId))) {
+        this.emit({type:"agent-menu-action", action:"work", generation:this.generation});
         return this.menuResult();
     }
     if (this.agentMenu != undefined) { this.syncAgentMenu(); return this.menuResult(); }
@@ -249,7 +270,8 @@ cpBridge.showAgentMenu = function() {
     var menu = ui.interface_mc.createEmptyMovieClip("__cpAgentMenu", ui.interface_mc.getNextHighestDepth());
     this.agentMenu = menu;
     this.agentMenuRoom = current.roomId;
-    this.agentMenuFixture = this.agentData.fixtureId;
+    this.agentMenuProject = this.agentData.projectId;
+    this.agentMenuSlot = this.agentData.draftSlot;
     var shield = menu.createEmptyMovieClip("shield", menu.getNextHighestDepth());
     this.roundBox(shield, 0, 0, 760, 480, 0, 0x002849, 0x002849, 0, 18);
     shield.onPress = function() {};
@@ -281,7 +303,7 @@ cpBridge.showAgentMenu = function() {
     this.textField(card, "activity", "", 105, 104, 305, 31, 11, 0x254356, false);
     this.textField(card, "taskLabel", "Give your puffle a task", 22, 146, 395, 25, 16, 0xFFFFFF, true);
     this.roundBox(card, 20, 175, 400, 62, 9, 0xFFFFFF, 0x00497C, 2);
-    var draft = this.agentDrafts["fixture:" + this.agentMenuFixture];
+    var draft = this.agentDrafts["worker:" + this.agentMenuSlot];
     var input = this.textField(card, "taskInput", typeof draft == "string" ? draft : "", 28, 181, 384, 50, 14, 0x183950, false);
     input.type = "input";
     input.selectable = true;
@@ -305,10 +327,10 @@ cpBridge.menuAction = function(action) {
     if (_global.getCurrentShell().getCurrentGameRoomId() != undefined) return this.fail("leave-minigame-first");
     if (action == "work" || action == "igloos") {
         this.hideAgentMenu();
-        this.emit({type:"agent-menu-action", fixtureId:data.fixtureId, action:action});
+        this.emit({type:"agent-menu-action", projectId:data.projectId, action:action, generation:this.generation});
         return this.menuResult();
     }
-    if (this.agentMenu == undefined || this.agentMenuFixture != data.fixtureId || !this.menuMapping(data.fixtureId)) return this.fail("unknown-project");
+    if (this.agentMenu == undefined || data.readOnly == true || this.agentMenuSlot != data.draftSlot || this.agentMenuProject != data.projectId || !this.menuMapping(data.projectId)) return this.fail("unknown-project");
     if (current.roomId != this.agentMenuRoom) { this.hideAgentMenu(); return this.fail("room-changed"); }
     if (action != "terminal" && !data.connected) return this.fail("runtime-disconnected");
     if (action == "start" && !data.canStart) return this.fail("session-not-startable");
@@ -316,18 +338,36 @@ cpBridge.menuAction = function(action) {
     if (action == "submit" && !data.canSubmit) return this.fail("session-not-ready");
     if (action == "submit" && this.agentSubmitPending == true) return this.fail("awaiting-task-event");
     if (action != "start" && action != "interrupt" && action != "submit" && action != "terminal" && action != "changes") return this.fail("unknown-menu-action");
-    var event = {type:"agent-menu-action", fixtureId:data.fixtureId, action:action};
+    var event = {type:"agent-menu-action", projectId:data.projectId, draftSlot:data.draftSlot, action:action, generation:this.generation};
+    this.agentNotice = undefined;
     if (action == "submit") {
         var text = this.agentMenu.card.taskInput.text;
         if (typeof text != "string" || text.length < 1 || text.length > 20000) return this.fail("invalid-task");
         event.text = text;
         this.agentSubmittedText = text;
-        this.agentSubmittedFixture = data.fixtureId;
+        this.agentSubmittedSlot = data.draftSlot;
+        this.agentSubmittedProject = data.projectId;
         this.agentSubmitPending = true;
         this.enableMenuButton(this.agentMenu.card.sendButton, false);
     }
     if (action == "terminal" || action == "changes") this.hideAgentMenu();
     this.emit(event);
+    return this.menuResult();
+};
+// The browser refused a card action, for example one prepared against an older
+// configuration generation. Nothing was sent: release the matching pending task
+// so Send follows the host-reported state again, keep the draft, and say so.
+cpBridge.rejectAgentAction = function(action, projectId, slot) {
+    if (typeof action != "string" || typeof projectId != "string") return this.fail("invalid-rejection");
+    if (action == "submit" && this.agentSubmittedProject == projectId && this.agentSubmittedSlot == slot) {
+        this.agentSubmitPending = false;
+        this.agentSubmittedText = undefined;
+        this.agentSubmittedProject = undefined;
+    }
+    if (this.agentMenu != undefined && projectId != "" && this.agentMenuProject == projectId && this.agentMenuSlot == slot) {
+        this.agentNotice = action == "submit" ? "Task not sent. Try again." : "That did not go through. Try again.";
+        this.syncAgentMenu();
+    }
     return this.menuResult();
 };
 cpBridge.syncAgentMenu = function() {
@@ -351,23 +391,36 @@ cpBridge.syncAgentMenu = function() {
     }
     var data = this.agentData;
     if (!data.canSubmit || !data.connected) this.agentSubmitPending = false;
-    if (data.status == "working" && this.agentSubmittedFixture == data.fixtureId) {
-        if (this.agentDrafts["fixture:" + data.fixtureId] == this.agentSubmittedText) this.agentDrafts["fixture:" + data.fixtureId] = "";
-        if (this.agentMenu != undefined && this.agentMenuFixture == data.fixtureId && this.agentMenu.card.taskInput.text == this.agentSubmittedText) this.agentMenu.card.taskInput.text = "";
+    if (data.status == "working" && this.agentSubmittedSlot == data.draftSlot && this.agentSubmittedProject == data.projectId) {
+        if (this.agentDrafts["worker:" + data.draftSlot] == this.agentSubmittedText) this.agentDrafts["worker:" + data.draftSlot] = "";
+        if (this.agentMenu != undefined && this.agentMenuProject == data.projectId && this.agentMenu.card.taskInput.text == this.agentSubmittedText) this.agentMenu.card.taskInput.text = "";
         this.agentSubmittedText = undefined;
-        this.agentSubmittedFixture = undefined;
+        this.agentSubmittedProject = undefined;
     }
     this.agentHUD.workButton.label.text = data.attention > 0 ? "Work (" + data.attention + ")" : "Work";
     if (this.agentMenu == undefined) return;
-    if (current.roomId != this.agentMenuRoom || data.fixtureId != this.agentMenuFixture) { this.hideAgentMenu(); return; }
+    if (current.roomId != this.agentMenuRoom || data.projectId != this.agentMenuProject) { this.hideAgentMenu(); return; }
     var card = this.agentMenu.card;
     var labels = {starting:"Waking up...", idle:"Ready for a task", working:"Working", review:"Ready for review", interrupted:"Taking a break", failed:"Something went wrong", offline:"Taking a break"};
+    labels.setup = "Setting up";
+    labels.archived = "Archived";
+    labels["setup-failed"] = "Setup failed";
+    labels["needs-repair"] = "Needs repair";
+    labels["source-unavailable"] = "Source unavailable";
     labels["needs-you"] = "Needs your help";
     card.title.text = data.name;
     card.project.text = data.projectName;
     card.status.text = !data.connected ? "Connection lost" : typeof labels[data.status] != "string" ? "Waiting" : labels[data.status];
     card.activity.text = !data.connected ? "Open Claude to reconnect." : data.activity;
-    card.taskLabel.text = "Give " + data.name + " a task";
+    card.taskLabel.text = this.agentNotice != undefined ? this.agentNotice : "Give " + data.name + " a task";
+    var editable = data.readOnly != true;
+    card.startButton._visible = editable;
+    card.interruptButton._visible = editable;
+    card.sendButton._visible = editable;
+    card.terminalButton._visible = editable;
+    card.changesButton._visible = editable;
+    card.taskLabel._visible = editable;
+    card.taskInput._visible = editable;
     this.enableMenuButton(card.startButton, data.connected && data.canStart);
     this.enableMenuButton(card.interruptButton, data.connected && data.running);
     this.enableMenuButton(card.sendButton, data.connected && data.canSubmit && this.agentSubmitPending != true);
@@ -396,22 +449,33 @@ cpBridge.tick = function() {
                     var snapshot = bridge.authorized();
                     var mapping = bridge.mapping(snapshot.ownerId, this.__cpBridgePuffleId);
                     if (snapshot.ok && mapping && snapshot.ownerId == this.__cpBridgeOwnerId) {
-                        bridge.emit({type:"puffle-click", ownerId:snapshot.ownerId, puffleId:this.__cpBridgePuffleId, projectId:mapping.projectId});
+                        bridge.emit({type:"puffle-click", ownerId:snapshot.ownerId, puffleId:this.__cpBridgePuffleId, projectId:mapping.projectId, generation:bridge.generation});
                     }
                 };
             }
         } else if (clip.__cpBridgeHook) {
-            clip.onPress = clip.__cpBridgePreviousPress;
-            delete clip.__cpBridgePreviousPress;
-            delete clip.__cpBridgeHook;
-            delete clip.__cpBridgePuffleId;
-            delete clip.__cpBridgeOwnerId;
+            this.unhook(clip);
         }
+    }
+};
+cpBridge.unhook = function(clip) {
+    clip.onPress = clip.__cpBridgePreviousPress;
+    delete clip.__cpBridgePreviousPress;
+    delete clip.__cpBridgeHook;
+    delete clip.__cpBridgePuffleId;
+    delete clip.__cpBridgeOwnerId;
+};
+cpBridge.unhookAll = function() {
+    var engine = _global.getCurrentEngine();
+    var puffles = engine.puffleManager._puffles;
+    for (var i = 0; i < puffles.length; i++) {
+        if (puffles[i].clip.__cpBridgeHook) this.unhook(puffles[i].clip);
     }
 };
 flash.external.ExternalInterface.addCallback("cpBridgeSetAgentMenu", cpBridge, cpBridge.setAgentMenu);
 flash.external.ExternalInterface.addCallback("cpBridgeShowAgentMenu", cpBridge, cpBridge.showAgentMenu);
 flash.external.ExternalInterface.addCallback("cpBridgeHideAgentMenu", cpBridge, cpBridge.hideAgentMenu);
+flash.external.ExternalInterface.addCallback("cpBridgeRejectAgentAction", cpBridge, cpBridge.rejectAgentAction);
 flash.external.ExternalInterface.addCallback("cpBridgeConfigure", cpBridge, cpBridge.configure);
 flash.external.ExternalInterface.addCallback("cpBridgeSnapshot", cpBridge, cpBridge.snapshot);
 flash.external.ExternalInterface.addCallback("cpBridgeJoinIgloo", cpBridge, cpBridge.joinIgloo);
@@ -419,4 +483,4 @@ flash.external.ExternalInterface.addCallback("cpBridgeJoinRoom", cpBridge, cpBri
 flash.external.ExternalInterface.addCallback("cpBridgeAnimate", cpBridge, cpBridge.animate);
 clearInterval(cpBridge.timer);
 cpBridge.timer = setInterval(cpBridge, "tick", 250);
-cpBridge.emit({type:"ready", version:1});
+cpBridge.emit({type:"ready", version:cpBridge.version});

@@ -7,8 +7,8 @@ These instructions supplement the root `AGENTS.md` for changes under `local/`.
 - `start`, `stop`, and `compose`: dedicated Colima profile/context and Compose lifecycle.
 - `compose.yml`: local services, loopback bindings, mounts, health checks, and persistent volumes. The game page is `http://localhost:8080`.
 - `web/server.mjs`: serves the preserved client, renders local addresses, proxies Dash, and bridges WebSocket traffic to TCP game servers. Node ESM; host development requires Node 22 or newer.
-- `agent-start`, `engine/`, and `web/engine/`: optional host Claude PTY runtime, explicit project/session state, and browser terminal (`http://localhost:8081`). See `AGENT_ENGINE.md` for supported scope and recovery. `agent-start` refuses to run until `./local/start`, `./local/bridge-fixtures`, and `python3 local/client-bridge/build.py` have succeeded.
-- `houdini_bootstrap.py` and `snowflake_bootstrap.py`: narrow launch-time compatibility adapters around vendored upstream code.
+- `agent-start`, `engine/`, and `web/engine/`: optional host Claude PTY runtime, explicit project/session state, and project chooser, archive and browser terminal (`http://localhost:8081`). See `AGENT_ENGINE.md` for supported scope and recovery. `engine/git-policy.mjs` holds the offline Git policy, `engine/workspace.mjs` project identity, worktrees, and review, and `engine/migrate.mjs` the explicit state migration; engine tests share fixtures from `engine/testing.mjs`. `engine/game.mjs` provisions one managed owner per project through the `provision` Compose service (`game_provision.py`, JSON on stdin) and owner game sessions (`engine/game-protocol.mjs`); `engine/publication.mjs` writes `.local/native-igloos/published.json` for the visitor-only Houdini adapter. `agent-start` refuses to run until `./local/start` and `python3 local/client-bridge/build.py` have succeeded; it no longer needs `./local/bridge-fixtures`.
+- `houdini_bootstrap.py` and `snowflake_bootstrap.py`: narrow launch-time compatibility adapters around vendored upstream code. Houdini's also lists published project igloos as open for the agent visitor only (host checks: `python3 -m unittest local/test_native_igloos.py local/test_game_provision.py`).
 - `verify_seed.py`: idempotent local account creation. `verify_game.py`: mutating checks against dedicated fixture accounts.
 - `client-bridge/`: JPEXS-built `engine.swf` overlay (output in ignored `.local/client-bridge/`) and its browser contract. `build.py` needs a JDK and downloads pinned JPEXS on first use; rebuild after editing `bridge.as`. `bridge-fixtures`, `bridge_seed.py`, and `verify_bridge.py` create the disposable `bridgecheck` visitor and project-igloo fixtures.
 
@@ -25,7 +25,7 @@ npm ci --ignore-scripts --prefix local/web
 | Change | Relevant checks |
 | --- | --- |
 | Browser wrapper, routing, templates, socket bridge | `npm test --prefix local/web` |
-| Agent engine, persistence, hooks, terminal control | `npm ci --ignore-scripts --prefix local/engine` when needed; `npm test --prefix local/engine`; web tests for browser changes; a disposable repository for real-Claude checks |
+| Agent engine, persistence, hooks, terminal control | `npm ci --ignore-scripts --prefix local/engine` when needed; `npm test --prefix local/engine`; web tests including `bridge/panel.test.mjs` for chooser, selection, drafts and lifecycle; disposable repositories and dedicated state for real-Claude checks |
 | Launcher or Compose configuration | Shell syntax checks below; validate Compose and exercise the affected startup/stop path when the local runtime is available |
 | Flash overlay or bridge contract (`client-bridge/`) | `node --test local/client-bridge/bridge.test.mjs`; `python3 -m unittest discover -s local/client-bridge -p 'test_*.py'` (the generated-overlay test skips until `python3 local/client-bridge/build.py` has run) |
 | Houdini compatibility adapter | Container regression command below; `./local/verify` when the stack is running |
@@ -60,6 +60,7 @@ For Compose validation, use `./local/compose config --quiet` after local configu
 - Serve archived source/media through adapters; do not rewrite thousands of downloaded files as a configuration shortcut.
 - `start` must preserve existing accounts and progress. `stop` keeps named data volumes. Do not add destructive reset behavior to either command.
 - Bind published game ports to `127.0.0.1`; keep database, Redis, and Dash inside the container network.
+- Use only dedicated owner sessions or `localcheck` in scripted verification. The interactive agent page owns the `bridgecheck` game session. Check both engine locks explicitly after an unclean shutdown.
 - Keep agent/provider credentials on the host, preserve exact project and session identities, and keep Stop/turn end distinct from successful completion. Browser reconnect must not spawn a second PTY. Do not bypass manual permissions or edit the interactive checkout merely to obtain a passing agent demo.
 - Keep Ruffle's release and checksum consistent with `sources.json`, `web/setup-ruffle.sh`, and the version guard in `start`. Runtime/dependency snapshots are observations, not lockfiles; do not claim they make container builds fully reproducible.
 
@@ -67,4 +68,4 @@ For Compose validation, use `./local/compose config --quiet` after local configu
 
 Protocol success establishes backend behavior; HTTP success establishes serving/transport behavior. Neither proves interactive gameplay. Verify affected UI paths in the browser before claiming they work. Update the dated validation record with the command/environment and remaining gaps when adding evidence. Keep raw reports and logs under ignored `.local/`.
 
-CI (`.github/workflows/regression.yml`) runs only the offline checks: launcher syntax, the engine, web, bridge-contract, and synthetic SWF suites, and `git diff --check`. A passing run does not cover the Houdini container, the built overlay, the running stack, or real Claude.
+CI (`.github/workflows/regression.yml`) runs only the offline checks: launcher syntax, the engine, web, bridge-contract, synthetic SWF, and Python provisioning/adapter host suites, and `git diff --check`. A passing run does not cover the Houdini container, the built overlay, the running stack, or real Claude.

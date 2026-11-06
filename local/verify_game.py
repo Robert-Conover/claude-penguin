@@ -146,6 +146,7 @@ class Connection:
 
 
 def world_session(args, password):
+    require(args.username.lower() not in {'player', 'bridgecheck'}, 'Refusing an interactive game account')
     with Connection(args.login_port, args.timeout) as login:
         random_key = login.handshake()
         login.login(args.username, login_password_hash(password, random_key))
@@ -227,6 +228,7 @@ def save_igloo(world, penguin_id, layout, furniture):
 
 
 def run(args, password):
+    require(args.username in {'localcheck', 'freshcheck'}, 'Mutating gameplay verification requires a dedicated verification account')
     checks = []
     world, penguin_id, initial_coins = world_session(args, password)
     with world:

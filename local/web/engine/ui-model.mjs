@@ -2,6 +2,7 @@ export const statusLabels = Object.freeze({
   starting: 'Starting', idle: 'Ready for a task', working: 'Working',
   'needs-you': 'Needs you', review: 'Ready for review · turn ended',
   interrupted: 'Interrupted', failed: 'Failed', stopped: 'Stopped', offline: 'Stopped',
+  setup: 'Setting up', 'needs-repair': 'Needs repair',
 });
 
 export const targetKey = target => target ? `${target.projectId}/${target.workerId}` : '';
@@ -21,14 +22,16 @@ export function resolveTarget(snapshot, target) {
   if (!target) return null;
   const project = snapshot?.projects?.find(item => item.id === target.projectId);
   const worker = snapshot?.workers?.find(item => item.id === target.workerId && item.projectId === target.projectId);
-  return project && worker ? { project, worker } : null;
+  return project && worker && project.activeWorkerId === worker.id ? { project, worker } : null;
 }
 
-export function targetForFixture(snapshot, fixtureId) {
-  const project = snapshot?.projects?.find(item => item.fixtureId === fixtureId);
-  if (!project) return null;
-  const workers = snapshot.workers?.filter(item => item.projectId === project.id) ?? [];
-  return workers.length === 1 ? { projectId: project.id, workerId: workers[0].id } : null;
+// Routes a project UUID to the engine's recorded active worker. When the caller
+// names a worker, it must be that active worker; nothing else is substituted.
+export function targetForProject(snapshot, projectId, workerId = null) {
+  const project = snapshot?.projects?.find(item => item.id === projectId);
+  if (!project?.activeWorkerId || (workerId !== null && workerId !== project.activeWorkerId)) return null;
+  const worker = snapshot.workers?.find(item => item.id === project.activeWorkerId && item.projectId === project.id);
+  return worker ? { projectId: project.id, workerId: worker.id } : null;
 }
 
 export function attentionCount(snapshot) {
@@ -43,7 +46,7 @@ export function controlsForWorker(connected, resolved, terminalReady) {
   const worker = resolved?.worker;
   const ready = Boolean(connected && worker);
   return {
-    start: ready && !worker.running,
+    start: ready && !worker.running && worker.workspace?.state === 'ready' && !worker.recoveryBlocked,
     interrupt: ready && worker.running,
     stop: ready && worker.running,
     submit: ready && worker.running && terminalReady && ['idle', 'review', 'interrupted'].includes(worker.status),

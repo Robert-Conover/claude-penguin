@@ -1,14 +1,16 @@
+import { engineStateDir, stateDirProblem } from './state-dir.mjs';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { readFile, mkdir, open, rm } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { WebSocketServer, WebSocket } from 'ws';
 import { createLocalServer } from '../web/server.mjs';
-import { validateFixtures } from '../web/bridge/model.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(here, '../..');
 const MAX_BODY = 256 * 1024;
+// hook-client.mjs forwards events up to 1 MiB, wrapped with the worker ID.
+const MAX_HOOK_BODY = 1024 * 1024 + 1024;
 const MAX_BUFFERED = 2 * 1024 * 1024;
 
 function equalSecret(left, right) {
@@ -23,14 +25,14 @@ function reply(res, status, data, method = 'GET') {
   res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'content-length': bytes.length, 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' });
   res.end(method === 'HEAD' ? undefined : bytes);
 }
-async function jsonBody(req) {
+async function jsonBody(req, limit = MAX_BODY) {
   if (req.headers['content-type']?.split(';')[0].trim().toLowerCase() !== 'application/json') throw error('Expected application/json.', 415);
-  if (Number(req.headers['content-length']) > MAX_BODY) throw error('Request too large.', 413);
+  if (Number(req.headers['content-length']) > limit) throw error('Request too large.', 413);
   let bytes = 0;
   const chunks = [];
   for await (const chunk of req) {
     bytes += chunk.length;
-    if (bytes > MAX_BODY) throw error('Request too large.', 413);
+    if (bytes > limit) throw error('Request too large.', 413);
     chunks.push(chunk);
   }
   let value;
@@ -47,7 +49,7 @@ export function createEngineServer({ manager, publicOrigin = 'http://localhost:8
   const clients = new Set();
   const wsServer = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024, perMessageDeflate: false });
   const actions = new Map([
-    ['register', 'registerProject'], ['create', 'createWorker'], ['start', 'start'],
+    ['register', 'registerProject'], ['create', 'createWorker'], ['retry', 'retrySetup'], ['start', 'start'],
     ['submit', 'submit'], ['input', 'input'], ['resize', 'resize'],
     ['interrupt', 'interrupt'], ['stop', 'stop'], ['diff', 'diff'],
   ]);
@@ -55,6 +57,8 @@ export function createEngineServer({ manager, publicOrigin = 'http://localhost:8
     ['/engine/client.mjs', [path.join(root, 'local/web/engine/client.mjs'), 'text/javascript; charset=utf-8']],
     ['/engine/client.css', [path.join(root, 'local/web/engine/client.css'), 'text/css; charset=utf-8']],
     ['/engine/ui-model.mjs', [path.join(root, 'local/web/engine/ui-model.mjs'), 'text/javascript; charset=utf-8']],
+    ['/engine/names.mjs', [path.join(root, 'local/web/engine/names.mjs'), 'text/javascript; charset=utf-8']],
+    ['/engine/chooser.mjs', [path.join(root, 'local/web/engine/chooser.mjs'), 'text/javascript; charset=utf-8']],
     ['/engine/art/puffle-blue.svg', [path.join(root, 'local/web/engine/art/puffle-blue.svg'), 'image/svg+xml']],
     ['/engine/art/puffle-blue.png', [path.join(root, 'local/web/engine/art/puffle-blue.png'), 'image/png']],
     ['/engine/vendor/xterm.js', [path.join(here, 'node_modules/@xterm/xterm/lib/xterm.js'), 'text/javascript; charset=utf-8']],
@@ -82,7 +86,7 @@ export function createEngineServer({ manager, publicOrigin = 'http://localhost:8
           if (client.pendingBytes > MAX_BUFFERED) client.ws.close(1013, 'Reconnect to refresh the terminal.');
           else client.pending.push(event);
         }
-        else send(client, event);
+        else send(client, { ...event, attachment: client.attachment });
       }
     }
   }
@@ -106,7 +110,7 @@ export function createEngineServer({ manager, publicOrigin = 'http://localhost:8
           // Hook credentials are per Claude process. Never accept a browser origin here.
           if (req.method !== 'POST') throw error('Method not allowed.', 405);
           if (req.headers.origin || !bearer(req)) throw error('Hook authentication required.', 403);
-          const { workerId, event } = await jsonBody(req);
+          const { workerId, event } = await jsonBody(req, MAX_HOOK_BODY);
           const result = await manager.hook({ workerId, event, token: bearer(req) });
           reply(res, 200, result);
         } else {
@@ -143,10 +147,14 @@ export function createEngineServer({ manager, publicOrigin = 'http://localhost:8
         let queue = Promise.resolve();
         ws.on('message', (data, binary) => {
           if (++client.queued > 256) { ws.close(1008, 'Too many pending messages.'); return; }
+          let target = {};
           queue = queue.then(async () => {
             if (binary) throw error('Expected JSON text.');
             const message = JSON.parse(data.toString());
             if (!message || typeof message !== 'object' || Array.isArray(message)) throw error('Invalid message.');
+            if (typeof message.workerId === 'string' && typeof message.projectId === 'string') {
+              target = { projectId: message.projectId, workerId: message.workerId, attachment: message.attachment };
+            }
             if (!client.authenticated) {
               if (message.type !== 'auth' || !equalSecret(message.token, uiToken)) { ws.close(1008, 'Authentication failed.'); return; }
               client.authenticated = true;
@@ -154,6 +162,7 @@ export function createEngineServer({ manager, publicOrigin = 'http://localhost:8
               send(client, { type: 'snapshot', snapshot: manager.snapshot() });
             } else if (message.type === 'attach') {
               const generation = ++client.generation;
+              client.attachment = Number.isSafeInteger(message.attachment) ? message.attachment : undefined;
               client.projectId = message.projectId;
               client.workerId = message.workerId;
               client.attaching = true;
@@ -162,10 +171,10 @@ export function createEngineServer({ manager, publicOrigin = 'http://localhost:8
               try {
                 const snapshot = await manager.terminal(message);
                 if (generation !== client.generation) return;
-                send(client, { type: 'terminal.snapshot', projectId: message.projectId, workerId: message.workerId, ...snapshot });
+                send(client, { type: 'terminal.snapshot', projectId: message.projectId, workerId: message.workerId, attachment: client.attachment, ...snapshot });
                 // The serialized screen includes all data flushed before the snapshot.
                 // Events queued during serialization are replayed by the manager's sequence marker when available.
-                for (const event of client.pending) if (snapshot.sequence === undefined || event.sequence > snapshot.sequence) send(client, event);
+                for (const event of client.pending) if (snapshot.sequence === undefined || event.sequence > snapshot.sequence) send(client, { ...event, attachment: client.attachment });
               } finally { client.attaching = false; client.pending = []; client.pendingBytes = 0; }
             } else if (message.type === 'detach') {
               client.generation++;
@@ -174,7 +183,7 @@ export function createEngineServer({ manager, publicOrigin = 'http://localhost:8
               if (!client.workerId || client.projectId !== message.projectId || client.workerId !== message.workerId) throw error('Attach this exact worker before controlling its terminal.', 403);
               await manager[message.type](message);
             } else throw error('Unknown terminal message.');
-          }).catch(failure => send(client, { type: 'error', error: failure.statusCode ? failure.message : 'Invalid terminal request.' })).finally(() => client.queued--);
+          }).catch(failure => send(client, { type: 'error', ...target, error: failure.statusCode ? failure.message : 'Invalid terminal request.' })).finally(() => client.queued--);
         });
       });
       return true;
@@ -190,51 +199,38 @@ export function createEngineServer({ manager, publicOrigin = 'http://localhost:8
   return { server, publish, close };
 }
 
-export async function acquireLock(stateDir) {
-  await mkdir(stateDir, { recursive: true, mode: 0o700 });
-  const lockPath = path.join(stateDir, 'runtime.lock');
-  const nonce = randomBytes(16).toString('hex');
-  for (let attempt = 0; attempt < 2; attempt++) {
-    try {
-      const file = await open(lockPath, 'wx', 0o600);
-      await file.writeFile(JSON.stringify({ pid: process.pid, nonce }));
-      await file.close();
-      return async () => {
-        const current = JSON.parse(await readFile(lockPath, 'utf8'));
-        if (current.nonce === nonce) await rm(lockPath);
-      };
-    } catch (failure) {
-      if (failure.code !== 'EEXIST') throw failure;
-      let previous;
-      try { previous = JSON.parse(await readFile(lockPath, 'utf8')); }
-      catch { throw error(`Engine lock is unreadable: ${lockPath}. Inspect the previous runtime before removing it.`); }
-      if (!Number.isSafeInteger(previous.pid) || previous.pid <= 0) throw error('Invalid engine lock; inspect it before restarting.');
-      try { process.kill(previous.pid, 0); throw error(`An engine may already be running (PID ${previous.pid}).`); }
-      catch (probe) { if (probe.code !== 'ESRCH') throw probe; }
-      throw error(`A stale engine lock remains at ${lockPath}. Confirm the old runtime and its Claude processes have stopped, then remove this lock explicitly before restarting.`);
-    }
-  }
-  throw error('Could not acquire the engine lock.');
+import { acquireLock } from './lock.mjs';
+import { acquirePublication } from './publication.mjs';
+import { createGameProvisioner } from './game.mjs';
+export { acquireLock, stateDirProblem };
+
+/** The native igloo publication directory, mounted read-only into the world container. */
+export function publicationDir(env = process.env, root = projectRoot) {
+  return path.resolve(root, env.CP_NATIVE_IGLOOS_DIR || '.local/native-igloos');
 }
 
 async function main() {
-  if (process.platform !== 'darwin' && process.platform !== 'linux') throw error('This first engine supports macOS and Linux hosts.');
+  if (process.platform !== 'darwin' && process.platform !== 'linux') throw error('This engine supports macOS and Linux hosts.');
   const port = Number(process.env.CP_ENGINE_PORT ?? 8081);
   if (!Number.isInteger(port) || port < 1024 || port > 65535) throw error('Invalid CP_ENGINE_PORT.');
   const publicOrigin = `http://localhost:${port}`;
-  const fixtures = validateFixtures(JSON.parse(await readFile(path.join(projectRoot, '.local/bridge-fixtures.json'), 'utf8')));
-  const stateDir = process.env.CP_ENGINE_STATE_DIR ? path.resolve(process.env.CP_ENGINE_STATE_DIR) : path.join(projectRoot, '.local/agent-engine');
+  const stateDir = engineStateDir();
+  const problem = stateDirProblem(stateDir);
+  if (problem) throw error(problem);
   const unlock = await acquireLock(stateDir);
-  let manager;
+  let manager, publisher, provisioner;
   try {
+    // One engine owns the native igloo list across all state directories.
+    publisher = acquirePublication({ dir: publicationDir(), stateDir });
+    provisioner = process.env.CP_ENGINE_GAME_PROVISIONING === 'off' ? null : createGameProvisioner({ root: projectRoot });
     const { createManager } = await import('./manager.mjs');
     let publish = () => {};
-    manager = await createManager({ stateDir, fixtures, onEvent: event => publish(event), claudePath: process.env.CP_CLAUDE_PATH ?? 'claude', hookBaseUrl: `${publicOrigin}/engine/hooks` });
+    manager = await createManager({ stateDir, onEvent: event => publish(event), claudePath: process.env.CP_CLAUDE_PATH ?? 'claude', hookBaseUrl: `${publicOrigin}/engine/hooks`,
+      game: provisioner, publisher, onWarning: message => console.error(message) });
     const host = createEngineServer({ manager, publicOrigin });
     publish = host.publish;
     const server = host.server;
     await new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, '127.0.0.1', resolve); });
-    console.log(`Claude Penguin engine: ${publicOrigin}/?bridge=1&agents=1#/login`);
     let closing = false;
     const shutdown = async () => {
       if (closing) return;
@@ -244,9 +240,19 @@ async function main() {
       await unlock();
       process.exit(0);
     };
+    // Installed before the address is announced, so a stop request that follows it always shuts down cleanly.
     for (const signal of ['SIGTERM', 'SIGINT']) process.on(signal, shutdown);
+    console.log(`Claude Penguin engine: ${publicOrigin}/?bridge=1&agents=1#/login`);
+    if (provisioner) {
+      // Background: confirm the visitor and every ready mapping still match the game database.
+      manager.verifyGameMappings().then(
+        ({ checked, repair, visitorProblem }) => console.log(`Game mappings verified: ${checked - repair} of ${checked} ready${repair ? `; ${repair} need repair` : ''}.${visitorProblem ? ` The visitor did not verify, so no igloos are published: ${visitorProblem}` : ''}`),
+        failure => console.error(`Game mapping verification did not complete: ${failure.message}`));
+    } else console.log('Game provisioning is off (CP_ENGINE_GAME_PROVISIONING=off); new projects stop at game-pending.');
   } catch (failure) {
     await manager?.close();
+    provisioner?.close();
+    try { publisher?.close(); } catch (error) { console.error(`Native igloo publication could not be cleared: ${error.message}`); }
     await unlock();
     throw failure;
   }

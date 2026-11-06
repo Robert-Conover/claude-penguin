@@ -4,8 +4,8 @@ This is milestone 1: connect the preserved game to a browser task panel. It uses
 two disposable project destinations and named puffles. It does **not** register
 repositories, run Claude Code, persist conversations, or create worktrees.
 This document describes that bridge-only mode on port 8080. The separate
-[host agent engine](AGENT_ENGINE.md) builds on the same fixture mapping for the
-next milestone; its terminal and real execution states are enabled on port 8081.
+[host agent engine](AGENT_ENGINE.md) uses verified project mappings on port 8081. The migrated Atlas shares the Bridge Alpha
+igloo with this simulation. Its simulated cues are independent of Atlas’s Claude session.
 
 ## Run
 
@@ -43,7 +43,7 @@ game introduction; complete it with the game controls if it covers interactions.
 
 Each project fixture has separate `projectId`, `ownerId`, active `iglooId`, wire
 `roomId`, and `puffleId` values. The generated manifest lives at
-`.local/bridge-fixtures.json`. IDs come from the actual database/protocol, never
+`.local/bridge-public/fixtures.json`. IDs come from the actual database/protocol, never
 from an array index or project display name. The setup refuses changed identities
 instead of silently assigning a different project.
 
@@ -57,8 +57,7 @@ It is a fixture strategy, not yet a production project provisioning policy.
 alone. `verify_bridge.py` adopts one named puffle for each owner on initial setup
 through normal game handlers. Subsequent verification checks identity, travel,
 frame delivery, and reconnect. It never changes the interactive `player` account
-or clears furniture/volumes. Close the browser fixture session before rerunning
-protocol checks, because Houdini permits only one session per account.
+or clears furniture/volumes. Scripted visits use `localcheck`. Only the interactive browser logs in as `bridgecheck`.
 
 The browser enables controls only after confirming the fixture visitor. Clicks
 must match the current owner, room, project, and rendered puffle. Loading rooms
@@ -81,7 +80,7 @@ credentials, terminal execution, or arbitrary filesystem endpoints are exposed.
 Ruffle documents [ExternalInterface](https://ruffle.rs/js-docs/master/interfaces/Player.PlayerV1.html#callExternalInterface)
 and [URL rewriting](https://ruffle.rs/js-docs/master/interfaces/Config.BaseLoadOptions.html#urlRewriteRules).
 The game-specific callbacks are derived from the pinned client; see the
-[callback contract](client-bridge/README.md#browser-contract-version-1).
+[callback contract](client-bridge/README.md#browser-contract-version-4).
 
 ## Verify
 
@@ -99,15 +98,59 @@ click callback restoration, invalid mappings, opt-in routing, and preservation o
 the archived engine. HTTP/protocol checks do not prove visual interaction. See the
 dated [validation record](VALIDATION.md) for browser evidence and remaining gaps.
 
-## Agent milestone
+## Project igloos in agent mode
 
-The opt-in [agent engine](AGENT_ENGINE.md) now supplies the implementation for one
-registered repository and one persistent named Claude Code session on the Mac.
-It runs separately from this simulation page, binds Atlas to Bridge Alpha, and
-uses the actual terminal for permissions and questions. The dated validation
-record distinguishes tested live behavior from remaining checks.
+The bridge lab on this page is unchanged: it still loads `/bridge/fixtures.json`,
+requires Bridge Alpha and Bridge Beta, and plays explicitly simulated cues. While
+a multi-project engine is publishing, though, the `bridgecheck` visitor's igloo
+map and player cards list the published project igloos as open on either page,
+because the world adapter keys on the visitor, not on the page.
 
-The required loop is task submission, a real permission prompt, interrupt, diff
-review, and reconnect with the same conversation. Turn end remains distinct from
-verified task completion. More repositories, a neighborhood scene, concurrent
-workers, and isolated worktrees remain later milestones.
+In agent mode (`?bridge=1&agents=1`), the browser derives game mappings from the
+engine snapshot with `agentMappings()` in the [identity model](web/bridge/model.mjs).
+It uses only:
+
+- the engine's verified `visitor` (`penguinId`, `username`, `verifiedAt`); without
+  one, no mapping is usable and the native HUD stays off. A visitor that failed
+  this engine run's verification is reported as `visitor: null` with a
+  `visitorProblem` message;
+- projects whose `game.status` is `ready`. Provisioning, failed, and repair
+  mappings are skipped. A mapping is also rejected if its project ID is not a
+  UUID, its room is not `ownerId + 2000`, its owner is the visitor, a game ID is
+  outside the overlay's range (1 to 999,999,999), or another ready project claims
+  the same owner, igloo, room, or puffle. Every claimant of a shared identity is
+  excluded, and the panel reports how many are hidden. With more than 32 ready
+  mappings the panel configures none and shows an error rather than dropping
+  some.
+
+The project UUID is the mapping identity. Flash receives `{projectId, ownerId,
+puffleId}` per project, and a bounded display card (project and puffle names,
+status, activity, aggregate attention). Paths, worker and session IDs, setup
+detail, and tokens stay in the browser. A verified visitor with zero ready
+projects configures an empty neighborhood. Town travel and the HUD work, and
+**Work** opens the project list.
+
+The panel reconfigures the overlay whenever the ready mapping set changes, for
+example after setup, retry, migration, repair, or an engine reconnect, without a
+page reload. Until the overlay confirms the new configuration generation, igloo
+buttons, puffle clicks, project card actions, and in-flight travel are refused.
+Afterwards, only snapshots and events carrying that generation are accepted.
+
+A puffle click selects that project and its engine-recorded `activeWorkerId`,
+validated against the current owner, room, and rendered puffle. If the project has
+no active worker, its own lifecycle or archived card is shown. **Work** opens the
+selected puffle's card, or the project list when nothing is selected. The native and browser views share that explicit selection.
+When the browser refuses a native card action (for example one prepared against
+an older generation, or sent during travel), it tells the overlay through
+`cpBridgeRejectAgentAction`. The card then releases a pending task, keeps the
+draft, and shows "Task not sent. Try again." Attention
+counts all active workers; animation plays only for the mapped puffle in the
+current room, from its own worker's state. Travel and closing menus never stop a
+started PTY.
+
+**Igloos** shows all registered projects, including setup, repair and archived
+records. Add projects here, retry setup, inspect the old Atlas journal or create
+its isolated replacement explicitly. Flash uses contract version 4 and a
+page-local numeric draft slot for each worker. The terminal, task journal and
+changes viewer share the selected target. Rebuild the overlay after changing
+its source. See the [engine guide](AGENT_ENGINE.md) and [validation record](VALIDATION.md).

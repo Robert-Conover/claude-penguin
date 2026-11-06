@@ -35,7 +35,7 @@ ROOT = Path(__file__).resolve().parent.parent
 
 
 def session(args, username, password):
-    require(username in {VISITOR_USERNAME, *(p['ownerUsername'] for p in PROJECTS)},
+    require(username in {'localcheck', *(p['ownerUsername'] for p in PROJECTS)},
             'Refusing a non-fixture account')
     return world_session(SimpleNamespace(username=username, login_port=args.login_port,
                                         world_port=args.world_port, timeout=args.timeout), password)
@@ -65,7 +65,10 @@ def validate_manifest(manifest):
     require(len({p['iglooId'] for p in projects}) == 2
             and len({p['puffleId'] for p in projects}) == 2,
             'Bridge layouts and puffle instances must be distinct')
-    return manifest
+    return {'version': 1, 'kind': 'game-bridge-fixture',
+            'visitor': {key: visitor[key] for key in ('penguinId', 'username')},
+            'projects': [{key: item[key] for key in (*expected, 'ownerId', 'iglooId', 'puffleId', 'roomId')}
+                         for item, expected in zip(projects, PROJECTS)]}
 
 
 def initialize(args, password):
@@ -129,9 +132,9 @@ def verify(args, password, manifest):
     checks = []
     # Respect Houdini's one-second igloo cooldown across reconnects.
     time.sleep(1.1)
-    visitor, visitor_id, _ = session(args, VISITOR_USERNAME, password)
+    visitor, visitor_id, _ = session(args, 'localcheck', password)
     with visitor:
-        require(visitor_id == manifest['visitor']['penguinId'], 'Wrong fixture visitor logged in')
+        require(visitor_id != manifest['visitor']['penguinId'], 'Protocol checks must use localcheck')
         for project in manifest['projects']:
             visit(visitor, project)
             checks.append(f"{project['projectId']}: distinct owner, layout and igloo puffle identity")
@@ -155,9 +158,9 @@ def verify(args, password, manifest):
         require(visitor.wait_xt('jr')[0] == '100', 'Could not return to Town')
         checks.append('Town travel and return to the first project preserve fixture mapping')
     time.sleep(1.1)
-    visitor, visitor_id, _ = session(args, VISITOR_USERNAME, password)
+    visitor, reconnected_id, _ = session(args, 'localcheck', password)
     with visitor:
-        require(visitor_id == manifest['visitor']['penguinId'], 'Visitor identity changed after reconnect')
+        require(reconnected_id == visitor_id, 'Verification account identity changed after reconnect')
         visit(visitor, manifest['projects'][1])
         checks.append('Reconnect retains visitor, project igloo and puffle identities')
     return {'status': 'passed', 'scope': 'real AS3 protocol; no browser click or animation rendering coverage',
@@ -172,6 +175,7 @@ def save_manifest(path, manifest):
         with os.fdopen(descriptor, 'w') as stream:
             json.dump(manifest, stream, indent=2)
             stream.write('\n')
+        os.chmod(temporary, 0o644)  # Public game identities, readable by the web container.
         os.replace(temporary, path)
     finally:
         if os.path.exists(temporary):
@@ -182,7 +186,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--initialize', action='store_true')
     parser.add_argument('--seed-report', type=Path, default=ROOT / '.local/bridge-seed.json')
-    parser.add_argument('--manifest', type=Path, default=ROOT / '.local/bridge-fixtures.json')
+    parser.add_argument('--manifest', type=Path, default=ROOT / '.local/bridge-public/fixtures.json')
     parser.add_argument('--login-port', type=int, default=6112)
     parser.add_argument('--world-port', type=int, default=9875)
     parser.add_argument('--timeout', type=float, default=15)
