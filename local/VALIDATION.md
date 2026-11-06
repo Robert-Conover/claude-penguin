@@ -659,3 +659,11 @@ logs, `native-igloo-list.jpg`, `live-projects.jpg`, `comet-permission.jpg`,
 `lighthouse-rule-{before,after}.json`, before/after source, process, player and migration
 fingerprints, and the stack shutdown log. The test engines were stopped
 cleanly, the publication emptied, and `./local/stop` preserved the volumes.
+
+## Puffle Postcards playthrough — November 5, 2026
+
+On merged `dev` (`afe6a58`), the [first-task guide](../docs/first-task.md) was exercised with a disposable Postcards repository, the dedicated `bridgecheck` visitor on Blizzard, and a real host Claude Code session. The capture used Chrome 156 on macOS 27.2, the original client through Ruffle, and a separate engine state directory.
+
+- **In the game:** Registered Postcards and its puffle, Pip. Submitted the bug from Pip’s native task card, visited Town, and handled the task’s permission requests in the live terminal. The Changes panel showed the edit to `postcard.cjs`.
+- **On disk:** An independent `node --test` run on Node 26.13.0 failed in the original repo and passed in Pip’s worktree (one test in each). The original checkout was clean. Pip removed `.toLowerCase()` from the implementation; the test file matched its original committed contents.
+- **In the public recording:** The [edited GIF](../docs/assets/pip-fixes-a-postcard.gif) and [MP4](../docs/assets/pip-fixes-a-postcard.mp4) use frames from this playthrough. Idle time and private terminal details are omitted. This run covered one puffle and travel to Town; it did not test minigame rewards or multiple puffles in a single repo.

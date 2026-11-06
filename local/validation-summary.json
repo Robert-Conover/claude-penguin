@@ -645,5 +645,33 @@
       "GitHub-hosted CI was outside the initial local acceptance run"
     ],
     "evidence": ".local/stage3-evidence/"
+  },
+  "postcards_playthrough": {
+    "date": "2026-11-05",
+    "runtime_commit": "afe6a58",
+    "project": "Postcards",
+    "puffle": "Pip",
+    "entry": "native Flash task card",
+    "observed": [
+      "Town travel during the session",
+      "Manual Claude permissions",
+      "Agent changes viewer showed postcard.cjs"
+    ],
+    "independent_node_test": {
+      "source": {
+        "passed": 0,
+        "failed": 1,
+        "clean": true
+      },
+      "worktree": {
+        "passed": 1,
+        "failed": 0,
+        "changed_files": [
+          "postcard.cjs"
+        ],
+        "test_matches_committed_source": true
+      }
+    },
+    "guide": "docs/first-task.md"
   }
 }
