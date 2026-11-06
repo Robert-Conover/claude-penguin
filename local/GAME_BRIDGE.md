@@ -1,45 +1,56 @@
-# Puffle game bridge experiment
+# Puffle game bridge
 
-This is milestone 1: connect the preserved game to a browser task panel. It uses
-two disposable project destinations and named puffles. It does **not** register
-repositories, run Claude Code, persist conversations, or create worktrees.
-This document describes that bridge-only mode on port 8080. The separate
-[host agent engine](AGENT_ENGINE.md) uses verified project mappings on port 8081. The migrated Atlas shares the Bridge Alpha
-igloo with this simulation. Its simulated cues are independent of Atlas’s Claude session.
+The bridge connects the preserved game to two opt-in modes using the same
+version-4 overlay:
 
-## Run
+- **Bridge lab, port 8080:** two disposable fixture igloos and named puffles,
+  with simulated cues. It does not register repositories, run Claude Code,
+  persist conversations, or create worktrees.
+- **Agent mode, port 8081:** the [host agent engine](AGENT_ENGINE.md) supplies
+  verified project mappings, native menus, real session status, and project
+  igloos in the original map. See [project igloos in agent mode](#project-igloos-in-agent-mode).
+
+An Atlas migrated from the original demo shares the Bridge Alpha igloo with
+the lab. The lab's simulated cues are independent of any Claude session.
+
+## Run the bridge lab
 
 Start the baseline with `./local/start`, then:
 
 ```sh
 python3 local/client-bridge/build.py
 ./local/bridge-fixtures
-./local/compose up -d --build --no-deps web
 ```
 
 The extension build needs a JDK and downloads a checksum-pinned official JPEXS
 compiler package on first use. See [client build details](client-bridge/README.md).
-The web rebuild disconnects existing browser game sessions; it preserves game
-data. Ordinary starts still work without the experimental build or fixtures.
+The running web service reads the generated overlay and fixtures from bind
+mounts; reload the bridge page after rebuilding them. No web rebuild is needed
+for these generated files. If you change the web server or browser code copied
+into its image, run `./local/compose up -d --build --no-deps web`; that rebuild
+disconnects browser game sessions and preserves game data. Ordinary starts
+still work without the overlay or fixtures.
 
 Open [the bridge lab](http://localhost:8080/?bridge=1#/login). Log in as
 `bridgecheck`, password `PenguinLocal2026!`, then choose Blizzard. These are public
 disposable fixture credentials. If you supplied `CLUB_PENGUIN_TEST_PASSWORD` during
 initial seeding, use that password instead; rerunning setup never resets it.
 
-Use **Work** to open Your Igloos, select Bridge Alpha or Bridge Beta, then click
-the actual puffle in the room. Its panel identifies the project and puffle instance.
+**Your Igloos** starts open. Select Bridge Alpha or Bridge Beta, then click
+the actual puffle in the room. **Work · bridge lab** toggles the panel if you
+close it. The panel identifies the project and puffle instance.
 Choose a simulated state to play an existing game animation. **Visit Town** leaves
 the igloo. Work remains available, including a simulated attention count, and the
 last chosen cue remains in the panel for the current browser page. Animations play
 once and do not represent persistent execution state. Reloading resets these cues.
 
 The standard [play page](http://localhost:8080/) loads the unmodified archived
-client. The experiment adds a browser destination list; it does not yet modify the
-original map or build a neighborhood scene. New fixture accounts retain the normal
-game introduction; complete it with the game controls if it covers interactions.
+client. The lab uses a browser destination list. A running agent engine can also
+publish igloos to the visitor's original map on either page, as described below.
+New fixture accounts retain the normal game introduction; complete it with the
+game controls if it covers interactions.
 
-## Identity and scope
+## Bridge lab identity and scope
 
 Each project fixture has separate `projectId`, `ownerId`, active `iglooId`, wire
 `roomId`, and `puffleId` values. The generated manifest lives at
@@ -51,7 +62,7 @@ The original server addresses an igloo by penguin owner (`ownerId + 2000`) and
 shares puffles across that owner's four layouts. The experiment therefore uses
 two dedicated owners (`bridgealpha`, `bridgebeta`) plus the visitor `bridgecheck`.
 This proves distinct destinations without redefining the server's room model.
-It is a fixture strategy, not yet a production project provisioning policy.
+Agent mode uses the separate [project provisioning flow](AGENT_ENGINE.md#game-provisioning-and-native-igloos).
 
 `bridge_seed.py` creates only those marked fixtures and leaves existing accounts
 alone. `verify_bridge.py` adopts one named puffle for each owner on initial setup
@@ -100,7 +111,7 @@ dated [validation record](VALIDATION.md) for browser evidence and remaining gaps
 
 ## Project igloos in agent mode
 
-The bridge lab on this page is unchanged: it still loads `/bridge/fixtures.json`,
+The bridge lab on port 8080 loads `/bridge/fixtures.json`,
 requires Bridge Alpha and Bridge Beta, and plays explicitly simulated cues. While
 a multi-project engine is publishing, though, the `bridgecheck` visitor's igloo
 map and player cards list the published project igloos as open on either page,

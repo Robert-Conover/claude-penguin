@@ -1,4 +1,23 @@
 {
+  "current_status": {
+    "latest_live_evidence_date": "2026-11-05",
+    "status": "multi_project_browser_and_real_claude_acceptance_with_open_gaps",
+    "scope": "Overview of existing dated evidence, not a new acceptance run or live machine state. Other top-level records retain their checkpoint-specific status.",
+    "evidence_records": [
+      "multi_project_experience_stage_3_2026_11_05",
+      "postcards_playthrough"
+    ],
+    "document": "local/VALIDATION.md#current-status",
+    "remaining": [
+      "Browser furniture placement/save and complete puffle-care UI interaction",
+      "Completed minigame rounds/rewards, including during a live Claude task; Card-Jitsu Snow gameplay",
+      "Ordinary player browser logoff/relogin persistence (agent-page reconnect and resume were checked separately)",
+      "Automatic interrupt confirmation on the tested CLI and cancellation during a running tool",
+      "Individual real-agent animation frames and live puffle-name rejection/correction",
+      "Full-stack operation on Intel Macs or other host platforms"
+    ]
+  },
+  "record_scope": "The root date, status, and baseline results describe November 3, 2026. Later named records describe their own dated checkpoints.",
   "date": "2026-11-03",
   "status": "core_browser_and_backend_verified_partial_acceptance",
   "origin": "http://localhost:8080",

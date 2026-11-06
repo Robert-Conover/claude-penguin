@@ -4,11 +4,11 @@ This checkout runs the later AS3 generation of original Club Penguin with Houdin
 
 The original client renders and runs in Safari through Ruffle. Login, room travel, the map, catalogs, purchases, inventory, puffle adoption/walking, and the introductory tour have passed interactive checks. Cart Surfer loaded into gameplay; a completed round and reward remain unverified. See [validation](local/VALIDATION.md) for the tested scope and remaining gaps.
 
-The project is [claude-penguin](https://github.com/Robert-Conover/claude-penguin); this Mac's local folder remains `club-penguin`.
+Cloning [claude-penguin](https://github.com/Robert-Conover/claude-penguin) creates a `claude-penguin` directory by default. Run the commands below from your checkout, regardless of its directory name.
 
 ## Play
 
-Open **http://localhost:8080/** on this Mac.
+Open **http://localhost:8080/** on the Mac running the game.
 
 Local account: **player**
 
@@ -25,18 +25,18 @@ From this repository:
 ./local/stop
 ```
 
-`start` uses the dedicated `club-penguin` Colima profile, 4 CPUs, 4 GB RAM, and a 30 GB data disk. It restores the pinned media submodule, creates local configuration if missing, starts the services, and creates the initial accounts only if they do not exist. It does not overwrite existing player progress.
+`start` uses the dedicated `club-penguin` Colima profile, 4 CPUs, 4 GB RAM, and a 30 GB data disk. It selects the VZ backend, which requires [macOS 13 or newer](https://lima-vm.io/docs/config/vmtype/vz/). Full-stack validation has used Apple Silicon; Intel Macs and the minimum macOS version have not been validated. It restores the pinned media submodule, creates local configuration if missing, starts the services, and creates the initial accounts only if they do not exist. It does not overwrite existing player progress.
 
 `stop` stops this project's containers and dedicated VM. PostgreSQL and Redis volumes remain intact. The VM is not configured to start at login.
 
-Use these local commands for this Mac. The upstream root `docker-compose.yml` and `.env` are preserved as reference; the local stack uses `local/compose.yml` and ignored `.local/env`.
+Use these local commands for Claude Penguin. Do not run the inherited root `install.sh`: it installs the separate Wand setup, deletes that setup's `.env`, and can start its stack with `sudo docker-compose`. The root `docker-compose.yml`, `.env`, `web/Dockerfile`, and `wait-for-postgres.sh` also belong to that inherited setup. The local stack uses `local/compose.yml` and ignored `.local/env`.
 
-Homebrew dependencies installed during setup: `colima`, `docker`, `docker-compose` (and Colima's `lima` dependency). Python 3 is required by the launcher. Host-side web checks require Node 22 or newer and npm; Node is provided by the web container for ordinary gameplay. Ruffle is downloaded into ignored `.local/ruffle` and pinned by release and SHA256.
+Install `colima`, `docker`, and `docker-compose` through Homebrew (Colima also installs Lima). Git and Python 3 are required by the launcher. Host-side web checks require Node 22 or newer and npm; Node is provided by the web container for ordinary gameplay. Ruffle is downloaded into ignored `.local/ruffle` and pinned by release and SHA256.
 
 To connect project puffles to Claude Code, build the overlay with
 `python3 local/client-bridge/build.py`, then run `./local/agent-start` in a separate foreground terminal. It
-serves the opt-in agent page on `http://localhost:8081/`; Node 22+, npm, and Claude
-Code must be available on the host. The [agent instructions](local/AGENT_ENGINE.md)
+serves the opt-in agent page on `http://localhost:8081/`; Git 2.48+, Python 3.9+,
+Node 22+, npm, a JDK, and Claude Code must be available on the host. The [agent instructions](local/AGENT_ENGINE.md)
 cover repository registration, permissions, session resume, and stopping this
 separate runtime. Starting the ordinary game does not launch coding agents.
 
@@ -84,6 +84,6 @@ The legacy AS2 media is not included. Only the English Blizzard world is started
 
 ## Local boundaries and persistence
 
-The browser, login, world, and Snow ports bind only to `127.0.0.1` (8080, 6112, 9875, 7002). The optional host agent engine also binds to loopback (8081 by default). PostgreSQL, Redis, and Dash are private to the container network. The source repository is public on GitHub; the running game is hosted only on this Mac.
+The browser, login, world, and Snow ports bind only to `127.0.0.1` (8080, 6112, 9875, 7002). The optional host agent engine also binds to loopback (8081 by default). PostgreSQL, Redis, and Dash are private to the container network. The source repository is public on GitHub; the running game stays on your Mac.
 
-On this Mac, `origin` points to `Robert-Conover/claude-penguin`. Development happens on `dev`, with promotion PRs from `dev` to `main`; there is no `qa` branch. See [CONTRIBUTING.md](CONTRIBUTING.md). The original Wand remote remains named `upstream`; its push URL, and the media submodule's push URL, are set to `DISABLED`. The inherited automatic submodule-update workflow has been removed to preserve the verified revisions. Upstream history and licenses are preserved. Credentials, Ruffle binaries, logs, and raw verification reports are ignored under `.local/`; database state lives in named Docker volumes in the dedicated VM.
+A clone of `Robert-Conover/claude-penguin` uses that repository as `origin`. Development happens on `dev`, with promotion PRs from `dev` to `main`; there is no `qa` branch. See [CONTRIBUTING.md](CONTRIBUTING.md). Cloning does not copy another checkout's `upstream` remote or local `DISABLED` push URLs. Preserve an existing `upstream` remote and any disabled push URLs when present; push project work to your fork or this repository's `origin`. The inherited automatic submodule-update workflow has been removed to preserve the verified revisions. Upstream history and licenses are preserved. Credentials, Ruffle binaries, logs, and raw verification reports are ignored under `.local/`; database state lives in named Docker volumes in the dedicated VM.
