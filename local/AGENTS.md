@@ -12,7 +12,7 @@ These instructions supplement the root `AGENTS.md` for changes under `local/`.
 - `verify_seed.py`: idempotent local account creation. `verify_game.py`: mutating checks against dedicated fixture accounts.
 - `client-bridge/`: JPEXS-built `engine.swf` overlay (output in ignored `.local/client-bridge/`) and its browser contract. `build.py` needs a JDK and downloads pinned JPEXS on first use; rebuild after editing `bridge.as`. `bridge-fixtures`, `bridge_seed.py`, and `verify_bridge.py` create the disposable `bridgecheck` visitor and project-igloo fixtures.
 
-Use `./local/compose` for this stack. It selects `colima-club-penguin` explicitly. The root `docker-compose.yml` and `.env` belong to the inherited Wand setup and are not the local launch configuration; that file still mounts the removed `legacy-media/` checkout. Avoid changing the user's global Docker context or unrelated VMs.
+Use `./local/compose` for this stack. It selects `colima-club-penguin` explicitly. Do not run the root `install.sh`; it installs the inherited Wand setup. The root `docker-compose.yml` and `.env` also belong to Wand and are not the local launch configuration; that Compose file still mounts the removed `legacy-media/` checkout. Avoid changing the user's global Docker context or unrelated VMs.
 
 ## Validation by change
 

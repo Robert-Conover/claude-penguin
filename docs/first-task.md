@@ -34,11 +34,11 @@ JS
 
 ## Hand it to a puffle
 
-1. [Start the game and the agent engine](../README.md#play-locally). On the agent island, open **Igloos → Add project**. Paste the printed path, replace the suggested project name with **Postcards**, and name its puffle **Pip** (or choose your own name).
+1. [Start the game and the agent engine](../README.md#play-locally). Finish the introductory tour if it covers the controls, then open **Igloos → Add project**. Paste the printed path, replace the suggested project name with **Postcards**, and name its puffle **Pip** (or choose your own name).
 2. **Visit** the igloo and click the puffle. Choose **Start / Resume**, then **Open Claude** to handle first-time folder trust. Return to the task card and send:
 
    > Run `node --test`. Fix the postcard so it preserves the room name. Leave the test unchanged, run it again, and tell me the result.
 3. Close the card and walk to Town. **Work** reopens your selected puffle; if it needs permission, use **Open Claude** to review the request. Work continues while the host engine is running.
-4. When the turn ends, open **Changes**. Look for the fix in `postcard.cjs`, with `postcard.test.cjs` unchanged. To check it yourself, copy the worktree path, stop the session, and run `node --test` in that directory. Expect **1 passing test**. The original checkout should still have the failing version.
+4. When the turn ends, open **Changes**. Look for the fix in `postcard.cjs`, with `postcard.test.cjs` unchanged. To check it yourself, use **Copy path**, then **Open Claude → Stop session** in the terminal footer. Run `node --test` in the copied worktree directory. Expect **1 passing test**. The original checkout should still have the failing version.
 
 [Back to the island](../README.md)

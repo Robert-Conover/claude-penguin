@@ -1,4 +1,47 @@
-# Baseline validation — November 3, 2026
+# Validation record
+
+## Current status
+
+**The multi-project agent loop has recorded browser and real-Claude acceptance;
+coverage remains partial.** The latest live evidence is from November 5, 2026:
+[Stage 3](#multi-project-experience-stage-3--november-5-2026) covers native map
+visits, two concurrent puffles, permissions, changes review, reconnect, exact
+session resume, and the real Atlas archive migration. The
+[Postcards playthrough](#puffle-postcards-playthrough--november-5-2026) covers a
+task submitted in-game and a fix independently checked in its worktree.
+
+The current `dev` engine uses the normal opt-in launcher; it no longer requires
+`CP_ENGINE_PREVIEW=engine-v2`. See the [engine guide](AGENT_ENGINE.md) for setup.
+This overview summarizes existing evidence, not a new acceptance run. All dated
+entries below describe their checkpoint only: preview gates, running processes,
+state versions, test counts, and then-open gaps may have been superseded by later
+entries. They do not describe the current state of any user's machine. The
+[JSON summary](validation-summary.json) keeps the same historical records and a
+separate `current_status` overview.
+
+## Current validation gaps
+
+- Browser furniture placement/save and the complete puffle-care UI interaction.
+  Protocol checks passed; they do not establish those browser paths.
+- Completed minigame rounds and rewards, including while a Claude task is live;
+  all Card-Jitsu Snow gameplay. Cart Surfer reached active gameplay only.
+- Ordinary player browser logoff/relogin persistence. Agent-page reconnect and
+  session resume were checked separately in Stage 3.
+- Automatic interrupt confirmation on the tested Claude CLI and cancellation
+  during a running tool. Stage 3 checked an interrupt, terminal inspection, and
+  retry; that does not establish every cancellation path.
+- Individual puffle animation frames tied to real agent states, and live
+  puffle-name rejection/correction. Animation routing and rejection logic have
+  automated coverage; the local name-filter data did not produce a live rejection.
+- Full-stack operation on Intel Macs or other host platforms. The recorded
+  game acceptance used Apple Silicon macOS; offline CI is separate coverage.
+
+Only the English Blizzard world has been exercised. Other languages, every
+room/item, events, multiplayer activities, and all minigames have not been
+exhaustively tested. The dated entries retain environment-specific limits;
+Stage 3's local results do not establish a GitHub-hosted CI result.
+
+## Baseline validation — November 3, 2026
 
 **Core browser gameplay and backend verified; acceptance coverage is partial.** At this baseline checkpoint, no agent integration had started. The later game-bridge experiment is recorded separately below.
 

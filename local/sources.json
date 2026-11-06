@@ -70,7 +70,14 @@
   "agent_engine": {
     "implementation": "Project-owned host PTY adapter; no upstream source changes",
     "node": "22 or newer",
-    "claude_cli_observed": "2.1.304",
+    "claude_cli_observed": "2.1.317",
+    "claude_cli_observed_at": "2026-11-05",
+    "claude_cli_observation_record": "local/VALIDATION.md#multi-project-experience-stage-3--november-5-2026",
+    "claude_cli_initial_observation": {
+      "version": "2.1.304",
+      "date": "2026-11-03",
+      "scope": "Initial expired-auth check; superseded by the later authenticated acceptance"
+    },
     "claude_cli_pinned": false,
     "official_interfaces": [
       "https://code.claude.com/docs/en/cli-reference",
@@ -87,5 +94,14 @@
     },
     "lockfile": "local/engine/package-lock.json",
     "install": "npm ci --ignore-scripts --prefix local/engine"
+  },
+  "web_wrapper": {
+    "manifest": "local/web/package.json",
+    "node": "22 or newer (host checks); container version in local/web/Dockerfile",
+    "dependencies": {
+      "ws": "8.22.1"
+    },
+    "lockfile": "local/web/package-lock.json",
+    "install": "npm ci --ignore-scripts --prefix local/web"
   }
 }

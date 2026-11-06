@@ -69,7 +69,7 @@ jobs:
       - name: Test game bridge contracts
         run: node --test local/client-bridge/bridge.test.mjs
 
-      - name: Test synthetic SWF preservation
+      - name: Test SWF preservation and stale-overlay rejection
         # The real generated-overlay test is expected to skip on a source-only checkout.
         run: python3 -m unittest discover -v -s local/client-bridge -p 'test_*.py'
 
@@ -86,7 +86,7 @@ jobs:
         run: |
           cat >> "$GITHUB_STEP_SUMMARY" <<'EOF'
           These checks use fake Claude PTYs, temporary repositories and worktrees, local HTTP/socket
-          fixtures, client contract doubles, five synthetic SWF preservation tests, and host tests
+          fixtures, client contract doubles, synthetic SWF preservation and stale-overlay rejection, and host tests
           for game provisioning and the native igloo adapter.
           The generated-overlay preservation test skips because this job does not
           download the pinned media archive or build the overlay.

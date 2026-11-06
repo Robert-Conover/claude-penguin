@@ -7,7 +7,7 @@ and starts a puffle only when you choose **Start / Resume**.
 
 ## Start
 
-Install Node 22 or newer, npm, and
+Install Git 2.48+, Python 3.9+, Node 22+, npm, a JDK, and
 [Claude Code](https://code.claude.com/docs/en/setup) on the host. Configure Claude
 authentication through its normal host setup before asking the puffle to work.
 The launcher does not log you in or request authentication.
@@ -87,7 +87,8 @@ in the terminal window, sends one Escape. It does nothing for an already idle or
 ended turn. Escape is context-sensitive and may dismiss a prompt. The panel first reports an interrupt request; it reports **Interrupted**
 when a subsequent terminal idle marker confirms Claude returned to input. Some
 Claude versions or terminal configurations do not emit that marker. Until it
-arrives, the native card stays **Needs you** and directs you to Open Claude.
+arrives, the native card stays **Needs your help** (the browser panel says
+**Needs you**) and directs you to **Open Claude**.
 The terminal view reports that cancellation is not confirmed; task submission
 through the card remains disabled. Inspect the live terminal to retry, or stop
 and resume the saved session. An unrelated idle marker
@@ -108,7 +109,7 @@ copy provider credentials into the game, browser, or Docker containers.
 
 Browser reconnect replays a bounded terminal screen and continues the existing
 PTY. The replay buffer lives in memory. Restarting the engine cannot preserve
-the old PTY or its in-memory screen; choose **Start / resume** afterward to
+the old PTY or its in-memory screen; choose **Start / Resume** afterward to
 continue the same saved Claude conversation. Previously unfinished task records
 are marked interrupted rather than completed.
 
@@ -136,14 +137,40 @@ Optional host environment variables:
 | `CP_ENGINE_STATE_DIR` | Dedicated state directory; relative values resolve from the repository root. Changing it selects separate engine state, not an automatic migration. The multi-project engine compares canonical paths (case-insensitively on macOS) and refuses a folder inside one that is served over HTTP or mounted into the game containers: `vanilla-media/`, `templates/`, `local/`, the vendored server folders, `.local/bridge-public/`, `.local/ruffle/`, `.local/client-bridge/`, `.local/native-igloos/`, and `.local/logs/`. |
 | `CP_ENGINE_PORT` | Loopback port, default `8081`. Use the URL printed by the launcher. |
 | `CP_CLAUDE_PATH` | Claude executable path when `claude` is not on `PATH`. |
-| `CP_ENGINE_WORKTREE_ROOT` | absolute root for new puffle worktrees, default `~/.claude-penguin/worktrees`. |
-| `CP_NATIVE_IGLOOS_DIR` | native igloo publication directory, default `.local/native-igloos` (the directory the world service mounts). Change it only for tests. |
+| `CP_ENGINE_WORKTREE_ROOT` | Absolute root for new puffle worktrees, default `~/.claude-penguin/worktrees`. |
+| `CP_NATIVE_IGLOOS_DIR` | Native igloo publication directory, default `.local/native-igloos` (the directory the world service mounts). Change it only for tests. |
 | `CP_ENGINE_GAME_PROVISIONING` | `off` disables game provisioning (setup then stops at `game-pending`). For engine-only development and tests. When the engine later starts with provisioning on, each `game-pending` project becomes a retryable failure, and **Retry** provisions it. |
 
 The engine validates Host/Origin and uses separate browser and per-run hook
 credentials. Game fixture IDs alone do not authorize terminal control. Logs and
 raw test reports belong under ignored `.local/`; do not publish session tokens,
 terminal output containing private data, or host credentials.
+
+### Host API
+
+The loopback [engine server](engine/server.mjs) exposes the following runtime
+endpoints in addition to its UI assets. Requests must use the configured Host;
+HTTP Origin, when present, must match, and cross-site fetches are rejected.
+
+| Endpoint | Authentication and behavior |
+| --- | --- |
+| `GET /engine/bootstrap` | Returns the browser token and current snapshot without a bearer token. Local processes can obtain this token; it is not isolation between puffles. |
+| `GET /engine/snapshot` | Browser bearer token; returns `{snapshot}`. |
+| `POST /engine/action` | Browser bearer token and an explicit matching Origin; accepts a JSON object with `action` and its arguments, and returns `{result, snapshot}`. |
+| `POST /engine/hooks` | Per-run hook bearer token, no Origin header; accepts `{workerId, event}`. The manager checks the worker and session binding. |
+| WebSocket `/engine/ws` | Matching Origin; first JSON message must be `{type: "auth", token}` within five seconds. Streams snapshots; `attach` selects an exact project/worker terminal for replay and output. Supports `detach`, `input`, and `resize`. |
+
+Actions are `register`, `create`, `retry`, `start`, `submit`, `input`, `resize`,
+`interrupt`, `stop`, and `diff`. Worker actions require explicit `projectId` and
+`workerId`. Action bodies are limited to 256 KiB; hook bodies allow 1 MiB plus
+1 KiB for the wrapper. WebSocket messages are limited to 64 KiB.
+
+The manager's `submit` action requires nonblank `text` of at most 64 KiB in
+UTF-8, with no NUL (`U+0000`) or ESC (`U+001B`). It validates the worktree and
+session readiness before pasting and submitting. Raw terminal `input` accepts
+`data` up to 64 KiB, including control characters for interactive prompts;
+WebSocket control also requires attachment to that exact worker. Browser and
+Flash text fields have their own smaller limits.
 
 ## Verify and extend
 

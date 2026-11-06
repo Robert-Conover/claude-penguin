@@ -42,7 +42,7 @@ The workflow grants read-only repository permissions and needs no provider crede
 
 ## Report a bug
 
-Include the commit, macOS/browser version, room or game involved, reproduction steps, expected versus actual behavior, and relevant redacted logs. Check [known validation gaps](local/VALIDATION.md#not-yet-verified) before describing a feature as verified. Do not attach `.local/env` or an expanded Compose configuration.
+Include the commit, macOS/browser version, room or game involved, reproduction steps, expected versus actual behavior, and relevant redacted logs. Check [known validation gaps](local/VALIDATION.md#current-validation-gaps) before describing a feature as verified. Do not attach `.local/env` or an expanded Compose configuration.
 
 ## Working with coding agents
 

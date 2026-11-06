@@ -17,7 +17,7 @@ Click a puffle in the original Club Penguin to give Claude Code a task. Waddle b
 | **Igloos → Add project** | Choose a local Git repo and name its puffle. Its igloo appears in the original map’s igloo list. |
 | **Visit → click the puffle** | Its task card opens inside the game. **Start / Resume** opens a Claude session for that repo. Send a task from the card; use **Open Claude** for trust and permission prompts. |
 | **Walk into Town** | The session keeps running. **Work (2)** means two puffles need attention. **Work** reopens your selected puffle; **Igloos** lets you pick another. |
-| **Open Changes** | Inspect the files Claude actually changed. Copy the branch or worktree path when you’re ready to test or integrate the change with Git. |
+| **Changes** | Inspect the files Claude actually changed. Copy the branch or worktree path when you’re ready to test or integrate the change with Git. |
 
 | Snowcap’s igloo | Click Comet to open the task card |
 | :---: | :---: |
@@ -36,7 +36,7 @@ Register up to **32 repositories**, with **one active puffle per repo**. Puffles
 
 ## Play locally
 
-The supported setup is **macOS with Colima**. You can explore the island without a Claude account, or turn on the host engine to work with a puffle.
+The supported setup is **macOS with Colima**, validated on Apple Silicon. The launcher's VZ backend requires [macOS 13 or newer](https://lima-vm.io/docs/config/vmtype/vz/); that minimum is not a full-stack compatibility guarantee, and Intel Macs have not been validated. You can explore the island without a Claude account, or turn on the host engine to work with a puffle.
 
 **1. Start the island.** With Homebrew, Git, and Python 3 installed:
 
@@ -56,7 +56,7 @@ python3 local/client-bridge/build.py
 ./local/agent-start
 ```
 
-Keep that terminal open. Open [the agent island on localhost:8081](http://localhost:8081/?bridge=1&agents=1#/login), sign in as **`bridgecheck`** with the same disposable password, and choose **Blizzard**. Open **Igloos → Add project** and enter the path of a local repo with at least one commit. For a first visit, try **[Puffle Postcards](docs/first-task.md)**: one small bug, one failing test, and a diff you can check yourself.
+Keep that terminal open. Open [the agent island on localhost:8081](http://localhost:8081/?bridge=1&agents=1#/login), sign in as **`bridgecheck`** with the same disposable password, and choose **Blizzard**. On a new account, finish the game's introductory tour if its dialogs cover the controls. Open **Igloos → Add project** and enter the path of a local repo with at least one commit. For a first visit, try **[Puffle Postcards](docs/first-task.md)**: one small bug, one failing test, and a diff you can check yourself.
 
 **Done for the day?** Press Ctrl+C in the engine terminal, then run `./local/stop` to stop the island and keep your progress. [Game setup & troubleshooting](LOCAL_SETUP.md) · [Agent setup & permissions](local/AGENT_ENGINE.md)
 
