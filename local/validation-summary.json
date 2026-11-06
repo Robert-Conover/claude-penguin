@@ -362,5 +362,316 @@
     "evidence_directory": ".local/acceptance-2026-11-03/",
     "handoff": "Host engine on 8081; test Claude stopped; same saved session and generated changes retained",
     "idle_interrupt_no_op_live": true
+  },
+  "multi_project_engine_stage1": {
+    "date": "2026-11-04",
+    "status": "engine_automated_validation_passed_live_acceptance_pending",
+    "runtime_gate": "agent page disabled unless CP_ENGINE_PREVIEW=engine-v2 with a dedicated non-default CP_ENGINE_STATE_DIR",
+    "git_version": "2.54.0 (Apple Git-157)",
+    "git_lfs_version": "3.8.1",
+    "node_version": "26.13.0",
+    "regression_tests": {
+      "engine": 57,
+      "web_and_ui": 11,
+      "client_contract": 9,
+      "swf_preservation": 5
+    },
+    "preview_http_smoke": {
+      "passed": true,
+      "bug_found_and_fixed": "server.mjs main() lacked a local acquireLock binding"
+    },
+    "migration_rehearsal": {
+      "on_private_copy": true,
+      "stale_lock_refused_first": true,
+      "backup_byte_identical": true,
+      "backup_mode": "0600",
+      "previous_engine_rejects_v2": true,
+      "archived_execution_rejected": true,
+      "legacy_mapping": {
+        "ownerId": 105,
+        "iglooId": 4,
+        "roomId": 2105,
+        "puffleId": 4
+      },
+      "real_state_unchanged": true,
+      "real_state_version": 1
+    },
+    "remaining": [
+      "Real Claude tasks in isolated worktrees",
+      "Folder-trust prompt in a new worktree",
+      "Where persistent permission approvals are written",
+      "Game provisioning and native igloo publication (Stage 2)",
+      "Chooser, cards, selection, drafts, and browser acceptance (Stage 3)",
+      "Real Atlas migration (Stage 3)",
+      "GitHub-hosted CI run for this branch"
+    ]
+  },
+  "multi_project_game_mapping_stage2": {
+    "date": "2026-11-04",
+    "status": "automated_and_live_provisioning_passed_browser_acceptance_pending",
+    "runtime_gate": "agent page still disabled unless CP_ENGINE_PREVIEW=engine-v2 with a dedicated non-default CP_ENGINE_STATE_DIR",
+    "jdk": "Homebrew OpenJDK 27.0.1",
+    "regression_tests": {
+      "engine": 77,
+      "web_and_ui": 21,
+      "client_contract": 14,
+      "swf_preservation": 6,
+      "python_provisioning_and_adapter": 10,
+      "houdini_container": 11
+    },
+    "overlay_build": {
+      "passed": true,
+      "contract_version": 2,
+      "generated_overlay_preservation": true
+    },
+    "protocol_verify": true,
+    "live_provisioning": {
+      "passed": true,
+      "visitorId": 107,
+      "ownerId": 108,
+      "iglooId": 6,
+      "roomId": 2108,
+      "puffleId": 6,
+      "puffleName": "Pebble",
+      "rerun_reused_owner": true,
+      "publication_emptied_on_shutdown": true
+    },
+    "non_visitor_upstream_behavior": {
+      "account": "localcheck",
+      "penguinId": 102,
+      "managed_igloo_listed": false,
+      "pio": 0
+    },
+    "bug_found_and_fixed": "migrate.mjs failed on a checkout without .local/",
+    "remaining": [
+      "Visitor igloo map and player card in Ruffle",
+      "Reconfigurable overlay, UUID routing, travel and animation in Ruffle",
+      "Live puffle-name rejection (error 441)",
+      "Real Claude tasks in isolated worktrees",
+      "Chooser, cards, selection, drafts, and browser acceptance (Stage 3)",
+      "Real Atlas migration (Stage 3)",
+      "GitHub-hosted CI run for this branch"
+    ]
+  },
+  "multi_project_review_stage1_2": {
+    "date": "2026-11-05",
+    "status": "review_fixes_automated_container_and_live_provisioning_passed_browser_acceptance_pending",
+    "runtime_gate": "agent page still disabled unless CP_ENGINE_PREVIEW=engine-v2 with a dedicated non-default CP_ENGINE_STATE_DIR",
+    "review": {
+      "reviewers": 4,
+      "areas": [
+        "git_and_worktrees",
+        "state_migration_sessions",
+        "provisioning_publication_adapter",
+        "browser_bridge_overlay"
+      ],
+      "fixed_with_regression_tests": 28,
+      "not_fixed_predating_branch": [
+        "browser token obtainable by local processes",
+        "hook token visible to the puffle's own tools"
+      ],
+      "deferred_to_stage3": [
+        "web/seed container mounts",
+        "legacy mapping re-verification",
+        "publication before startup re-verification",
+        "create-form fallback, per-project drafts, selection upgrade"
+      ]
+    },
+    "regression_tests": {
+      "engine": 98,
+      "web_and_ui": 31,
+      "client_contract": 18,
+      "swf_preservation": 7,
+      "python_provisioning_and_adapter": 14,
+      "houdini_container": 12
+    },
+    "overlay_build": {
+      "passed": true,
+      "contract_version": 3,
+      "extension_sha256": "b23ba52902fc5f44d27bfd28fde58db06539ee7831ee6c21aac27f140f527a75",
+      "generated_overlay_preservation": true
+    },
+    "protocol_verify": true,
+    "http_verify": {
+      "http_checks": 95,
+      "socket_checks": 4,
+      "failures": 0
+    },
+    "live_provisioning": {
+      "passed": true,
+      "visitorId": 107,
+      "ownerId": 109,
+      "iglooId": 7,
+      "roomId": 2109,
+      "puffleId": 7,
+      "puffleName": "Quartz",
+      "rerun_reused_owner": true,
+      "startup_verification": {
+        "checked": 1,
+        "repair": 0,
+        "visitorProblem": null
+      },
+      "publication_emptied_on_shutdown": true
+    },
+    "verify_only_service_paths": {
+      "visitor_recorded_match": "ok",
+      "visitor_recorded_mismatch": "MISMATCH",
+      "owner_recorded_marker_lost": "MISSING",
+      "owner_recorded_absent": "MISSING",
+      "accounts_created": 0
+    },
+    "non_visitor_upstream_behavior": {
+      "account": "localcheck",
+      "penguinId": 102,
+      "managed_igloo_listed": false,
+      "pio": 0
+    },
+    "remaining": [
+      "Visitor igloo map and player card in Ruffle",
+      "Reconfigurable overlay v3, UUID routing, rejected-action notice, travel and animation in Ruffle",
+      "Live puffle-name rejection (error 441)",
+      "Real Claude tasks in isolated worktrees",
+      "Stage 3 experience, migration, and container mounts",
+      "GitHub-hosted CI run for this branch"
+    ]
+  },
+  "multi_project_experience_stage_3_2026_11_05": {
+    "date": "2026-11-05",
+    "base": "3596d57",
+    "branch": "multi-project-igloos",
+    "status": "local_browser_and_real_claude_acceptance_with_recorded_gaps",
+    "environment": {
+      "macOS": "27.2",
+      "node": "26.13.0",
+      "git": "2.54.0",
+      "git_lfs": "3.8.1",
+      "python": "3.9.6",
+      "claude_code": "2.1.317",
+      "colima": "club-penguin",
+      "overlay_contract": 4
+    },
+    "passed": {
+      "engine": 100,
+      "web": 37,
+      "bridge": 18,
+      "swf": 7,
+      "python_host": 16,
+      "houdini_container": 12,
+      "http": 95,
+      "socket": 4
+    },
+    "live_commands": [
+      "./local/start",
+      "python3 local/client-bridge/build.py",
+      "./local/agent-start (dedicated CP_ENGINE_STATE_DIR)",
+      "./local/compose config --quiet",
+      "./local/verify",
+      "./local/bridge-fixtures",
+      "npm run verify:http --prefix local/web",
+      "node local/engine/migrate.mjs --state-dir .local/agent-engine-demo",
+      "./local/stop"
+    ],
+    "managed_projects": [
+      {
+        "project": "Snowcap",
+        "ownerId": 110,
+        "iglooId": 8,
+        "roomId": 2110,
+        "puffleId": 8,
+        "puffleName": "Comet"
+      },
+      {
+        "project": "Lighthouse",
+        "ownerId": 111,
+        "iglooId": 9,
+        "roomId": 2111,
+        "puffleId": 9,
+        "puffleName": "Nova"
+      },
+      {
+        "project": "Iceberg",
+        "ownerId": 112,
+        "iglooId": 10,
+        "roomId": 2112,
+        "puffleId": 10,
+        "puffleName": "Badword"
+      }
+    ],
+    "browser": [
+      "native map lists published offline owners",
+      "native player-card Visit",
+      "three correctly routed puffle clicks",
+      "live retry on prepared failed setup keeps identity and visitor login",
+      "two independent concurrent manual Claude sessions",
+      "worktree folder trust and one-time Write approvals",
+      "resumed Nova and saved the Bash(openssl dgst *) rule through its terminal",
+      "Town travel and aggregate attention",
+      "native interrupt, inspected terminal and successful retry",
+      "changes review and journal",
+      "browser reconnect and terminal replay",
+      "engine restart and exact Comet conversation resume",
+      "bridge lab fixture click and simulated cue"
+    ],
+    "safety": {
+      "source_HEAD_index_tracked_files_match": true,
+      "outputs_exclusive_to_correct_worktree": true,
+      "player_progress_and_owned_igloos_match": true,
+      "scripted_bridgecheck_logins": 0,
+      "nonvisitor_gr_pio": "upstream",
+      "private_mount_probes": "passed",
+      "state_default": ".local/agent-engine",
+      "engine_and_stack_stopped": true
+    },
+    "lighthouse_permission_followup": {
+      "command": "openssl dgst -sha256 nova.txt",
+      "saved_rule": "Bash(openssl dgst *)",
+      "source_settings_created": ".claude/settings.local.json",
+      "worktree_settings_created": false,
+      "checksum_matches_recorded_file": true,
+      "source_HEAD_index_tracked_files_match": true
+    },
+    "migration": {
+      "real_state": ".local/agent-engine-demo",
+      "previous_revision": 79,
+      "backup": "state.v1-backup-2026-11-05T12-42-57-097Z.json",
+      "sha256": "9d7a93683ae9f2af15952796107936dd85cbdc65530192c117b12030ff7f8a5e",
+      "archive_tasks": 7,
+      "replacement_created_on_copy": true,
+      "replacement_created_on_real_state": false
+    },
+    "remaining": [
+      "Live name rejection unavailable with zero eligible filter words",
+      "Individual real-agent animation frames not visually verified",
+      "GitHub-hosted CI was outside the initial local acceptance run"
+    ],
+    "evidence": ".local/stage3-evidence/"
+  },
+  "postcards_playthrough": {
+    "date": "2026-11-05",
+    "runtime_commit": "afe6a58",
+    "project": "Postcards",
+    "puffle": "Pip",
+    "entry": "native Flash task card",
+    "observed": [
+      "Town travel during the session",
+      "Manual Claude permissions",
+      "Agent changes viewer showed postcard.cjs"
+    ],
+    "independent_node_test": {
+      "source": {
+        "passed": 0,
+        "failed": 1,
+        "clean": true
+      },
+      "worktree": {
+        "passed": 1,
+        "failed": 0,
+        "changed_files": [
+          "postcard.cjs"
+        ],
+        "test_matches_committed_source": true
+      }
+    },
+    "guide": "docs/first-task.md"
   }
 }

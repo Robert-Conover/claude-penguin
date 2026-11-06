@@ -33,8 +33,8 @@ Use these local commands for this Mac. The upstream root `docker-compose.yml` an
 
 Homebrew dependencies installed during setup: `colima`, `docker`, `docker-compose` (and Colima's `lima` dependency). Python 3 is required by the launcher. Host-side web checks require Node 22 or newer and npm; Node is provided by the web container for ordinary gameplay. Ruffle is downloaded into ignored `.local/ruffle` and pinned by release and SHA256.
 
-To connect Atlas to one real Claude Code session, prepare the bridge fixtures and
-overlay, then run `./local/agent-start` in a separate foreground terminal. It
+To connect project puffles to Claude Code, build the overlay with
+`python3 local/client-bridge/build.py`, then run `./local/agent-start` in a separate foreground terminal. It
 serves the opt-in agent page on `http://localhost:8081/`; Node 22+, npm, and Claude
 Code must be available on the host. The [agent instructions](local/AGENT_ENGINE.md)
 cover repository registration, permissions, session resume, and stopping this
@@ -76,7 +76,7 @@ The upstream components are below. The server sources are vendored in this repos
 - `vanilla-media/`: archived Flash client, rooms, games, graphics, audio, and web files (about 4.1 GB, approximately 86,000 files).
 - `local/`: Mac launch configuration, Ruffle/WebSocket compatibility wrapper, and verification helpers.
 
-The vendored server sources and the media submodule match their recorded upstream revisions, except that Snowflake's `.github/` folder (README screenshots and game asset patches for manual setup) is omitted. Local code renders the upstream play-page/configuration templates at request time and bridges browser WebSockets to the original game protocol. A Snowflake launch wrapper preserves the local URL's port and media path. A Houdini launch wrapper corrects the pinned server's empty-igloo save exception in memory, with regression checks against the original handler. The opt-in [game bridge experiment](local/GAME_BRIDGE.md) adds two fixture destinations and puffle controls through a separately generated client overlay; normal gameplay still uses the original assets. The separate [host agent engine](local/AGENT_ENGINE.md) connects one of those fixtures to a real Claude terminal when explicitly started.
+The vendored server sources and the media submodule match their recorded upstream revisions, except that Snowflake's `.github/` folder (README screenshots and game asset patches for manual setup) is omitted. Local code renders the upstream play-page/configuration templates at request time and bridges browser WebSockets to the original game protocol. A Snowflake launch wrapper preserves the local URL's port and media path. A Houdini launch wrapper corrects the pinned server's empty-igloo save exception in memory, with regression checks against the original handler. The opt-in [game bridge experiment](local/GAME_BRIDGE.md) adds two fixture destinations and puffle controls through a separately generated client overlay; normal gameplay still uses the original assets. The separate [host agent engine](local/AGENT_ENGINE.md) provisions a separate owner for each registered project and starts Claude in its persistent worktree on request. The web service mounts game assets and the public fixture directory. Private engine state stays on the host.
 
 `local/dependency-snapshots/` and `local/runtime-snapshot.json` capture the packages/images observed during setup. They are diagnostic records, not enforced dependency constraints; upstream Dockerfiles resolve requirements on a rebuild.
 

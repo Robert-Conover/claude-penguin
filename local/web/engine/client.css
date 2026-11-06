@@ -90,3 +90,12 @@
   #cp-agent-panel .cp-puffle-portrait { min-height: 130px; }
   #cp-agent-panel .cp-puffle-portrait img { height: 128px; width: 128px; }
 }
+#cp-chooser { overflow: auto; padding: 12px; background: #edf8ff; border: 2px solid #005187; border-radius: 16px; }
+.cp-chooser-heading, .cp-row-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.cp-chooser-heading { justify-content: space-between; margin-bottom: 10px; }
+#cp-agent-list { display: grid; padding: 0; gap: 9px; }
+.cp-project-row { background: white; padding: 12px; border: 1px solid #a8cfdf; border-radius: 12px; overflow-wrap: anywhere; }
+.cp-project-row p, #cp-visitor-problem { padding: 3px 0; }
+.cp-row-actions, #cp-travel { margin-top: 9px; }
+#cp-archive { overflow: auto; }
+.cp-agent-mode #cp-travel #cp-evidence { display: block; font-size: 12px; overflow-wrap: anywhere; }

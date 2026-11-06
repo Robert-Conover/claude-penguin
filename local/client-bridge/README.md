@@ -35,20 +35,41 @@ on every build. Generated tooling and output stay in ignored `.local/`:
 An upstream engine change fails the build until its shape and compatibility have
 been reviewed. This tool does not update upstream revisions automatically.
 
-## Browser contract, version 1
+## Browser contract, version 4
+
+Version 4 adds read-only lifecycle cards and a per-page numeric draft slot.
+The browser assigns a slot to each worker and checks it on project actions.
+A replacement worker gets a new slot and an empty draft. An unmapped project
+can show a read-only status card. Travel and execution still require a verified
+mapping. Archived conversations are available in the chooser.
+
+Version 2 (multi-project Stage 2) allowed an empty project list, rejected
+duplicate mapping IDs, and added a configuration `generation` to configure
+results, snapshots, and events. Version 3 (the Stage 1–2 review, November 5,
+2026) puts `version` on every callback result, refusals included, and adds
+`cpBridgeRejectAgentAction`. The browser checks the version of every result
+before reading it and refuses a missing or different version, so an older build
+must be rebuilt rather than loaded silently. Game IDs (visitor, owner, room,
+puffle) are integers from 1 to 999,999,999, and at most 32 projects are mapped;
+the browser applies the same bounds (`MAX_GAME_ID` and `MAX_MAPPINGS` in
+`web/bridge/model.mjs`). It excludes an out-of-range mapping on its own, and with
+more than 32 ready mappings it configures none and shows an error. A mapping's
+`projectId` is opaque to Flash: the bridge lab sends fixture IDs (`bridge-alpha`),
+and agent mode sends the engine's project UUID.
 
 Callbacks registered through Flash `ExternalInterface`:
 
 | Callback | Result / behavior |
 | --- | --- |
-| `cpBridgeConfigure(visitorId, projects)` | Validate a dedicated visitor and an array of `{projectId, ownerId, puffleId}` mappings. Returns `{ok:true, version:1}`. Owner IDs must differ from the visitor. |
-| `cpBridgeSnapshot()` | `{ok, version, configured, playerId, roomId, ownerId, puffles:[{id,x,y}], nativeMenuReady}`. Room transitions and a different logged-in player return `ok:false` and an `error`. Non-igloo owner is `0`. Coordinates use the game's room coordinate system. `nativeMenuReady` reports whether the native HUD exists. |
+| `cpBridgeConfigure(visitorId, projects)` | Validate a dedicated visitor and an array of 0–32 `{projectId, ownerId, puffleId}` mappings, then replace every mapping and advance the generation. Returns `{ok:true, version:4, generation}`. Owner IDs must differ from the visitor; project, owner, and puffle IDs must be unique. An empty array is a valid empty neighborhood. A rejected call keeps the previous mapping and generation. Every existing click hook is removed; the next tick hooks only currently mapped puffles. A native card whose project is no longer mapped closes. |
+| `cpBridgeSnapshot()` | `{ok, version, configured, generation, playerId, roomId, ownerId, puffles:[{id,x,y}], nativeMenuReady}`. Room transitions and a different logged-in player return `ok:false` and an `error`. Non-igloo owner is `0`. Coordinates use the game's room coordinate system. `nativeMenuReady` reports whether the native HUD exists. |
 | `cpBridgeJoinIgloo(ownerId)` | Request a mapped owner's igloo via the existing shell navigator. A successful acknowledgement is not arrival; wait for a matching snapshot. |
 | `cpBridgeJoinRoom(100)` | Request Town via the existing shell navigator. Other room IDs are outside this experiment. |
 | `cpBridgeAnimate(puffleId, state)` | Play an existing visible puffle animation only for the configured visitor, current mapped igloo, and matching rendered puffle. State must be `working`, `needs-you`, `ready`, `interrupted`, or `failed`. Returns `simulated:true`. |
-| `cpBridgeSetAgentMenu(payload)` | Cache a bounded, public display summary and enable or disable the native HUD. Accepts only a configured fixture ID, or an empty ID for setup. See the payload below. |
-| `cpBridgeShowAgentMenu()` | Open the native task card for the cached fixture, or emit `work` to request setup if none is connected. Requires the verified visitor, a ready room, and no active game widget. |
+| `cpBridgeSetAgentMenu(payload)` | Cache a bounded, public display summary and enable or disable the native HUD. Accepts only a currently configured project ID, or an empty ID when no puffle is selected. See the payload below. |
+| `cpBridgeShowAgentMenu()` | Open the native task card for the cached project, or emit `work` without a project ID if none is selected. Requires the verified visitor, a ready room, and no active game widget. |
 | `cpBridgeHideAgentMenu()` | Close the owned card and restore its modal state. Safe to call during connection or room changes. |
+| `cpBridgeRejectAgentAction(action, projectId, draftSlot)` | The browser refused a native card action, for example one prepared against an older generation or sent during travel, so nothing reached the engine. A refused `submit` for the same project releases the pending task so Send follows the host-reported state again, and the draft stays in the input. An open card for that project shows "Task not sent. Try again." (or a general notice for other actions) until the next action or until it closes. |
 
 Navigation, animation, and menu actions fail closed before configuration, during
 loading, for a different logged-in player, and for unknown IDs. Travel and menu
@@ -58,35 +79,45 @@ not authorize an action. Normal client travel and minigame exit controls remain.
 The native menu payload is:
 
 ```js
-{ enabled, connected, fixtureId, name, projectName, status, activity,
-  canStart, canSubmit, running, attention }
+{ enabled, connected, projectId, name, projectName, status, activity,
+  draftSlot, readOnly, canStart, canSubmit, running, attention }
 ```
 
-Set/show/hide return `{ok:true, nativeMenu, hudReady, menuVisible}` on success.
+Set/show/hide/reject return `{ok:true, version:4, nativeMenu, hudReady, menuVisible}` on success.
 `nativeMenu` and `hudReady` are true only after the HUD exists in a verified game
 session; the browser retains setup access before that point. Disabling the menu
-removes its owned clips. Names and activity are plain, bounded text; no repository
-path, provider credential, Claude UUID, or terminal output is sent to Flash.
+removes its owned clips. Names and activity are plain, bounded text. `attention`
+counts every active worker that needs a response, failed, or ended a turn. No
+repository or worktree path, provider credential, worker ID, Claude session UUID,
+or terminal output is sent to Flash.
 
 The client calls `window.ClaudePenguinBridge.receive(event)` with:
 
-- `{type:"ready", version:1}` when the extension registers callbacks.
-- `{type:"puffle-click", ownerId, puffleId, projectId}` when the actual mapped puffle
-  is clicked. A polling hook attaches only to the mapped fixture puffle's clip and
-  restores its original press handler when the mapping no longer applies.
+- `{type:"ready", version:4}` when the extension registers callbacks.
+- `{type:"puffle-click", ownerId, puffleId, projectId, generation}` when the actual
+  mapped puffle is clicked. A polling hook attaches only to the mapped puffle's clip
+  and restores its original press handler when the mapping no longer applies or
+  the overlay is reconfigured.
 - `{type:"animation", ownerId, puffleId, state, simulated:true}` after selecting
   an animation. This is acknowledgement of an animation request, not agent work.
-- `{type:"agent-menu-action", fixtureId, action, text?}` for native menu actions.
-  Actions are `work`, `igloos`, `start`, `submit`, `interrupt`, `terminal`, or
-  `changes`. `submit` carries at most 20,000 characters; setup may omit the fixture
-  ID. The browser resolves the fixture to an explicit project/worker and applies
-  the engine's normal authentication and action rules.
+- `{type:"agent-menu-action", projectId?, action, generation, draftSlot?, text?}` for native
+  menu actions. Actions are `work`, `igloos`, `start`, `submit`, `interrupt`,
+  `terminal`, or `changes`. `submit` carries at most 20,000 characters; `work`
+  may omit the project ID. The browser accepts project actions only for its own
+  explicit selection and current generation, then applies the engine's normal
+  authentication and action rules.
+
+The browser treats every result as stale after a mapping change: it accepts clicks,
+travel, and project menu actions only against a fresh snapshot whose `generation`
+matches its latest successful configuration, and only for events that carry that
+generation. A reload or reset overlay reports a different generation and is
+reconfigured automatically.
 
 The five frames reuse the engine's original puffle art: play (27), bubblegum (29),
 super play (28), rest (25), and angry (33). The retained `simulated:true` field
 describes the visual request, including when real host state selected it. It is
-not a lifecycle event. Fixture IDs do not authorize terminal control; the
-[host engine](../AGENT_ENGINE.md) has its own authenticated interface.
+not a lifecycle event. Project and fixture IDs do not authorize terminal control;
+the [host engine](../AGENT_ENGINE.md) has its own authenticated interface.
 
 ## Native menu rendering
 
@@ -104,7 +135,7 @@ refuses to replace an already-open game widget. Connection loss disables runtime
 actions while retaining access to Open Claude. A submitted task cannot be sent
 again while awaiting a lifecycle change; sending alone does not mark it Working.
 Unsent drafts survive closing the card or opening Claude for the current page,
-remain separate per fixture, and clear only when the matching submission starts.
+remain separate per worker, and clear only when the matching submission starts.
 
 Open Claude and Changes hand off to browser views, where terminal input and
 diffs remain practical. The browser owns repository setup and runtime commands;
@@ -126,7 +157,7 @@ decompilation is kept out of Git; no upstream source is copied into this adapter
 - `com.clubpenguin.engine.PuffleManager`: `_puffles`, `getPuffleByID(id)`, and
   `updatePuffleFrameByID(id, frame)` provide the rendered object and animation.
 - Original puffle clicks are enabled only in the owner's igloo/backyard. The
-  scoped hook makes a fixture visitor's mapped puffle clickable without enabling
+  scoped hook makes the verified visitor's mapped puffle clickable without enabling
   care controls for every other owner's puffle.
 - `interface.swf` root: `interface_mc` hosts the owned native clips;
   `stopQuickKeys()`, `startQuickKeys()`, and `setWidgetsActive()` coordinate input.
@@ -135,4 +166,7 @@ decompilation is kept out of Git; no upstream source is copied into this adapter
 These are findings from the pinned SWFs. Interactive verification must separately
 prove callback registration, navigation, puffle clicks, and rendering in Ruffle.
 The Node contract harness executes the adapter's shared ES3 subset against narrow
-game doubles to check identity and loading gates; it does not emulate AVM1.
+game doubles to check identity and loading gates; it does not emulate AVM1. It
+also drives the overlay with the browser's own mapping functions (empty
+neighborhood, dynamic addition, stale-generation rejection) and rejects syntax
+outside that subset, but only the JPEXS build proves the source compiles.

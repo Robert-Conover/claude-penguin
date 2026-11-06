@@ -1,139 +1,85 @@
-<p align="center">
-  <img src="docs/assets/claude-penguin-banner.svg" alt="Claude Penguin — a snowy island for your coding agents. Concept illustration." width="100%">
-</p>
+# Claude Penguin
 
-<h1 align="center">Claude Penguin</h1>
+**Your repo gets an igloo. Your coding agent is a puffle.**
 
-<p align="center">
-  <strong>Your coding agents. Their own little world.</strong><br>
-  Bringing Claude Code to Club Penguin, one puffle at a time.
-</p>
+Click a puffle in the original Club Penguin to give Claude Code a task. Waddle back to Town while it works. When the **Work** badge lights up, open the terminal or review the diff. The island runs on your Mac; each puffle has its own Git worktree.
 
-<p align="center">
-  <a href="#the-idea">The idea</a> ·
-  <a href="#where-things-stand">Current status</a> ·
-  <a href="#product-roadmap">Roadmap</a> ·
-  <a href="#play-locally">Play locally</a> ·
-  <a href="CONTRIBUTING.md">Contribute</a>
-</p>
+[Try it on your Mac](#play-locally) · [Give a puffle its first bug](docs/first-task.md) · [Roadmap](#product-roadmap)
 
-> **Early development:** the original game runs locally, and an opt-in engine connects one puffle to a real Claude Code terminal. A real coding task and manual permission handling have passed through the host engine; full in-game acceptance remains in progress. The banner is concept art.
+![Pip receives a coding task in an igloo, the penguin visits Town, and Claude fixes the postcard test](docs/assets/pip-fixes-a-postcard.gif)
 
-## The idea
+**Pip’s first bug:** a postcard from “Coffee Shop” came out as “coffee shop.” The task went through the in-game card. Pip changed one line; the unchanged test passed in its worktree. The clip is edited from that playthrough. [Watch or save the MP4](docs/assets/pip-fixes-a-postcard.mp4) · [Reproduce the fix](docs/first-task.md)
 
-What if your coding agents lived in Club Penguin?
+## A lap around the island
 
-**A repository is an igloo. A puffle is a persistent, named Claude Code session.** Give a puffle a task, explore the island, and open **Work** when it needs you. Sessions can keep running while you travel, as long as the local host runtime stays running.
+| In the game | What happens on your Mac |
+| --- | --- |
+| **Igloos → Add project** | Choose a local Git repo and name its puffle. Its igloo appears in the original map’s igloo list. |
+| **Visit → click the puffle** | Its task card opens inside the game. **Start / Resume** opens a Claude session for that repo. Send a task from the card; use **Open Claude** for trust and permission prompts. |
+| **Walk into Town** | The session keeps running. **Work (2)** means two puffles need attention. **Work** reopens your selected puffle; **Igloos** lets you pick another. |
+| **Open Changes** | Inspect the files Claude actually changed. Copy the branch or worktree path when you’re ready to test or integrate the change with Git. |
 
-That's the idea behind Claude Penguin: the original game's rooms, penguins, and puffles, with a new reason to hang out on the island. The starting point is the full game client, including town, shops, rooms, and minigames. The first coding-agent connection is now available as an experiment.
+| Snowcap’s igloo | Click Comet to open the task card |
+| :---: | :---: |
+| [![Bridge Check standing next to the blue puffle in Snowcap’s igloo](docs/assets/snowcap-igloo.png)](docs/assets/snowcap-igloo.png) | [![Comet’s in-game task card showing Snowcap, Start / Resume, Open Claude, and Changes](docs/assets/inside-the-igloo.png)](docs/assets/inside-the-igloo.png) |
 
-## Where things stand
+Register up to **32 repositories**, with **one active puffle per repo**. Puffles in different igloos can work at the same time. Reloading the browser reconnects to a running session; after stopping the engine, **Start / Resume** returns to the same saved conversation.
 
-| | Today |
-| :--- | :--- |
-| 🐧 **Explore the island** | The AS3 client runs through Ruffle in the browser. Login, walking, room travel, and the introductory tour have passed interactive checks. |
-| 🛍️ **Make it yours** | Catalog browsing, purchases, equipped color, and puffle adoption and walking have been checked in Safari. |
-| 💾 **Keep your progress** | Local accounts and game state persist. Backend reconnect and stack-restart checks passed. |
-| 🎮 **Keep testing** | Cart Surfer reaches active gameplay. Completed rounds, rewards, browser furniture placement, and some other interactions still need verification. |
-| ✨ **Work with a puffle** | The opt-in [agent engine](local/AGENT_ENGINE.md) connects Atlas to one repository and a named Claude Code session. Clicking Atlas or **Work** opens its native in-game task card. The real terminal and changes viewer open as secondary windows. |
-| 🔄 **Pick up where you left off** | Task history, terminal reconnect, exact-session resume, and failure/attention reporting have been checked. Traveling leaves the session running; stopping it preserves the conversation for later resume. |
+<details>
+<summary><strong>See two puffles working at once:</strong> Comet, Nova, and Work (2) in Town</summary>
 
-**Current scope:** one registered repository and one puffle, using a dedicated fixture igloo. The worker edits that repository's checkout directly; isolated worktrees and multiple projects are still planned. The destination chooser uses matching browser styling; the puffle card and Work/Igloos controls render inside Flash.
+![The original igloo map, Comet’s task card and write request, Work (2) in Town, and Nova’s file in Changes](docs/assets/puffle-walkthrough.gif)
 
-**Latest agent evidence:** after sign-in, Claude produced a real greeting fix and two passing tests in a disposable repository, with one-time manual approvals. These checks used the host API and real terminal. **Still to prove:** native task submission with successful model output, travel and notifications during real work, and runtime animation acceptance. Browser access was unavailable during the latest pass. Cancellation without a confirming terminal signal now requests attention; it is not reported as confirmed interruption. See the dated [validation record](local/VALIDATION.md) for the exact tested scope and remaining gameplay checks.
+*From a real two-puffle run:* Comet wrote `comet.txt` for Snowcap and Nova wrote `nova.txt` for Lighthouse. The penguin traveled to Town while both Claude sessions stayed live. The GIF is an edited sequence of in-game and terminal screenshots. [What we verified](local/VALIDATION.md#interactive-and-persistence-evidence)
 
-## Product roadmap
-
-Checked milestones are implemented within the scope shown. Unchecked rows track the next product work and remaining acceptance checks.
-
-| Status | Milestone | What it delivers |
-| :---: | :--- | :--- |
-| ☑&nbsp;Built | **Local island** | Original client running locally, core exploration and shops, puffles, and persistent player state. |
-| ☑&nbsp;Built | **Game bridge** | Two fixture igloos with explicit identities, real puffle clicks, and animation controls. |
-| ☑&nbsp;Built | **Persistent puffle session** | One repository and named Claude terminal, lifecycle status, task history, reconnect/resume, and changes review. |
-| ☑&nbsp;Built | **Native puffle menus** | In-game Work/Igloos buttons and task card, original puffle artwork, and drafts retained across secondary views. |
-| ☐&nbsp;Next | **Complete the in-game agent loop** | Submit through the native card, travel to Town during real work, handle attention, and return to review Claude-generated changes with accurate status cues. |
-| ☐&nbsp;Planned | **Your Igloos neighborhood** | A map destination for multiple repositories, each with its own igloo, activity count, and separate project state. Work stays accessible across the island. |
-| ☐&nbsp;Planned | **Multiple puffles per project** | Concurrent agents with isolated branches/worktrees and explicit review and integration actions. |
-| ☐&nbsp;Planned | **Project coordination** | Task boards, useful furniture interactions, and temporary helper puffles for delegated work. |
-| ☐&nbsp;Ongoing | **Gameplay acceptance** | Completed minigame rounds and rewards, browser furniture placement and puffle care, agent/minigame coexistence, and broader display checks. |
-
-The next demo target: **give a puffle a real coding task, walk into Town, get notified when it needs you, and return to review an actual change.** Puffle colors stay cosmetic; labels and animations communicate work status.
+</details>
 
 ## Play locally
 
-The current launcher targets **macOS with Colima**. The baseline was verified on Apple Silicon using Safari.
+The supported setup is **macOS with Colima**. You can explore the island without a Claude account, or turn on the host engine to work with a puffle.
 
-You need Git, Python 3, Homebrew, and the standard macOS `curl` and `unzip` tools. Install the container tools:
+**1. Start the island.** With Homebrew, Git, and Python 3 installed:
 
 ```sh
 brew install colima docker docker-compose
-```
-
-Then get the project and start the island:
-
-```sh
 git clone https://github.com/Robert-Conover/claude-penguin.git
 cd claude-penguin
 ./local/start
 ```
 
-Open **[localhost:8080](http://localhost:8080/)**.
+First launch fetches about **4.1 GB of archived game media** plus Ruffle and builds the services. For ordinary play, open [localhost:8080](http://localhost:8080/) and sign in as `player` with the disposable local password `PenguinLocal2026!`.
 
-| Local account | Password |
-| :--- | :--- |
-| `player` | `PenguinLocal2026!` |
-
-This disposable development account starts with membership and 100,000 coins. No Claude Code account or API key is needed to try the current game baseline.
-
-The first launch downloads the pinned media submodule (about **4.1 GB of archived media**) and Ruffle, then builds the services. The dedicated VM is configured with 4 CPUs, 4 GB RAM, and a 30 GB disk. Published service ports bind to localhost.
-
-```sh
-./local/stop    # Stop the containers and dedicated VM; keep player progress.
-```
-
-For logs, troubleshooting, and verification commands, see [LOCAL_SETUP.md](LOCAL_SETUP.md).
-
-### Try the puffle engine
-
-For the optional coding experiment, you also need **Node 22+, npm, a JDK, and Claude Code signed in on the Mac**. With the baseline game running:
+**2. Turn on the puffles.** You’ll need **Git 2.48+, Python 3.9+, Node.js 22+, npm, a JDK**, and [Claude Code](https://code.claude.com/docs/en/setup) signed in on your Mac. From the same repository, with the game running:
 
 ```sh
 python3 local/client-bridge/build.py
-./local/bridge-fixtures
 ./local/agent-start
 ```
 
-Open **[the agent page on localhost:8081](http://localhost:8081/?bridge=1&agents=1#/login)**. Follow the [agent setup guide](local/AGENT_ENGINE.md) for the dedicated `bridgecheck` login, repository registration, permissions, and session controls. Keep the host runtime terminal open while agents work; starting the game alone does not start Claude.
+Keep that terminal open. Open [the agent island on localhost:8081](http://localhost:8081/?bridge=1&agents=1#/login), sign in as **`bridgecheck`** with the same disposable password, and choose **Blizzard**. Open **Igloos → Add project** and enter the path of a local repo with at least one commit. For a first visit, try **[Puffle Postcards](docs/first-task.md)**: one small bug, one failing test, and a diff you can check yourself.
 
-## Under the snow
+**Done for the day?** Press Ctrl+C in the engine terminal, then run `./local/stop` to stop the island and keep your progress. [Game setup & troubleshooting](LOCAL_SETUP.md) · [Agent setup & permissions](local/AGENT_ENGINE.md)
 
-The browser runs the original Flash client through **Ruffle**. A small Node.js wrapper serves the game and bridges its sockets to **Houdini**, with **Dash**, **Snowflake**, PostgreSQL, and Redis supporting the local world.
+## Product roadmap
 
-The optional host engine runs Claude Code in a real terminal on the Mac, persists project/session identity, and streams terminal output and lifecycle events to the game wrapper. The native menu bridge adds controls through a generated client overlay while preserving the original engine tags and upstream sources. Provider credentials stay on the host.
+| Status | Milestone |
+| --- | --- |
+| **Playable** | Explore the original AS3 island through Ruffle. Login, travel, shops, purchases, and puffle adoption and walking have been checked. Player progress survives a restart. |
+| **Working today** | A repo has its own visitable igloo, named puffle, branch and worktree. Submit tasks inside the game, answer Claude in a real terminal, review changes, and resume the conversation. Two puffles have worked concurrently across two repos. |
+| **Next** | Give one repo a team of puffles, each working on its own branch. Make it clear which changes belong to whom and how to bring them together. |
+| **Later ideas** | A task board inside the igloo and temporary helper puffles for work a session delegates. |
+| **Still to verify** | Finish a minigame and collect its reward during a live Claude task; check furniture placement and puffle care in the browser; verify each puffle animation against the real agent state. |
 
-| Path | What's there |
-| :--- | :--- |
-| [`local/`](local/) | Mac launcher, game wrapper, compatibility adapters, and verification helpers |
-| [`local/engine/`](local/engine/) | Host Claude sessions, persistence, lifecycle hooks, and terminal streaming |
-| [`local/client-bridge/`](local/client-bridge/) | Native menu and puffle-click bridge, overlay build, and artwork export |
-| [`local/web/engine/`](local/web/engine/) | Browser setup, terminal, changes viewer, and fallback puffle card |
-| [`local/sources.json`](local/sources.json) | Exact upstream revisions and the Ruffle release/checksum |
-| `houdini/`, `dash/`, `snowflake/` | Vendored community server sources (MIT; revisions in `local/sources.json`) |
-| `vanilla-media/` | Pinned archived client and game media (Git submodule) |
+The [dated validation notes](local/VALIDATION.md) separate browser playtests and real Claude runs from automated tests. Cart Surfer has reached active gameplay; a completed round and payout are still open.
 
-The client archive is the later AS3 generation of original Club Penguin. It is not a claim of an exact, complete final-day snapshot. The legacy AS2 media is not downloaded by the local launcher.
+## How it works
 
-## Build with us
+The archived Flash client runs in the browser through [Ruffle](https://ruffle.rs/). Houdini and the other game services run in Docker. A [client overlay](local/client-bridge/README.md) adds the native menus and puffle clicks without rewriting the archived media. On the Mac, the [host engine](local/AGENT_ENGINE.md) starts the Claude Code terminal, routes tasks to the selected puffle, and sends its status back to the game.
 
-Development happens on **`dev`**. Promotions go **`dev` → `main`** through pull requests; there is no `qa` branch.
+The game and engine listen on loopback. Claude uses its normal host authentication and permissions. Each worktree starts at the registered repo’s current commit; uncommitted edits stay in the original checkout.
 
-Start with [CONTRIBUTING.md](CONTRIBUTING.md). Coding agents use [AGENTS.md](AGENTS.md); Claude Code has a [shared-guidance entry point](CLAUDE.md). Reproducible bug reports and focused contributions are welcome, especially around the remaining gameplay checks.
+## Credits & contributing
 
-## Credits
+Built on [Solero Wand](https://github.com/solero/wand), [Houdini](https://github.com/solero/houdini), [Dash](https://github.com/solero/dash), [Snowflake](https://github.com/Lekuruu/snowflake), Ruffle, and the community’s archived AS3 client. See the [pinned sources](local/sources.json) and [upstream MIT license](LICENSE.md). The game media is a separate submodule; the Wand license does not cover Club Penguin artwork or assets. Claude Penguin is an unofficial fan project, unaffiliated with Disney or Anthropic.
 
-This project builds on the preservation and server work of [Solero Wand](https://github.com/solero/wand), [Houdini](https://github.com/solero/houdini), [Dash](https://github.com/solero/dash), [Snowflake](https://github.com/Lekuruu/snowflake), the archived vanilla-media client, and [Ruffle](https://ruffle.rs/).
-
-Upstream history and the [Wand MIT license](LICENSE.md) are preserved. Referenced components retain their own licensing; the Wand license does not grant rights to Club Penguin artwork or other game assets.
-
-Claude Penguin is an unofficial experiment, unaffiliated with Disney or Anthropic.
+Contributions go to `dev`; releases go from `dev` to `main` by pull request. See [Contributing](CONTRIBUTING.md) for the workflow and [AGENTS.md](AGENTS.md) for repository guidance.

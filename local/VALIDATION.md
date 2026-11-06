@@ -287,3 +287,383 @@ host engine remain available; the test Claude process is stopped with its saved
 session and actual changes preserved. Remaining acceptance: the native browser
 loop after browser access is enabled, automatic interrupt confirmation on this
 CLI, running-tool cancellation, animation coverage, and minigame coexistence.
+
+## Multi-project engine, Stage 1 — November 4, 2026
+
+**Engine changes pass automated validation, and migration was rehearsed on a
+private copy. Live Claude, game, and browser acceptance are not part of this
+stage.** The host was macOS with Git 2.54.0 (Apple Git-157), git-lfs 3.8.1, and
+Node 26.13.0. On this branch the real agent page is disabled. `server.mjs` serves
+it only with `CP_ENGINE_PREVIEW=engine-v2` and a dedicated, non-default state
+directory.
+
+Automated checks:
+
+- Engine: 57 tests passed (`npm test --prefix local/engine`): 11 Git policy, 7
+  workspace, 6 state/migration, 27 manager, and 6 server tests. They use
+  temporary repositories, isolated Git global configuration, real `git worktree`
+  operations, and fake PTYs.
+- Web/UI: 11 passed. Client contract: 9 passed. Synthetic SWF preservation: 5
+  passed. Launcher syntax checks passed.
+- Coverage includes multiple repositories, equal basenames, symlink and
+  linked-worktree deduplication, the 32-project limit, and explicit-ID routing
+  with no fallback. It includes worktree placement, sanitized leaf names, a root
+  containing spaces, refusal of a root inside Git, and unchanged source files,
+  index, and `HEAD` with staged, unstaged, untracked, and ignored edits present.
+  Git policy cases cover refused custom `clean`, `smudge`, and `process` filters
+  (a sentinel file proves none ran), a fake driver named `lfs`, user attribute
+  files, local and conditional `includeIf`, inactive `post-checkout` hooks, a
+  partial clone failing with "lazy fetching disabled", real Git LFS 3.8.1 leaving
+  pointers, locked worktrees, and the 2.48 version floor. Recovery cases cover
+  setup failure and retry with no duplicate branch or worktree, reconciliation
+  after a simulated crash, and concurrent or duplicate creation. Workspace cases
+  cover missing, replaced, and pruned worktrees, an unavailable baseline,
+  branch/detached/unlocked/unrelated-history warnings, and review against the
+  baseline. Hook cases cover cross-worker tokens, startup and resume outside the
+  worktree, `cd src` followed by compaction, attention outside the workspace, and
+  session mismatch. Ported PR #5 interruption regressions also pass. Migration
+  cases cover byte preservation, a missing source, archived execution refusal,
+  the retained mapping, and an isolated Atlas replacement.
+- A preview-engine HTTP smoke test registered a disposable repository whose path
+  contains a space, created a puffle, and reached a ready, locked worktree on
+  its `claude-penguin/<project>/<worker>` branch. Review data came back, and the
+  engine released its lock on SIGINT. It also exposed a missing local binding
+  for `acquireLock` in `server.mjs`. That bug is fixed and covered by a new
+  start/stop test.
+
+Migration rehearsal (copy of `.local/agent-engine-demo/` in a private folder
+outside the checkout):
+
+- The copy kept the real stale `runtime.lock`, so migration first refused with
+  the stale-lock message. PID 9967 was confirmed not running and the saved worker
+  PID was `null`. The lock was then removed from the copy only.
+- Migration produced v2 state. The backup is byte-identical to the original
+  4,481-byte file, mode `0600`. The project UUID `e7c554c7-…` and its
+  owner/igloo/room/puffle mapping 105/4/2105/4 are kept as `legacy-fixture`.
+  Atlas is archived with session `c6b60407-…`, all 7 tasks, original folder
+  `/private/tmp/claude-penguin-session-a_k41ydy`, baseline `dc4eefb…`, and a
+  manual resume command.
+- The previous engine's `readState` (from f86a615) rejects the migrated file.
+  Loading the copy in the v2 engine showed the archived worker, and start,
+  submit, and review returned 409.
+- SHA-256 hashes of the real `.local/agent-engine-demo/` files match before and
+  after, and the source repository gained no branch or worktree. The real state
+  remains version 1. Its source repository lives under `/private/tmp`, which
+  macOS may clean, so migration's missing-source path is likely to be needed.
+
+Not verified in this stage: real Claude tasks in worktrees, folder-trust prompts
+in a new worktree, where persistent permission approvals are written, game
+provisioning, the native igloo list, browser UI, and GitHub-hosted CI on this
+branch. Evidence is in the ignored `.local/stage1-engine-2026-11-04/`.
+
+## Multi-project game mapping, Stage 2 — November 4, 2026
+
+**Provisioning, publication, the visitor-only Houdini adapter, and the browser
+mapping model pass automated checks, and one project was provisioned against the
+running stack. Nothing in this stage ran in Ruffle, and the real agent page is
+still disabled.** Same host as Stage 1, with Homebrew OpenJDK 27.0.1 for the
+overlay build and the `club-penguin` Colima profile started with `./local/start`
+(existing `localcheck` and `player` accounts reported unchanged).
+
+Automated checks on the combined tree:
+
+- Engine: 77 tests passed. These are the 57 Stage 1 tests plus 11 game protocol
+  and provisioner, 8 setup-lifecycle, and 1 cross-boundary contract test. The
+  contract test feeds a real engine snapshot (with a fake provisioner) into the
+  browser's `agentMappings` and `flashConfiguration`. It confirms they and
+  `published.json` list the same ready igloos, and that no path, session ID,
+  owner username, password, or marker reaches the browser mapping or Flash.
+- Web/UI: 21 passed. Client contract: 14 passed. Python host tests for
+  provisioning and the adapter: 10 passed. Launcher syntax checks passed, as
+  did `./local/compose config --quiet`.
+- `python3 local/client-bridge/build.py` compiled the version-2 `bridge.as` with
+  JPEXS, and all 6 SWF tests passed, including the generated-overlay byte
+  preservation test (overlay SHA-256 `f1d346fc…`).
+- Houdini container regressions: 11 passed (`test_houdini_compat.py`, including
+  7 new adapter tests). On world startup the adapter installed, which means the
+  AST check of the pinned `g#gr` and `g#pio` handlers matched the real image.
+- `./local/verify` passed against the running stack.
+- The migration command test failed on a checkout without `.local/` (as on CI)
+  because `migrate.mjs` resolved that folder unconditionally. It now resolves it
+  only when present, and the test passes in a tree without `.local/`.
+
+Live provisioning (scratch state and worktree folders outside the checkout;
+evidence script and output in `.local/stage2-game-2026-11-04/`):
+
+- One disposable repository registered as `stage2-live` reached `ready`. The
+  engine verified `bridgecheck` as game ID 107 without logging in as it, created
+  managed owner 108, adopted the blue puffle "Pebble" (puffle 6) in owner igloo
+  6, entered room 2108, and the provisioning service's database check passed.
+  `published.json` listed exactly `{ownerId: 108, iglooId: 6}` for visitor 107
+  while the engine ran, and was emptied on clean shutdown.
+- A second run on the same state reused owner 108, re-verified it, and created
+  nothing new.
+- Logged in as the dedicated `localcheck` account (102) while the publication was
+  live, `g#gr` listed no managed igloo and `g#pio` for owner 108 returned `0`,
+  so non-visitors keep upstream behavior.
+- The first attempt placed the worktree root inside the checkout; the engine
+  refused it, as designed. That attempt's process exited while holding
+  `owner.lock`; its PID was confirmed dead and the lock removed by hand,
+  following the documented recovery.
+
+The game database now permanently contains managed owner 108 (`cp…` username,
+marker email under `managed.claude-penguin.invalid`) with puffle 6. It is a
+disposable verification identity; `player` was not used.
+
+Not verified in this stage: the visitor's in-game igloo map and player card
+(they require a `bridgecheck` session in the browser), anything in Ruffle (the
+reconfigurable overlay, UUID click routing, travel and animation with real
+clips), a puffle name rejected live by Houdini (error 441 and the failed name
+check are covered only by fakes), real Claude tasks in worktrees, and
+GitHub-hosted CI on this branch.
+
+## Multi-project review of Stages 1 and 2 — November 5, 2026
+
+**Four independent reviews of `dev..multi-project-igloos` led to 28 fixes, each
+with a regression test that failed on the unfixed code first. All offline suites, the Houdini container suite, `./local/verify`, the
+HTTP checks, and a live provisioning rerun pass. Nothing ran in Ruffle, and the
+real agent page is still disabled.** Same host and Colima profile as Stage 2;
+the stack was started with `./local/start` (existing `localcheck` and `player`
+accounts reported unchanged) and stopped again afterwards.
+
+Fixed, by area:
+
+- Git and worktrees:
+  - Config-defined hooks (`hook.<name>.*`) and `attr.tree` are refused. Both
+    previously let repository code run during worktree creation.
+  - `git-lfs` runs directly, so a repository `alias.lfs` cannot run.
+  - No inherited `GIT_*` variable is kept. `GIT_CONFIG` and `GIT_ATTR_SOURCE`
+    previously bypassed the filter check.
+  - Every transport is pinned to `never`.
+  - Hard-linked untracked files are not previewed, and previews open with
+    `O_NONBLOCK`.
+  - Worktree roots that Git cannot classify are refused.
+  - Git runs in its own process group, and a timeout stops the whole group.
+  - A retry no longer adopts an interrupted checkout (missing index, stale
+    `index.lock`, or unfilled tracked files).
+  - Review truncates a very large untracked list instead of failing.
+  - Repair messages give the `git worktree repair` command.
+- Engine state and sessions:
+  - Card submission re-checks the turn after the workspace check and after the
+    paste. A terminal prompt or an unconfirmed Escape during inspection could
+    previously still submit the task, a regression from PR #5's guarantee.
+  - `game-pending` projects become retryable once provisioning is on. They were
+    previously stuck.
+  - Saved-state validation refuses shared repositories, sessions, and worktrees,
+    mismatched repository records, unknown setup phases, and non-object entries.
+  - A legacy project binds only to a repository that contains its archived
+    baseline.
+  - State folders are compared canonically, and served or container-mounted
+    folders are refused. `.local/ruffle/<dir>` previously made
+    `game-secrets.json` downloadable on 8080.
+  - The hooks endpoint accepts 1 MiB, matching the hook client.
+  - Folders inside a nested repository raise the outside-workspace warning.
+- Game provisioning and the adapter:
+  - A recorded owner or visitor ID is only verified, never recreated (code
+    `MISSING`). A deleted owner previously led to a second account on retry.
+  - The visitor password travels on stdin instead of a container environment
+    variable.
+  - A visitor mismatch withdraws the publication and reports `visitor: null`
+    with `visitorProblem`.
+  - An unparseable publication file publishes nothing and cannot break `g#gr`
+    for other penguins, which a deeply nested file previously did.
+- Browser bridge and overlay (contract version 3):
+  - **Work** follows the panel's own selection.
+  - A native action the browser refuses is reported back through the new
+    `cpBridgeRejectAgentAction`, so the card no longer stays locked.
+  - The browser applies the overlay's game ID range and 32-project cap.
+  - Every overlay result carries `version`, and the browser checks it on each
+    one.
+  - The ES3/AS2 guard catches the 12 constructs that previously passed it.
+  - The generated-overlay test fails on a stale build.
+  - `panel.mjs` gained tests that drive the real panel, client, and overlay
+    source.
+
+Found while validating the fixes: `server.mjs` announced its address before
+installing its SIGINT/SIGTERM handlers. In a source-only copy, as on CI, the
+startup test then failed once in 13 full runs, because the signal arrived first
+and the engine died without releasing its locks. This dated from Stage 1. The
+handlers are now installed first, and 14 further runs passed.
+
+Automated checks on the combined tree:
+
+- Engine: 98 passed (77 before the review).
+- Web/UI: 31 passed. Client contract: 18 passed. Python host tests: 14 passed.
+- `python3 local/client-bridge/build.py` compiled the version-3 `bridge.as`
+  (extension SHA-256 `b23ba529…`, overlay `11ef2c54…`, original tags unchanged).
+  All 7 SWF tests passed, including generated-overlay preservation.
+- Houdini container regressions: 12 passed, including the new unparseable
+  publication test. On world startup the adapter installed.
+- `./local/verify`, `npm run verify:http --prefix local/web` (95 HTTP and 4
+  socket checks, no failures), `./local/compose config --quiet`, launcher syntax
+  checks, and `git diff --check` passed.
+
+Live provisioning (scratch state outside the checkout; evidence in
+`.local/stage1-2-review-2026-11-05/`):
+
+- A fresh disposable project reached `ready`. The visitor was verified as 107
+  without logging in as it. The engine created managed owner 109, adopted puffle
+  7 "Quartz" in igloo 7, and entered room 2109. `published.json` listed
+  `{ownerId: 109, iglooId: 7}` while the engine ran, and was emptied on clean
+  shutdown.
+- A rerun on the same state reused owner 109, and `verifyGameMappings` returned
+  1 checked, 0 repair, and no visitor problem. Logged in as `localcheck` (102),
+  `g#gr` listed no managed igloo and `g#pio` returned `0`.
+- Requests sent straight to the provisioning service exercised the new
+  verify-only paths and created nothing; the highest penguin ID stayed 109:
+  - The visitor with recorded ID 107 returned it unchanged; recorded ID 999
+    returned `MISMATCH`.
+  - An owner request with an unknown marker and recorded ID 109 returned
+    `MISSING`, because that account no longer carries the marker; recorded ID
+    99999 returned `MISSING`, because it does not exist.
+
+The game database now also permanently contains managed owner 109 with puffle
+7, a disposable verification identity like owner 108. `player` was not used.
+
+Not fixed in this review, with the reason:
+
+- Any local process can obtain the browser token from `/engine/bootstrap` and
+  send terminal input to any puffle. This predates the branch, and puffles run
+  as the same user. A fix is a design decision, so it is documented in
+  `AGENT_ENGINE.md` instead.
+- Hook tokens are visible to the puffle's own tool commands. This predates the
+  branch; they can forge events only for that same puffle.
+- The `web` and `seed` containers can still read the whole checkout. Nothing
+  under `.local/` is reachable over HTTP (traversal probes returned 403 or 404).
+  Narrowing the mounts is Stage 3 task 10.
+- Smaller gaps, all left to Stage 3:
+  - Startup publishes saved mappings before re-verifying them.
+  - Legacy fixture mappings are not re-verified.
+  - Migration's `--rehearsal` means "outside the checkout".
+  - The browser's create-form fallback, per-project drafts, and selection
+    upgrade gaps remain.
+  - Atomic writes don't `fsync` the folder.
+
+Still unverified: everything in Ruffle, a live puffle-name rejection, real
+Claude tasks in worktrees, and GitHub-hosted CI on this branch.
+
+## Multi-project experience, Stage 3 — November 5, 2026
+
+Tested the uncommitted Stage 3 diff on `multi-project-igloos`, based on
+`3596d57`, on macOS 27.2 with Node 26.13.0, Git 2.54.0, git-lfs 3.8.1,
+Python 3.9.6, the dedicated Colima profile, the pinned Ruffle build and Claude
+Code 2.1.317 in manual mode. The default engine state folder is still
+`.local/agent-engine`. Acceptance used separate state and durable disposable
+repositories under ignored `.local/stage3-evidence/`.
+
+| Check | Result |
+| --- | --- |
+| `npm test --prefix local/engine` | 100 passed, including normal startup, explicit migration, mount boundaries and legacy mapping verification |
+| `npm test --prefix local/web` | 37 passed, including Add, correction, archive, lifecycle, drafts, selection and late responses |
+| `node --test local/client-bridge/bridge.test.mjs` | 18 passed |
+| `python3 local/client-bridge/build.py` and the client-bridge Python discovery suite | Version 4 built, all original tags preserved, 7 tests passed including generated-overlay preservation |
+| `python3 -m unittest local/test_game_provision.py local/test_native_igloos.py` | 16 passed |
+| Houdini compatibility suite in the world image | 12 passed |
+| `./local/start`, `./local/compose config --quiet`, `./local/verify`, `./local/bridge-fixtures` | Passed. Scripted game visits used fixture owners and localcheck. Only the interactive browser logged in as bridgecheck. |
+| `npm run verify:http --prefix local/web` | 95 HTTP checks, 4 socket checks, zero failures |
+| Launcher shell syntax, local document links and `git diff --check` | Passed |
+
+The shell sandbox initially refused the launcher's submodule config write and
+the loopback-socket test. The authorized host runs passed. An initial UI
+regression lost selection invalidation on visitor mismatch; the corrected
+browser suite and the updated version-4 event shape passed. Hosted CI requires
+a pushed branch and is outside this handoff.
+
+### Interactive and persistence evidence
+
+- Added three repositories through **Igloos → Add project**. The original map
+  listed all three owners and Bridge Alpha. The table gives the permanent game
+  identities created by acceptance. The legacy fixture remained 105/4/2105/4.
+
+  | Project | Puffle | Owner | Igloo | Room | Puffle ID |
+  | --- | --- | ---: | ---: | ---: | ---: |
+  | Snowcap | Comet | 110 | 8 | 2110 | 8 |
+  | Lighthouse | Nova | 111 | 9 | 2111 | 9 |
+  | Iceberg | Badword | 112 | 10 | 2112 | 10 |
+
+- Visited Snowcap through the original map, Lighthouse through the chooser
+  and Iceberg through its native player card. The player-card check briefly
+  brought the disposable Iceberg owner into Town. Clicking each igloo's puffle
+  opened the matching project card. A separate private copy started with
+  Iceberg marked failed to rehearse interrupted setup. The real **Retry**
+  reverified owner 112; Visit enabled and its puffle click worked in the same
+  Ruffle page without reloading or logging the visitor out.
+- Comet and Nova each showed a first-launch folder-trust prompt naming its
+  own external worktree. Each received a task through Flash and a one-time
+  Write approval in its own terminal. Comet wrote `comet.txt` and Nova wrote
+  `nova.txt`. Checked contents and hashes on disk, absence in the opposite
+  worktree and source checkouts, and the file preview in Nova's Changes tab.
+  All three managed projects’ source HEADs, index bytes and tracked-file hashes
+  matched the pre-registration fingerprints. No acceptance source gained a
+  `.claude/settings.local.json` during these checks.
+- In a follow-up on November 5, resumed Nova and ran
+  `openssl dgst -sha256 nova.txt`. With explicit approval, selected **Yes, and
+  don't ask again** for `openssl dgst *`. Neither Lighthouse checkout had a
+  local settings file beforehand. Claude created `.claude/settings.local.json`
+  in the **source checkout** with the single allow rule `Bash(openssl dgst *)`.
+  The worktree had no local settings file afterward. The checksum matched
+  the recorded hash of Nova's file. All acceptance source HEADs, index bytes
+  and tracked-file hashes matched their values before the follow-up.
+- The visitor traveled between igloos and to Town during concurrent work.
+  **Work (2)** reflected both requests for attention. Interrupting Nova from
+  the native card left **Needs your help** pending confirmation. Claude's
+  terminal showed the interrupted response and accepted a retry, returning
+  `LIGHTHOUSE RETRY OK`.
+- A fresh browser connection retained both original worker/session/PID pairs.
+  A clean engine restart reverified all four igloos, and starting Comet explicitly
+  resumed its original conversation with its earlier Write and reply visible.
+  A full browser reload reattached to the running terminal and replayed that
+  conversation.
+- The live web and seed containers could read their required files and could
+  not see the engine state, game secrets or the private environment file at
+  their former mount paths. In the rebuilt lab on 8080, a real click reported
+  owner 105 and puffle 4, and a simulated cue produced **1 simulated alert**.
+- Read-only database fingerprints of the normal player's progress, owned
+  igloo rows, inventory and puffles matched before and after. The publication
+  selected visitor 107, while player is 103. Localcheck (102) received upstream
+  `gr` and `pio` results with no published owner available. The player's
+  personal game session was never opened during acceptance.
+
+### Real Atlas migration
+
+First tested the archive and isolated replacement in the browser on a private
+state copy pointing to a disposable clone of the original checkout. After
+explicit confirmation, checked PID 9967 had exited, the saved worker had no
+PID, and removed only that stale runtime lock. Ran:
+
+```sh
+node local/engine/migrate.mjs --state-dir .local/agent-engine-demo
+```
+
+The mode-0600 backup `state.v1-backup-2026-11-05T12-42-57-097Z.json`
+matches the original v1 file byte-for-byte (SHA-256
+`9d7a93683ae9f2af15952796107936dd85cbdc65530192c117b12030ff7f8a5e`).
+The real archive displayed its original folder, session, resume command and
+seven task records. Its active worker ID is null. The real replacement remains
+available through **Create isolated Atlas**.
+
+### Limits and raw evidence
+
+- The local database contained zero filter words matching a valid ASCII
+  puffle name. Houdini accepted the candidate `Badword`. Name rejection,
+  adoption error 441 and name correction were exercised with doubles.
+- Room-specific cue routing and the overlay's animation calls passed the
+  contract tests. The live run verified attention, card state and travel;
+  individual real-agent animation frames were not visually identified.
+
+Private evidence is under `.local/stage3-evidence/`, including the suite
+logs, `native-igloo-list.jpg`, `live-projects.jpg`, `comet-permission.jpg`,
+`town-attention.jpg`, `nova-changes.jpg`, `interrupted-terminal.jpg`,
+`resumed-comet.jpg`, `after-live-retry.jpg`, `real-atlas-archive.jpg`,
+`worktree-files.json`, `lighthouse-rule-result.jpg`,
+`lighthouse-rule-{before,after}.json`, before/after source, process, player and migration
+fingerprints, and the stack shutdown log. The test engines were stopped
+cleanly, the publication emptied, and `./local/stop` preserved the volumes.
+
+## Puffle Postcards playthrough — November 5, 2026
+
+On merged `dev` (`afe6a58`), the [first-task guide](../docs/first-task.md) was exercised with a disposable Postcards repository, the dedicated `bridgecheck` visitor on Blizzard, and a real host Claude Code session. The capture used Chrome 156 on macOS 27.2, the original client through Ruffle, and a separate engine state directory.
+
+- **In the game:** Registered Postcards and its puffle, Pip. Submitted the bug from Pip’s native task card, visited Town, and handled the task’s permission requests in the live terminal. The Changes panel showed the edit to `postcard.cjs`.
+- **On disk:** An independent `node --test` run on Node 26.13.0 failed in the original repo and passed in Pip’s worktree (one test in each). The original checkout was clean. Pip removed `.toLowerCase()` from the implementation; the test file matched its original committed contents.
+- **In the public recording:** The [edited GIF](../docs/assets/pip-fixes-a-postcard.gif) and [MP4](../docs/assets/pip-fixes-a-postcard.mp4) use frames from this playthrough. Idle time and private terminal details are omitted. This run covered one puffle and travel to Town; it did not test minigame rewards or multiple puffles in a single repo.

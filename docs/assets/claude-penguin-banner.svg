@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1280" height="480" viewBox="0 0 1280 480" role="img" aria-labelledby="banner-title banner-description">
   <title id="banner-title">Claude Penguin — Your agents. A little more alive.</title>
-  <desc id="banner-description">Original concept art of a penguin with a golden laptop and three colorful, fluffy companions on a snowy island at twilight. A quiet constellation, warm cabin windows, and a winding trail illuminate the scene. Agent integration is planned.</desc>
+  <desc id="banner-description">Original concept art of a penguin with a golden laptop and three colorful, fluffy companions on a snowy island at twilight. A quiet constellation, warm cabin windows, and a winding trail illuminate the scene.</desc>
   <defs>
     <linearGradient id="sky" x1="0" y1="0" x2="1" y2="1">
       <stop stop-color="#10273c"/>
@@ -185,7 +185,7 @@
     <text x="72" y="312" fill="#bdd1d4" font-size="23" font-weight="400" letter-spacing=".15">Your agents. A little more alive.</text>
     <g fill="#acc3cb" font-size="13" font-weight="500" letter-spacing=".8">
       <circle cx="76" cy="380" r="3" fill="#e8b783"/>
-      <text x="89" y="384">CONCEPT ART · AGENT INTEGRATION PLANNED</text>
+      <text x="89" y="384">CLAUDE PENGUIN · CONCEPT ART</text>
     </g>
   </g>
   <path d="M0 479.5h1280" stroke="#8db0bc" stroke-opacity=".15"/>

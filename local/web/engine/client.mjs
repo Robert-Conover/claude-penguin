@@ -1,4 +1,5 @@
-import { statusLabels, targetKey, resolveTarget, targetForFixture, controlsForWorker, nextSnapshotRevision, terminalDimensions } from './ui-model.mjs';
+import { setupChooser, copyButton } from './chooser.mjs';
+import { statusLabels, targetKey, resolveTarget, targetForProject, controlsForWorker, nextSnapshotRevision, terminalDimensions } from './ui-model.mjs';
 
 const panel = document.createElement('section');
 panel.id = 'cp-agent-panel';
@@ -8,20 +9,22 @@ document.body.classList.add('cp-agent-mode');
 panel.innerHTML = `<header class="cp-agent-header"><button id="cp-agent-back" aria-label="Back to puffle" hidden>‹</button><h2 id="cp-agent-title">Your puffle</h2><button id="cp-agent-close" aria-label="Close agent panel">×</button></header>
   <p id="cp-agent-connection" role="status" hidden>Connecting…</p>
   <p id="cp-agent-error" role="alert" hidden></p>
-  <div id="cp-agent-list" aria-label="Registered puffle sessions" hidden></div>
+  <div id="cp-chooser" hidden>
+    <div class="cp-chooser-heading"><strong id="cp-project-count"></strong><button id="cp-add-project" class="cp-primary">Add project</button></div>
+    <p id="cp-visitor-problem" hidden></p>
+    <form id="cp-register-form" class="cp-agent-form" hidden>
+      <label>Repository path<input id="cp-repo-path" autocomplete="off" placeholder="/Users/you/Projects/my-repository" required></label>
+      <label>Project name<input id="cp-project-name" maxlength="30" placeholder="Repository name"></label>
+      <label>Puffle name<input id="cp-worker-name" maxlength="12" pattern="[A-Za-z]{1,12}" required></label>
+      <small>Your puffle starts from the latest commit. Uncommitted work stays in the source checkout.</small>
+      <button type="submit" class="cp-primary">Create project igloo</button>
+    </form>
+    <div id="cp-agent-list" aria-label="Registered projects"></div><div id="cp-travel"></div>
+  </div>
   <p id="cp-agent-missing" hidden></p>
-  <form id="cp-register-form" class="cp-agent-form" hidden>
-    <h3>A home for your project</h3><p>Connect a repository to Atlas's igloo.</p>
-    <label>Repository path<input id="cp-repo-path" name="path" placeholder="/Users/you/Projects/my-repository" autocomplete="off" required></label>
-    <label>Igloo name<input id="cp-project-name" name="name" placeholder="My project" maxlength="80" required></label>
-    <button type="submit" class="cp-primary">Connect repository</button>
-    <small>One project and one puffle for now.</small>
-  </form>
-  <form id="cp-create-form" class="cp-agent-form" hidden>
-    <h3>Meet your puffle!</h3><p id="cp-create-project"></p>
-    <label>Puffle name<input id="cp-worker-name" name="name" value="Atlas" maxlength="80" required></label>
-    <button type="submit" class="cp-primary">Create puffle session</button>
-  </form>
+  <section id="cp-archive" class="cp-agent-form" hidden><h3>Archived conversation</h3>
+    <p>Continue this conversation manually in its original folder.</p><pre id="cp-archive-details"></pre>
+    <div id="cp-resume"></div><h4>Task journal</h4><ol id="cp-archive-history"></ol></section>
   <div id="cp-session" hidden>
     <aside class="cp-puffle-card">
       <div class="cp-puffle-portrait"><img src="/engine/art/puffle-blue.svg" alt="Blue puffle" width="152" height="152"></div>
@@ -46,17 +49,19 @@ panel.innerHTML = `<header class="cp-agent-header"><button id="cp-agent-back" ar
         <div class="cp-terminal-footer"><span>Answer Claude's questions and permissions here.</span><button id="cp-agent-interrupt">Interrupt turn</button><button id="cp-agent-stop">Stop session</button></div>
         <details id="cp-session-details"><summary>Session details</summary><p id="cp-agent-project"></p><p id="cp-agent-session-id"></p><p id="cp-agent-runtime-activity"></p></details>
       </div>
-      <div id="cp-view-changes" role="tabpanel" aria-labelledby="cp-tab-changes" hidden><div class="cp-changes-heading"><h3>Changes</h3><button id="cp-refresh-diff" aria-label="Refresh changes">↻</button></div><p id="cp-diff-summary">Review your project's changes here.</p><pre id="cp-diff"></pre><div id="cp-untracked"></div></div>
+      <div id="cp-view-changes" role="tabpanel" aria-labelledby="cp-tab-changes" hidden><div class="cp-changes-heading"><h3>Changes</h3><button id="cp-refresh-diff" aria-label="Refresh changes">↻</button></div><p id="cp-diff-summary">Review your project's changes here.</p><pre id="cp-diff-details"></pre><div id="cp-copy"></div><pre id="cp-diff"></pre><div id="cp-untracked"></div></div>
       <div id="cp-view-history" role="tabpanel" aria-labelledby="cp-tab-history" hidden><h3>Task journal</h3><p>Finished turns still need your review.</p><ol id="cp-history"></ol></div>
     </div>
   </div>`;
 document.body.append(panel);
 const el = id => document.getElementById(id);
-let snapshot = { projects: [], workers: [] }, selected = null, requestedFixture = null;
+let snapshot = { projects: [], workers: [] }, selected = null, choosing = true, destinations = [];
 let connected = false, token = '', socket, epoch = 0, retryDelay = 500, retryTimer;
 let busy = false, currentView = 'task', term, fit, terminalObserver, terminalReady = false, attachedKey = '', lastSize = '';
-let selectedOnce = false, diffFor = '', initialTerminalError = '';
-let lastRevision = -1, errorKind = '', nativeReturnFixture = null;
+let selectionRevision = 0, diffRequest = 0;
+const drafts = new Map();
+let diffFor = '', initialTerminalError = '';
+let lastRevision = -1, errorKind = '', nativeReturn = null;
 
 function announce() { window.dispatchEvent(new CustomEvent('cp-engine-state', { detail: { connected, snapshot } })); }
 function error(message = '', kind = 'action') {
@@ -65,10 +70,9 @@ function error(message = '', kind = 'action') {
   el('cp-agent-error').textContent = message;
 }
 function visibility(open) {
-  if (!open) nativeReturnFixture = null;
+  if (!open) nativeReturn = null;
   panel.hidden = !open;
   window.dispatchEvent(new CustomEvent('cp-engine-visibility', { detail: { open } }));
-  if (open) showView('task');
 }
 function disposeTerminal() {
   terminalObserver?.disconnect();
@@ -79,50 +83,55 @@ function disposeTerminal() {
   el('cp-terminal-host').replaceChildren();
 }
 function select(target) {
-  selectedOnce = true;
   if (targetKey(target) !== targetKey(selected)) {
-    nativeReturnFixture = null;
+    selectionRevision++;
+    error();
+    if (selected?.workerId) drafts.set(selected.workerId, el('cp-task-text').value);
+    if (attachedKey) send({ type: 'detach' });
+    nativeReturn = null;
     terminalReady = false;
     attachedKey = '';
     lastSize = '';
     diffFor = '';
-    el('cp-task-text').value = '';
+    el('cp-task-text').value = drafts.get(target?.workerId) ?? '';
+    el('cp-diff-summary').textContent = '';
+    el('cp-diff-details').textContent = '';
+    el('cp-copy').replaceChildren();
     el('cp-diff').textContent = '';
     el('cp-untracked').replaceChildren();
     disposeTerminal();
   }
   selected = target;
-  requestedFixture = null;
+  window.dispatchEvent(new CustomEvent('cp-engine-selection', { detail: selected }));
   render();
 }
+// Game routing names a project UUID and, when a puffle was clicked, its worker.
+// There is no fixture lookup and no fallback to another project's worker.
 window.ClaudePenguinEngine = {
-  open(target, view = 'task') { nativeReturnFixture = null; if (target) select(target); visibility(true); showView(view); render(); },
-  toggle() { visibility(panel.hidden); render(); },
+  select,
+  setDestinations(ids) { if (ids.join() !== destinations.join()) { destinations = ids; render(); } },
+  open(target, view = 'task') { choosing = false; select(target); visibility(true); showView(view); },
+  openList() { select(null); this.openIgloos(); },
+  openIgloos() { choosing = true; nativeReturn = null; visibility(true); showView('task'); },
+  toggle() { if (panel.hidden) { visibility(true); showView('task'); } else this.close(); },
   close() { visibility(false); },
-  openForFixture(fixtureId, view = 'task') {
-    nativeReturnFixture = null;
-    requestedFixture = fixtureId;
-    selectedOnce = true;
-    const target = targetForFixture(snapshot, fixtureId);
-    if (target) select(target);
-    else {
-      selected = null;
-      terminalReady = false;
-      attachedKey = '';
-      disposeTerminal();
+  openForProject(projectId, workerId = null, view = 'task') {
+    if (!snapshot.projects.some(project => project.id === projectId)) {
+      this.openList();
+      error('This project is no longer registered.');
+      return;
     }
-    visibility(true);
-    showView(view);
-    render();
+    const target = targetForProject(snapshot, projectId, workerId) ?? { projectId, workerId };
+    this.open(target, view);
   },
-  async handleNativeAction({ fixtureId, action: actionName, text } = {}) {
-    const target = targetForFixture(snapshot, fixtureId);
+  async handleNativeAction({ projectId, workerId, action: actionName, text } = {}) {
+    const target = targetForProject(snapshot, projectId, workerId ?? null);
     const resolved = resolveTarget(snapshot, target);
     try {
-      if (!target || !resolved) throw new Error('This puffle has no connected session.');
+      if (!workerId || !target || !resolved) throw new Error('This puffle has no connected session.');
       if (actionName === 'terminal' || actionName === 'changes') {
         this.open(target, actionName);
-        nativeReturnFixture = fixtureId;
+        nativeReturn = { ...target };
         return true;
       }
       const controls = controlsForWorker(connected, resolved, true);
@@ -130,12 +139,11 @@ window.ClaudePenguinEngine = {
       await action(actionName, { ...target, ...(actionName === 'submit' ? { text } : {}) });
       return true;
     } catch (problem) {
-      this.openForFixture(fixtureId);
-      error(problem.message);
+      if (targetKey(selected) === targetKey(target)) { this.openForProject(projectId, workerId ?? null); error(problem.message); }
       return false;
     }
   },
-  openView(view, target) { nativeReturnFixture = null; if (target) select(target); visibility(true); showView(view); render(); },
+  openView(view, target) { this.open(target ?? selected, view); },
   getState() { return { connected, snapshot }; },
 };
 el('cp-agent-close').onclick = () => visibility(false);
@@ -154,7 +162,7 @@ function fitTerminal() {
   if (!selected || !connected || !resolveTarget(snapshot, selected)?.worker.running) return;
   const key = `${size.cols}x${size.rows}`;
   if (key !== lastSize) {
-    if (send({ type: 'resize', ...selected, ...size })) lastSize = key;
+    if (send({ type: 'resize', ...selected, attachment: selectionRevision, ...size })) lastSize = key;
   }
 }
 function initializeTerminal() {
@@ -173,10 +181,12 @@ function initializeTerminal() {
   term.loadAddon(fit);
   term.open(el('cp-terminal-host'));
   if (term.textarea) term.textarea.setAttribute('aria-label', 'Claude Code terminal input');
+  const terminal = term;
   term.onData(data => {
+    if (term !== terminal) return;
     if (controlsForWorker(connected, resolveTarget(snapshot, selected), terminalReady).input) {
       fitTerminal();
-      send({ type: 'input', ...selected, data });
+      send({ type: 'input', ...selected, attachment: selectionRevision, data });
     }
   });
   terminalObserver = new ResizeObserver(fitTerminal);
@@ -190,7 +200,7 @@ function attachTerminal() {
     terminalReady = false;
     attachedKey = key;
     lastSize = '';
-    send({ type: 'attach', ...selected });
+    send({ type: 'attach', ...selected, attachment: selectionRevision });
   }
 }
 function applySnapshot(next) {
@@ -199,49 +209,57 @@ function applySnapshot(next) {
   if (revision === null) return;
   lastRevision = revision;
   snapshot = next;
-  if (!selectedOnce && snapshot.workers.length === 1) {
-    const worker = snapshot.workers[0];
-    selected = { projectId: worker.projectId, workerId: worker.id };
-    selectedOnce = true;
-  }
-  if (requestedFixture && !selected) {
-    const target = targetForFixture(snapshot, requestedFixture);
+  if (selected && !selected.workerId) {
+    const target = targetForProject(snapshot, selected.projectId);
     if (target) select(target);
   }
+  if (selected && !snapshot.projects.some(project => project.id === selected.projectId)) select(null);
   if (selected && !resolveTarget(snapshot, selected)) { terminalReady = false; attachedKey = ''; }
   render();
   announce();
 }
+const renderChooser = setupChooser({ el, action, report: error,
+  getState: () => ({ snapshot }),
+  openWork(projectId, workerId, view) {
+    if (view === 'archive') return window.ClaudePenguinEngine.openForProject(projectId, workerId);
+    select({ projectId, workerId });
+    window.dispatchEvent(new Event('cp-open-work'));
+  },
+  visit(projectId) { window.dispatchEvent(new CustomEvent('cp-visit', { detail: projectId })); },
+});
+
+function renderHistory(list, records = []) {
+  list.replaceChildren();
+  for (const item of [...records].reverse()) {
+    const row = document.createElement('li');
+    const time = item.at || item.createdAt || item.startedAt;
+    const title = item.prompt || item.text || item.event || item.type || item.status || 'Session event';
+    row.textContent = [time && new Date(time).toLocaleString(), title, item.status !== title && item.status].filter(Boolean).join(' · ');
+    list.append(row);
+  }
+  if (!records.length) { const item = document.createElement('li'); item.textContent = 'No tasks recorded.'; list.append(item); }
+}
+
 function render() {
   const resolved = resolveTarget(snapshot, selected);
   const worker = resolved?.worker;
   const controls = controlsForWorker(connected, resolved, terminalReady);
   el('cp-agent-connection').hidden = connected;
   el('cp-agent-connection').textContent = 'Your puffle is offline. Waiting for the local runtime…';
-  el('cp-agent-title').textContent = worker ? (currentView === 'terminal' ? `${worker.name} · Claude` : worker.name) : 'Your puffle';
-  const list = el('cp-agent-list');
-  list.replaceChildren();
-  for (const item of snapshot.workers) {
-    const project = snapshot.projects.find(candidate => candidate.id === item.projectId);
-    if (!project) continue;
-    const button = document.createElement('button');
-    button.className = 'cp-agent-select';
-    button.textContent = `${item.name} · ${project.name} · ${statusLabels[item.status] ?? 'Unknown state'}`;
-    button.setAttribute('aria-pressed', String(targetKey(selected) === `${project.id}/${item.id}`));
-    button.onclick = () => { error(); select({ projectId: project.id, workerId: item.id }); };
-    list.append(button);
+  const archived = snapshot.archivedWorkers?.find(item => item.projectId === selected?.projectId && item.id === selected?.workerId);
+  const project = snapshot.projects.find(item => item.id === selected?.projectId);
+  el('cp-agent-title').textContent = choosing ? 'Your Igloos' : worker ? (currentView === 'terminal' ? worker.name + ' · Claude' : worker.name) : archived?.name ?? project?.name ?? 'Your puffle';
+  el('cp-chooser').hidden = !choosing;
+  if (choosing) renderChooser({ snapshot, connected, busy, destinations });
+  el('cp-agent-missing').hidden = choosing || Boolean(worker || archived);
+  el('cp-agent-missing').textContent = project?.setup?.error || project?.setup?.step || 'This puffle has no active session. Open Your Igloos to manage this project.';
+  el('cp-archive').hidden = choosing || !archived;
+  if (!choosing && archived) {
+    el('cp-archive-details').textContent = [archived.originalPath, 'Session ' + archived.sessionId, archived.resumeCommand].filter(Boolean).join('\n');
+    el('cp-resume').replaceChildren(copyButton('Copy resume command', archived.resumeCommand, error));
+    renderHistory(el('cp-archive-history'), archived.taskHistory);
   }
-  list.hidden = Boolean(resolved) && snapshot.workers.length <= 1 || snapshot.workers.length === 0;
-  const projectWithoutWorker = snapshot.projects.find(project => !snapshot.workers.some(item => item.projectId === project.id));
-  const fixtureUnavailable = requestedFixture && requestedFixture !== 'bridge-alpha' && !targetForFixture(snapshot, requestedFixture);
-  const missing = selected && !resolved;
-  el('cp-agent-missing').hidden = !missing && !fixtureUnavailable;
-  el('cp-agent-missing').textContent = missing ? 'This selected project or session is unavailable. Choose an existing puffle explicitly to continue.' : 'This puffle has no connected session. The first version connects Atlas in Bridge Alpha.';
-  el('cp-register-form').hidden = snapshot.projects.length > 0 || Boolean(fixtureUnavailable);
-  el('cp-create-form').hidden = !projectWithoutWorker || Boolean(fixtureUnavailable) || Boolean(missing);
-  if (projectWithoutWorker) el('cp-create-project').textContent = `${projectWithoutWorker.name} · ${projectWithoutWorker.path}`;
-  panel.querySelectorAll('#cp-register-form button, #cp-create-form button').forEach(button => { button.disabled = !connected || busy; });
-  el('cp-session').hidden = !resolved;
+  el('cp-session').hidden = choosing || !resolved;
   el('cp-agent-start').disabled = !controls.start || busy;
   el('cp-agent-start').hidden = Boolean(worker?.running);
   el('cp-tab-terminal').disabled = !resolved;
@@ -252,35 +270,29 @@ function render() {
   el('cp-task-submit').disabled = !controls.submit || busy;
   el('cp-task-text').disabled = !controls.submit || busy;
   el('cp-refresh-diff').disabled = !controls.diff || busy;
-  if (!worker) return;
+  if (choosing || !worker) return;
   el('cp-agent-status').textContent = statusLabels[worker.status] ?? 'Unknown state';
   el('cp-agent-status').dataset.state = worker.status;
   el('cp-agent-home').textContent = resolved.project.name;
   el('cp-agent-runtime-activity').textContent = worker.activity || worker.detail || '';
   el('cp-agent-activity').textContent = !connected ? 'Reconnect to give your puffle a task.' : !worker.running ? 'Start your puffle when you are ready.' : ({ starting: 'Waking up… Open Claude for any setup questions.', idle: 'Ready for your next idea!', working: 'On the job! You can keep exploring.', 'needs-you': 'Your puffle needs you. Open Claude to answer.', review: 'A turn has ended. Check Claude and review the changes.', interrupted: 'The turn was interrupted. Check Claude before continuing.', failed: 'Something went wrong. Open Claude to take a look.' })[worker.status] ?? 'Open Claude to see what is happening.';
-  el('cp-agent-project').textContent = `${resolved.project.name} · ${resolved.project.path}`;
+  el('cp-agent-project').textContent = `${resolved.project.name} · ${resolved.project.sourcePath}`;
   el('cp-agent-session-id').textContent = `Session ${worker.sessionId}`;
   el('cp-agent-start').textContent = worker.established ? 'Resume session' : 'Start session';
   el('cp-terminal-status').textContent = initialTerminalError || (!connected ? 'Disconnected. Displayed terminal output may be stale.' : !terminalReady ? 'Attaching to the session terminal…' : !worker.running ? 'Session process is stopped. Start or resume to continue.' : worker.status === 'needs-you' ? 'Claude needs a response. Use the terminal below.' : 'Connected to the live session terminal.');
-  const history = el('cp-history');
-  history.replaceChildren();
-  for (const item of [...(worker.taskHistory ?? worker.history ?? [])].reverse()) {
-    const row = document.createElement('li');
-    const time = item.at || item.createdAt || item.startedAt;
-    const title = item.prompt || item.text || item.event || item.type || item.status || 'Session event';
-    row.textContent = `${time ? new Date(time).toLocaleString() + ' · ' : ''}${title}${item.status && item.status !== title ? ` · ${item.status}` : ''}`;
-    history.append(row);
-  }
-  if (!history.childElementCount) { const item = document.createElement('li'); item.textContent = 'No tasks have been submitted in this session yet.'; history.append(item); }
+  renderHistory(el('cp-history'), worker.taskHistory);
+  if (worker.inspection?.repair) el('cp-agent-activity').textContent = worker.inspection.repair;
+  if (worker.outsideWorkspace) el('cp-agent-activity').textContent += worker.outsideWorkspace.nestedRepository ? ' Claude is inside a nested repository.' : ' Claude is outside this worktree.';
   initializeTerminal();
   if (term) term.options.disableStdin = !controls.input;
   attachTerminal();
 }
 
 async function action(name, values = {}) {
-  if (!connected || busy) throw new Error('Wait for the local runtime connection.');
+  const mutation = name !== 'diff';
+  if (!connected || (mutation && busy)) throw new Error('Wait for the local runtime connection.');
   const currentEpoch = epoch;
-  busy = true;
+  if (mutation) busy = true;
   error();
   render();
   try {
@@ -293,32 +305,17 @@ async function action(name, values = {}) {
     if (currentEpoch !== epoch) throw new Error('The runtime connection changed. Check the refreshed session before continuing.');
     if (body.snapshot) applySnapshot(body.snapshot);
     return body.result;
-  } finally { busy = false; render(); }
+  } finally { if (mutation) busy = false; render(); }
 }
 function run(actionName) {
   const target = selected && { ...selected };
   if (!resolveTarget(snapshot, target)) return;
-  action(actionName, target).catch(problem => error(problem.message));
+  const revision = selectionRevision;
+  action(actionName, target).catch(problem => { if (revision === selectionRevision) error(problem.message); });
 }
 el('cp-agent-start').onclick = () => { showView('terminal'); run('start'); };
 el('cp-agent-interrupt').onclick = () => run('interrupt');
 el('cp-agent-stop').onclick = () => run('stop');
-el('cp-register-form').onsubmit = async event => {
-  event.preventDefault();
-  try {
-    await action('register', { path: el('cp-repo-path').value.trim(), name: el('cp-project-name').value.trim(), fixtureId: 'bridge-alpha' });
-  } catch (problem) { error(problem.message); }
-};
-el('cp-create-form').onsubmit = async event => {
-  event.preventDefault();
-  const project = snapshot.projects.find(item => !snapshot.workers.some(worker => worker.projectId === item.id));
-  if (!project) return error('The selected repository is no longer available.');
-  try {
-    const result = await action('create', { projectId: project.id, name: el('cp-worker-name').value.trim() });
-    const created = result?.worker ?? result;
-    if (created?.id) select({ projectId: project.id, workerId: created.id });
-  } catch (problem) { error(problem.message); }
-};
 el('cp-task-form').onsubmit = async event => {
   event.preventDefault();
   const text = el('cp-task-text').value.trim();
@@ -326,20 +323,32 @@ el('cp-task-form').onsubmit = async event => {
   if (!text || !controlsForWorker(connected, resolveTarget(snapshot, target), terminalReady).submit) return;
   try {
     await action('submit', { ...target, text });
-    if (targetKey(target) === targetKey(selected)) el('cp-task-text').value = '';
-  } catch (problem) { error(problem.message); }
+    if (targetKey(target) === targetKey(selected) && el('cp-task-text').value.trim() === text) el('cp-task-text').value = '';
+    if (drafts.get(target.workerId)?.trim() === text) drafts.delete(target.workerId);
+  } catch (problem) { if (targetKey(target) === targetKey(selected)) error(problem.message); }
 };
 
 async function refreshDiff() {
   const target = selected && { ...selected };
   if (!resolveTarget(snapshot, target)) return;
+  const revision = selectionRevision;
   const key = targetKey(target);
+  const request = ++diffRequest;
   el('cp-diff-summary').textContent = 'Reading current repository changes…';
   try {
     const result = await action('diff', target);
-    if (key !== targetKey(selected)) return;
+    if (revision !== selectionRevision || request !== diffRequest) return;
     diffFor = key;
-    el('cp-diff-summary').textContent = `Changes since this puffle was created.${result.dirtyAtStart ? ' Includes edits that were already in the repository.' : ''}${result.truncated ? ' Large changes have been shortened.' : ''}`;
+    el('cp-diff-summary').textContent = 'Changes include commits and current edits since the baseline. A completed turn still needs verification. Stop the session before changing branches outside the engine.';
+    el('cp-diff-details').textContent = [
+      'Source checkout  ' + result.sourcePath, 'Worktree  ' + result.worktreePath,
+      'Branch  ' + (result.branch ?? 'Detached HEAD'), 'Expected branch  ' + result.expectedBranch,
+      'Baseline  ' + result.baseCommit, 'HEAD  ' + result.head, 'Merge base  ' + (result.mergeBase ?? 'No shared history'),
+      result.dirty ? 'Worktree has uncommitted changes.' : 'Worktree is clean.',
+      'Untracked paths listed  ' + result.untrackedListed + (result.untrackedListTruncated ? ' or more (listing truncated)' : ''),
+      ...(result.warnings ?? []).map(item => item.message), result.truncated && 'Large changes or previews have been shortened.',
+    ].filter(Boolean).join('\n');
+    el('cp-copy').replaceChildren(copyButton('Copy path', result.worktreePath, error), copyButton('Copy branch', result.branch, error));
     el('cp-diff').textContent = [result.status, result.diff].filter(Boolean).join('\n\n') || 'No tracked changes.';
     el('cp-untracked').replaceChildren();
     for (const file of result.untracked ?? []) {
@@ -352,7 +361,7 @@ async function refreshDiff() {
       if (file.truncated) { const note = document.createElement('p'); note.textContent = 'Preview truncated.'; section.append(note); }
       el('cp-untracked').append(section);
     }
-  } catch (problem) { if (key === targetKey(selected)) error(problem.message); }
+  } catch (problem) { if (revision === selectionRevision && request === diffRequest) error(problem.message); }
 }
 el('cp-refresh-diff').onclick = refreshDiff;
 function showView(view) {
@@ -369,16 +378,16 @@ function showView(view) {
   if (view === 'changes' && diffFor !== targetKey(selected)) refreshDiff();
 }
 el('cp-agent-back').onclick = () => {
-  const fixtureId = nativeReturnFixture;
-  if (!fixtureId) return showView('task');
+  const target = nativeReturn;
+  if (!target) return showView('task');
   visibility(false);
-  const event = new CustomEvent('cp-engine-native-return', { detail: { fixtureId }, cancelable: true });
+  const event = new CustomEvent('cp-engine-native-return', { detail: { ...target }, cancelable: true });
   window.dispatchEvent(event);
   // A missing or unready game bridge leaves the ordinary task card available.
-  if (!event.defaultPrevented) window.ClaudePenguinEngine.openForFixture(fixtureId);
+  if (!event.defaultPrevented) window.ClaudePenguinEngine.openForProject(target.projectId, target.workerId);
 };
 for (const view of ['task', 'terminal', 'changes', 'history']) el(`cp-tab-${view}`).onclick = () => {
-  if (view === 'task' && nativeReturnFixture) return el('cp-agent-back').onclick();
+  if (view === 'task' && nativeReturn) return el('cp-agent-back').onclick();
   showView(view);
 };
 
@@ -417,21 +426,22 @@ async function connect() {
           connected = true;
           retryDelay = 500;
           applySnapshot(message.snapshot);
-        } else if (message.type === 'terminal.snapshot' && targetKey(message) === targetKey(selected) && attachedKey === targetKey(selected)) {
+        } else if (message.type === 'terminal.snapshot' && targetKey(message) === targetKey(selected) && attachedKey === targetKey(selected) && message.attachment === selectionRevision) {
           initializeTerminal();
           if (!term) return render();
           terminalReady = false;
           term.reset();
           if (Number.isInteger(message.cols) && Number.isInteger(message.rows)) term.resize(message.cols, message.rows);
+          const terminal = term;
           term.write(message.data || '', () => {
-            if (generation !== epoch || targetKey(message) !== targetKey(selected)) return;
+            if (term !== terminal || generation !== epoch || targetKey(message) !== targetKey(selected)) return;
             terminalReady = true;
             render();
             fitTerminal();
           });
-        } else if (message.type === 'terminal' && targetKey(message) === targetKey(selected) && attachedKey === targetKey(selected)) {
+        } else if (message.type === 'terminal' && targetKey(message) === targetKey(selected) && attachedKey === targetKey(selected) && message.attachment === selectionRevision) {
           term?.write(message.data || '');
-        } else if (message.type === 'error') error(message.error || message.message || 'The runtime rejected a terminal action.');
+        } else if (message.type === 'error' && (!message.workerId || (targetKey(message) === targetKey(selected) && message.attachment === selectionRevision))) error(message.error || message.message || 'The runtime rejected a terminal action.');
       } catch (problem) { error(problem.message); }
     };
     ws.onerror = () => { /* onclose owns reconnect, including failed handshakes. */ };

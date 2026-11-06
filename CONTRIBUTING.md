@@ -1,6 +1,6 @@
 # Contributing to Claude Penguin
 
-The game baseline runs locally, and an opt-in host engine connects one puffle to a persistent Claude Code session. See the [agent engine guide](local/AGENT_ENGINE.md) for the supported scope and the dated [validation record](local/VALIDATION.md) for live acceptance evidence and remaining gaps.
+The game runs locally. With the host engine enabled, each registered repository has its own igloo and one puffle with a persistent Claude Code session. Sessions in different repositories can run concurrently. See the [agent engine guide](local/AGENT_ENGINE.md) for the supported scope and the dated [validation record](local/VALIDATION.md) for live acceptance evidence and remaining gaps.
 
 ## Branches and promotions
 
@@ -34,9 +34,9 @@ A useful pull request explains the concrete problem, the resulting behavior, and
 
 ## Automated regression checks
 
-The [Regression checks workflow](.github/workflows/regression.yml) runs on pull requests targeting `dev` or `main`, pushes to those branches, and manual dispatch. It uses Node 22 and Python 3.12 on Ubuntu and macOS, installs locked dependencies with scripts disabled, checks launcher syntax, and runs the engine, web/UI, game-bridge contract, and synthetic SWF preservation suites.
+The [Regression checks workflow](.github/workflows/regression.yml) runs on pull requests targeting `dev` or `main`, pushes to those branches, and manual dispatch. It uses Node 22 and Python 3.12 on Ubuntu and macOS, installs locked dependencies with scripts disabled, checks launcher syntax, and runs the engine, web/UI, game-bridge contract, and synthetic SWF preservation suites, plus host tests for igloo provisioning and the native map adapter.
 
-CI checks out only owned source. It does not download media submodules or start the game or Claude. The generated-overlay preservation test explicitly skips without a built overlay; run the [overlay build and preservation checks](local/client-bridge/README.md#build-and-verify) locally for client changes. Houdini container regressions, real game transport, browser interactions, and live Claude permissions/interruption also remain separate acceptance checks. A green workflow does not establish those behaviors.
+CI checks out only owned source. It does not download the media submodule or start the game or Claude. The generated-overlay preservation test explicitly skips without a built overlay; run the [overlay build and preservation checks](local/client-bridge/README.md#build-and-verify) locally for client changes. Houdini container regressions, real game transport, browser interactions, and live Claude permissions/interruption also remain separate acceptance checks. A green workflow does not establish those behaviors.
 
 The workflow grants read-only repository permissions and needs no provider credentials. These checks do not configure branch protection or make themselves required for merging.
 

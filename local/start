@@ -14,6 +14,18 @@ import secrets
 Path('.local').mkdir(exist_ok=True)
 for name in ('login', 'world'):
     Path('.local/logs', name).mkdir(parents=True, exist_ok=True)
+# Read-only into the world service; the agent engine publishes managed igloos here.
+Path('.local/native-igloos').mkdir(exist_ok=True)
+Path('.local/client-bridge').mkdir(exist_ok=True)
+Path('.local/bridge-public').mkdir(exist_ok=True)
+# Preserve already-initialized bridge labs after narrowing the web mounts.
+old = Path('.local/bridge-fixtures.json')
+public = Path('.local/bridge-public/fixtures.json')
+if old.is_file() and not public.exists():
+    import json, sys
+    sys.path.insert(0, 'local')
+    from verify_bridge import validate_manifest, save_manifest
+    save_manifest(public, validate_manifest(json.loads(old.read_text())))
 Path('dash/items').mkdir(exist_ok=True)
 env = Path('.local/env')
 if not env.exists():
