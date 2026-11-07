@@ -535,7 +535,14 @@ setup retry: a receipt binds the puffle even if its reservation expired or was
 withdrawn. A timeout, failed lookup, or missing receipt does not prove that no
 coins were taken. The page keeps the purchase pending, shows its recovery notice,
 and checks again every 20 seconds without cancelling or sending another purchase.
-Matching late replies still resolve it, including after closing the module. A
+Matching late replies still resolve it, including after closing the module.
+The world server refuses a reservation once it has expired, so a receipt lookup
+that starts at least two minutes after expiry (a margin for host/VM clock skew
+and a transaction still committing) and finds nothing settles the operation:
+the engine records it as `not-charged`, and the page says nothing was charged
+and allows another adoption. A purchase the game reported as charged is never
+settled this way; a missing receipt for it stays withdrawn as `lost` for
+inspection. A
 confirmed receipt shows the certificate independently of worktree setup; a
 definitive pre-charge refusal allows another attempt. The visitor's own collection
 never gets the puffle. Adoption creates the receipt

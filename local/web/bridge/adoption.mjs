@@ -15,6 +15,7 @@ const MESSAGES = {
   failed: 'Something went wrong. Check your purchase before trying again.',
   unknown: 'Your purchase is not confirmed yet. Checking again; please do not buy it again. You can also use Check purchase in Your Igloos.',
   disconnected: 'Your puffles are offline. Waiting for the local runtime.', busy: 'Another adoption is still open.',
+  'not-charged': 'That adoption did not go through, and nothing was charged. You can adopt again.',
 };
 // These replies establish that this request was refused before charging. Other
 // errors can follow a committed transaction or a lost earlier success reply.
@@ -92,9 +93,15 @@ export function createAdoption({ getEngine, request, overlay, travel, setTimer =
           coins: record.receipt.coinsAfter, cost: record.receipt.cost, createdAt: record.receipt.createdAt }, code: null, message: '' });
         return;
       }
+      // The engine settles a record only after a receipt lookup that started
+      // well past the reservation's expiry, when the game refuses this ID.
+      if (record?.settled === true) {
+        finishPhase('failed', { code: 'not-charged', message: MESSAGES['not-charged'] });
+        return;
+      }
     } catch { /* A failed lookup cannot establish whether the visitor paid. */ }
-    // A missing receipt (including an expired/withdrawn record) is not a final
-    // refusal: the world transaction might still commit. Keep this operation.
+    // Any other missing receipt (including an expired/withdrawn record) is not
+    // a final refusal: the world transaction might still commit. Keep this operation.
     uncertain(attempt);
   }
 

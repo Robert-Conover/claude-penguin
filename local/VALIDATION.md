@@ -41,11 +41,11 @@ separate `current_status` overview.
 - Individual puffle animation frames tied to real agent states, and live
   puffle-name rejection/correction. Animation routing and rejection logic have
   automated coverage; the local name-filter data did not produce a live rejection.
-- Adoption edge paths: an unknown purchase outcome stays pending after its
-  reservation expires, so a purchase sent while the game connection is down
-  needs a manual check. The default overall cap of six has not been filled live
-  (the queue was checked at a cap of four). Recovery purchases were driven
-  through the page adoption controller, not the native catalog UI.
+- Adoption edge paths: settling an expired, receipt-less purchase as not
+  charged has automated coverage only; it was not rechecked live. The default
+  overall cap of six has not been filled live (the queue was checked at a cap
+  of four). Recovery purchases were driven through the page adoption
+  controller, not the native catalog UI.
 - Full-stack operation on Intel Macs or other host platforms. The recorded
   game acceptance used Apple Silicon macOS; offline CI is separate coverage.
 
@@ -965,3 +965,14 @@ no changes and no hooks, and the game stack was stopped with `./local/stop`.
 - Restarting the engine drops the 8081 game session; the player must reload and
   log in again.
 - No code changed in this run, so no automated suites were rerun.
+
+**Follow-up fix (automated coverage only).** After this run the engine settles
+an adoption as `not-charged` when a receipt lookup that started at least two
+minutes after the reservation expired finds no receipt. The world server
+refuses expired reservations, so no charge can follow. The page then ends the
+purchase with "nothing was charged" and allows another adoption. A purchase the
+game reported as charged is never settled this way, and a receipt still wins.
+Engine 114, web 59 and bridge contract 28 tests passed, including new
+regressions for the margin, a lookup that starts inside it, persistence across
+a restart, the reported-charge exclusion and a late receipt. This was not
+rechecked live in the browser.

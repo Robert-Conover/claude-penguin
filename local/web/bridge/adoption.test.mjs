@@ -126,6 +126,30 @@ test('uncertain purchases stay pending and check the same receipt without cancel
   }
 });
 
+test('an uncertain purchase ends as not charged only when the engine settles it', async () => {
+  const respond = { reconcile: () => ({ adoptions: [{ id: ID, state: 'withdrawn', code: 'lost', settled: false }] }) };
+  const pending = harness({ respond });
+  pending.adoption.choose('p1');
+  pending.adoption.buy(0, 0, 'Atlas');
+  await tick();
+  await pending.timers[0].fn();
+  assert.equal(pending.adoption.status().state, 'pending', 'an unsettled withdrawal is still uncertain');
+  respond.reconcile = () => ({ adoptions: [{ id: ID, state: 'withdrawn', code: 'not-charged', settled: true }] });
+  await pending.timers.at(-1).fn();
+  assert.deepEqual([pending.adoption.status().state, pending.adoption.status().code], ['failed', 'not-charged']);
+  assert.match(pending.adoption.status().message, /nothing was charged/);
+  assert.equal(pending.requests.some(([name]) => name === 'cancelAdoption'), false);
+  assert.equal(pending.requests.filter(([name]) => name === 'adopt').length, 1, 'nothing is bought again automatically');
+  assert.equal(pending.adoption.buy(0, 0, 'Atlas').ok, true, 'the visitor can adopt again');
+  // A receipt in the same record still confirms the purchase.
+  const settled = harness({ respond: { reconcile: () => ({ adoptions: [{ id: ID, state: 'withdrawn', settled: true, receipt }] }) } });
+  settled.adoption.choose('p1');
+  settled.adoption.buy(0, 0, 'Atlas');
+  await tick();
+  await settled.timers[0].fn();
+  assert.equal(settled.adoption.status().state, 'done', 'a receipt always wins over a settled flag');
+});
+
 test('late world replies resolve uncertain purchases even after the module closes', async () => {
   const pending = harness({ respond: { reconcile: () => { throw new Error('offline'); } } });
   pending.adoption.choose('p1');

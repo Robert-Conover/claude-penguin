@@ -75,7 +75,8 @@ for all 32 supported projects. Change returns to the selected project's page;
 removed or reordered destinations are resolved by project identity. An uncertain
 purchase stays pending and displays the page's recovery notice while receipt
 checks continue. Neither a timeout nor a hook exception claims that no coins
-were taken. `adoption-picker.test.mjs` executes the owned AS3 picker/status methods
+were taken; only the engine's settled `not-charged` result, after the
+reservation has expired, ends it as a failure. `adoption-picker.test.mjs` executes the owned AS3 picker/status methods
 with display doubles; real Ruffle rendering remains a separate browser check.
 
 ## Browser contract, version 5

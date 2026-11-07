@@ -71,6 +71,11 @@ const OPEN_ADOPTIONS = ['reserved', 'charged'];
 const SUBMITTABLE = ['idle', 'review', 'interrupted'];
 const USERNAME_ATTEMPTS = 5;
 const ADOPTION_TTL_MS = 10 * 60 * 1000;
+// Houdini refuses a reservation once its expiry has passed (checked when the
+// purchase transaction starts, on the game VM's clock). A receipt lookup that
+// starts this long after expiry and finds nothing proves no charge can follow;
+// the margin covers host/VM clock skew and a transaction still committing.
+const SETTLE_MARGIN_MS = 2 * 60 * 1000;
 const MAX_RECONCILED = 256;
 const absolute = value => typeof value === 'string' && path.isAbsolute(value);
 const record = value => Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -84,6 +89,7 @@ const REFUSALS = {
   'unknown-puffle': 'That puffle cannot join a project igloo.', conflict: 'This adoption ID was already used for a different puffle.',
   failed: 'The game could not complete the purchase. Nothing was charged.', cancelled: 'Adoption cancelled before purchase.',
   lost: 'The game did not confirm the purchase and no receipt was found.',
+  'not-charged': 'The reservation expired without a purchase. Nothing was charged.',
 };
 
 export function sessionCaps(env = process.env) {
@@ -362,7 +368,9 @@ export async function createManager({ stateDir, onEvent = () => {}, claudePath =
   }
   function adoptionView(adoption) {
     return { ...Object.fromEntries(['id', 'projectId', 'workerId', 'ownerId', 'state', 'error', 'code', 'createdAt', 'updatedAt', 'expiresAt'].map(key => [key, adoption[key] ?? null])),
-      request: copy(adoption.request), receipt: adoption.receipt ? copy(adoption.receipt) : null, expired: adoption.state === 'reserved' && expired(adoption) };
+      request: copy(adoption.request), receipt: adoption.receipt ? copy(adoption.receipt) : null, expired: adoption.state === 'reserved' && expired(adoption),
+      // Final: a receipt lookup after expiry plus the margin found nothing, so this ID can never be charged.
+      settled: adoption.state === 'withdrawn' && !adoption.receipt && typeof adoption.settledAt === 'string' };
   }
   function snapshot() {
     // A visitor that failed this run's verification is reported unverified, so the browser builds no mappings for it.
@@ -751,6 +759,8 @@ export async function createManager({ stateDir, onEvent = () => {}, claudePath =
   /** Confirm receipts for these adoptions through the provisioning service. A receipt always wins. */
   async function reconcileReceipts(adoptions) {
     if (!game || !adoptions.length) return [];
+    // Taken before the lookup: only a lookup that started after the margin can settle an adoption.
+    const lookupAt = clock();
     const receipts = await game.readReceipts(adoptions.map(item => item.id));
     assertOpen();
     const bound = [];
@@ -764,11 +774,16 @@ export async function createManager({ stateDir, onEvent = () => {}, claudePath =
         }
         const worker = bind(adoption, receipt);
         if (worker) bound.push(worker.id);
+      } else if (!adoption.settledAt && adoption.state !== 'charged' && adoption.code !== 'lost'
+          && lookupAt >= Date.parse(adoption.expiresAt) + SETTLE_MARGIN_MS) {
+        // The server refuses this ID from now on. A receipt found later still wins above. A purchase the
+        // game reported as charged is never settled as uncharged: its missing receipt needs inspection.
+        setAdoption(adoption, { state: 'withdrawn', error: REFUSALS['not-charged'], code: 'not-charged', settledAt: new Date(lookupAt).toISOString() });
       } else if (adoption.state === 'reserved' && expired(adoption)) {
         setAdoption(adoption, { state: 'withdrawn', error: REFUSALS.expired });
       } else if (adoption.state === 'charged') {
         // The browser saw a purchase that has no receipt (yet): keep it open until it expires, then withdraw it.
-        if (expired(adoption)) setAdoption(adoption, { state: 'withdrawn', error: REFUSALS.lost });
+        if (expired(adoption)) setAdoption(adoption, { state: 'withdrawn', error: REFUSALS.lost, code: 'lost' });
       }
     }
     return bound;

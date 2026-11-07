@@ -254,6 +254,48 @@ test('a receipt always wins over a withdrawn or expired reservation', async t =>
   assert.equal((await e.manager.reserveAdoption({ projectId: project.id, typeId: 1, subtypeId: 0, name: 'Fresh' })).state, 'reserved', 'an expired reservation no longer blocks');
 });
 
+test('an expired adoption settles as not charged only after a receipt lookup past the margin', async t => {
+  let clock = Date.now();
+  const e = await engine(t, { clock: () => clock });
+  const { project } = await e.register('settle');
+  const record = id => e.view().adoptions.find(item => item.id === id);
+  // Sent, but the purchase never reached the world server (for example, a dropped connection).
+  const gone = await e.manager.reserveAdoption({ projectId: project.id, typeId: 0, subtypeId: 0, name: 'Gone' });
+  const expiry = Date.parse(gone.expiresAt);
+  clock = expiry + 60 * 1000;
+  await e.manager.reconcileAdoptions({ projectId: project.id });
+  assert.deepEqual([record(gone.id).state, record(gone.id).settled], ['withdrawn', false], 'inside the margin it stays uncertain');
+  // A lookup that starts inside the margin does not settle, even if it finishes after it.
+  const read = e.game.readReceipts;
+  e.game.readReceipts = async ids => { clock = expiry + 3 * 60 * 1000; return read(ids); };
+  clock = expiry + 119 * 1000;
+  await e.manager.reconcileAdoptions({ projectId: project.id });
+  e.game.readReceipts = read;
+  assert.equal(record(gone.id).settled, false);
+  const settled = (await e.manager.reconcileAdoptions({ projectId: project.id })).adoptions.find(item => item.id === gone.id);
+  assert.deepEqual([settled.state, settled.code, settled.settled], ['withdrawn', 'not-charged', true]);
+  assert.match(settled.error, /Nothing was charged/);
+  await e.restart();
+  await e.manager.verifyGameMappings();
+  await e.manager.settled(project.id);
+  assert.equal(record(gone.id).settled, true, 'the settlement persists');
+
+  // The game reported a charge but no receipt exists: never settled as uncharged.
+  const odd = await e.manager.reserveAdoption({ projectId: project.id, typeId: 0, subtypeId: 0, name: 'Odd' });
+  await e.manager.reportAdoption({ adoptionId: odd.id, result: { ok: true, puffleId: 77 } });
+  assert.equal(record(odd.id).state, 'charged');
+  clock = Date.parse(odd.expiresAt) + 10 * 60 * 1000;
+  await e.manager.reconcileAdoptions({ projectId: project.id });
+  await e.manager.reconcileAdoptions({ projectId: project.id });
+  assert.deepEqual([record(odd.id).state, record(odd.id).code, record(odd.id).settled], ['withdrawn', 'lost', false]);
+
+  // A receipt still wins over a settled record.
+  e.game.purchase({ adoptions: [{ adoptionId: gone.id, ownerId: gone.ownerId, expiresAt: 4e9 }] }, { adoptionId: gone.id, typeId: 0, subtypeId: 0, name: 'Gone' });
+  await e.manager.reconcileAdoptions({ projectId: project.id });
+  await e.manager.settled(project.id);
+  assert.deepEqual([record(gone.id).state, record(gone.id).settled], ['bound', false]);
+});
+
 test('a receipt for another owner or visitor is a conflict and binds nothing', async t => {
   const e = await engine(t);
   const { project } = await e.register('conflict');
