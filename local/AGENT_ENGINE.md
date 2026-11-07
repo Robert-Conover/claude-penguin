@@ -123,7 +123,9 @@ continue the same saved Claude conversation. Previously unfinished task records
 are marked interrupted rather than completed.
 
 Press Ctrl+C in the foreground engine terminal for a normal shutdown. It stops
-the Claude PTYs it owns and releases its runtime lock. `./local/stop` controls the
+the Claude PTYs it owns and releases its runtime lock. The agent page's game
+connection also runs through the engine, so after any engine restart reload
+the page and log in again. `./local/stop` controls the
 game containers and VM; stop the separate engine as well when shutting down the
 whole experiment.
 

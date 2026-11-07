@@ -4,10 +4,14 @@
 
 **The multi-project agent loop has recorded browser and real-Claude acceptance;
 coverage remains partial.** The latest live evidence is from November 6, 2026:
-[project adoption and puffle teams](#project-adoption-and-puffle-teams--november-6-2026)
+[live adoption and puffle-team acceptance](#live-adoption-and-puffle-team-acceptance--november-6-2026)
+covers two real Claude tasks editing code at once in one igloo, independent
+drafts, the overall session cap, exact resume after a restart, paid adoption
+recovery after a lost reply and an engine crash, Retry after a failed worktree
+setup, the server's own full-igloo refusal and an ordinary 8080 adoption.
+[Project adoption and puffle teams](#project-adoption-and-puffle-teams--november-6-2026)
 covers adopting puffles at the Pet Shop into project igloos, one charge per
-purchase, a 10-puffle igloo, two real Claude sessions in one igloo, session
-limits, reconnect and the v3 state migration. Earlier evidence from November 5:
+purchase, a 10-puffle igloo, session limits, reconnect and the v3 state migration. Earlier evidence from November 5:
 [Stage 3](#multi-project-experience-stage-3--november-5-2026) covers native map
 visits, two concurrent puffles, permissions, changes review, reconnect, exact
 session resume, and the real Atlas archive migration. The
@@ -37,10 +41,11 @@ separate `current_status` overview.
 - Individual puffle animation frames tied to real agent states, and live
   puffle-name rejection/correction. Animation routing and rejection logic have
   automated coverage; the local name-filter data did not produce a live rejection.
-- Adoption edge paths checked only by automated tests: a live retry after a
-  failed puffle worktree setup, and the server's own full-igloo refusal (440),
-  which the engine's earlier refusal prevents from being reached in normal use.
-  A native `p#pn` purchase on the 8080 page was not repeated on November 6.
+- Adoption edge paths: an unknown purchase outcome stays pending after its
+  reservation expires, so a purchase sent while the game connection is down
+  needs a manual check. The default overall cap of six has not been filled live
+  (the queue was checked at a cap of four). Recovery purchases were driven
+  through the page adoption controller, not the native catalog UI.
 - Full-stack operation on Intel Macs or other host platforms. The recorded
   game acceptance used Apple Silicon macOS; offline CI is separate coverage.
 
@@ -850,3 +855,113 @@ and no owned puffles. Browser WebSocket instrumentation did not capture Ruffle's
 worker game sockets, so this is UI/database evidence, not packet-level proof.
 No real purchases or Claude sessions were created. The temporary engine stopped
 and released its runtime and publication locks.
+
+## Live adoption and puffle-team acceptance — November 6, 2026
+
+Tested commit: `c4e1a7c` on `dev` (PR #11 merge; `main` at `46f2896` has the
+same tree), rebuilt overlay and derived Pet Shop module (`adoption-build.json`
+output SHA-256 `2acafec3…`). Apple Silicon macOS 27.2, Node 26.13.0, Claude
+Code 2.1.318 in manual permission mode. The engine ran as `adoptcheck` with a
+dedicated `CP_ENGINE_STATE_DIR`/`CP_ENGINE_WORKTREE_ROOT` and the throwaway
+`calc-app` and `notes-app` repositories from the earlier entry. Browser checks
+used the Claude desktop browser pane, which was hidden for most of the run:
+screenshots lagged, so state was confirmed through overlay callbacks, the engine
+snapshot and the database.
+
+Each item is labelled **real** (actual purchase, actual Claude task, actual
+process failure) or **simulated** (a condition the operator induced or a fixture
+written by hand).
+
+**Two real coding tasks at once in one igloo (real).** Moss and Rex resumed
+their saved `calc-app` sessions (`238b09d5…`, `a57d8a1c…`). Moss was asked to fix
+`add()` (`return a - b`); Rex to add a Usage section to `README.md`. Both
+reached their own edit permission prompts at the same time, each showing only
+its own file. Rex was stopped at its prompt (status **interrupted**, process
+gone) while Moss stayed live; one **Yes** (not the auto-accept option) let Moss
+finish. Rex was then resumed on the same session ID, redid the edit and got one
+**Yes**. The `diff` action returned only `calc.py` for Moss and only `README.md`
+for Rex, on separate branches with base `572531f`. In Moss's worktree
+`add(2, 3)` returned 5; the source checkout and Rex's worktree kept
+`return a - b`. No `.claude/` settings were written to the source repository.
+
+**Drafts (real UI).** In the `calc-app` igloo the native card showed Moss's
+green portrait and the two-puffle roster. Different unsent drafts were typed for
+Moss and Rex, then the roster was switched Moss → Rex → Moss → Rex quickly; each
+puffle's text came back unchanged.
+
+**Overall session cap and restart resume (real; cap lowered).** The engine was
+stopped normally (both locks released, no Claude processes left) and restarted
+with `CP_ENGINE_SESSIONS=4` so the overall limit binds before the per-igloo
+limit. Moss and Rex resumed their exact session IDs; Snowy and Ash started in
+`notes-app`; Berry queued with "2 of 3 sessions in this igloo and 4 of 4 overall
+are running". Stopping Snowy started Berry. Asked without tools, Moss correctly
+described its earlier `calc.py` change. The default cap of six was not filled.
+The notes-app sessions were stopped at their first-run trust prompts.
+
+**Lost reply (real purchase, simulated loss).** Through the page adoption
+controller (the calls the Pet Shop module makes), Pebble (pink, 400) was bought
+for `calc-app` with the overlay's `adoption-result` event dropped in the page.
+The world server charged once (4,800 → 4,400, puffle 25). The page stayed
+pending for 20 seconds, then resolved **done** from the stored receipt at the
+first recheck. The engine bound Pebble with a ready worktree. This run did not
+drive the native catalog UI for this purchase.
+
+**Engine crash after the debit (real purchase, real SIGKILL).** Quartz (black,
+400) was bought the same way with the reply dropped, and the engine was killed
+with `kill -9` right after the world reply, before any report or recheck. The
+database had the charge (4,400 → 4,000), puffle 26 and the receipt; the engine
+state still had the adoption as `reserved` with no worker. No orphaned Claude
+processes remained. Restart refused the stale `runtime.lock`, as designed; after
+confirming the PID was gone, `runtime.lock` and
+`.local/native-igloos/owner.lock` were removed by hand. Startup reconcile then
+bound Quartz to the reserved worker ID with a ready worktree.
+
+The kill also dropped the agent page's game connection, which runs through the
+engine on 8081. A purchase attempted before relogging (Ruby) stayed pending
+with "not confirmed yet"; the world log showed the disconnect and the database
+showed no charge. The open reservation was cancelled by hand after that check.
+The page keeps an unknown outcome pending even after the reservation expires,
+when the server would refuse it anyway (see gaps).
+
+**Setup failure after purchase, then Retry (real purchase, simulated cause).**
+A config-defined hook (`hook.cpcheck.command`) was added to the throwaway
+`calc-app` repository. Ruby (red, 400) was bought after relogging: charged once
+(4,000 → 3,600, puffle 27) and bound, and its worktree setup failed with the Git
+policy message naming the hook, marked retryable. After the hook was removed,
+**Retry** (`retryWorker`) built the worktree from `572531f`. One receipt and one
+charge.
+
+**Server-side full-igloo refusal (real handler, simulated reservation).** With
+the engine stopped, `published.json` was hand-written to list the full
+`notes-app` igloo (owner 117, 10 indoor puffles) and a fresh reservation, which
+the engine itself would refuse. A protocol client built on `verify_game.py`
+logged in as `adoptcheck` and sent `p#cpadopt`. Houdini replied `error 440`;
+coins (3,600), owner 117's puffles (10) and receipts (15) were unchanged. The
+publication was restored afterwards.
+
+**Ordinary adoption on 8080 (real).** A disposable fixture account,
+`nativecheck` (id 118, fixture-marked email), was created through
+`game_accounts.ensure_fixture_account`. Signed in on `localhost:8080`, it went
+through the new-player tour, entered the Pet Shop and adopted Nimbus (blue) from
+the original catalog, with no destination picker; naming showed the server's
+check mark and the original certificate appeared. The database showed 10,000 →
+9,600 and puffle 28 on `nativecheck` itself, with no project receipt.
+
+**Totals and untouched accounts.** `adoptcheck` 4,800 → 3,600 (three purchases);
+receipts 12 → 15; `calc-app` owner now has 5 puffles. `player` (99,580),
+`localcheck` (9,580, one puffle) and `bridgecheck` (10,000) were unchanged. At
+the end the engine was stopped with no locks left. The throwaway repository had
+no changes and no hooks, and the game stack was stopped with `./local/stop`.
+
+**Remaining gaps from this run.**
+
+- The default overall cap of six was not filled; the queue was checked at four.
+- The lost-reply, crash and setup-failure purchases used the page adoption
+  controller, not clicks through the native catalog; the native catalog flow was
+  checked in the earlier entry and on 8080 here.
+- An unknown outcome stays pending after its reservation has expired, although
+  the server refuses an expired reservation. A purchase sent while the game
+  connection was down therefore needed a manual database check and cancel.
+- Restarting the engine drops the 8081 game session; the player must reload and
+  log in again.
+- No code changed in this run, so no automated suites were rerun.
