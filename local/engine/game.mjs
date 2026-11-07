@@ -70,6 +70,11 @@ export async function prepareOwnerIgloo(world, { ownerId, recorded = {} }) {
   return { iglooId, roomId };
 }
 
+const validReceipt = item => UUID.test(item?.adoption_id ?? '') && typeof item.name === 'string'
+  && ['visitor_id', 'owner_id', 'penguin_puffle_id', 'puffle_id', 'cost', 'coins_after', 'created_at'].every(key => Number.isSafeInteger(item[key]));
+const receiptFields = item => ({ adoptionId: item.adoption_id, visitorId: item.visitor_id, ownerId: item.owner_id,
+  puffleId: item.penguin_puffle_id, puffleType: item.puffle_id, name: item.name, cost: item.cost, coinsAfter: item.coins_after, createdAt: item.created_at });
+
 function lastJson(text) {
   for (const line of text.trim().split('\n').reverse()) {
     if (!line.trim().startsWith('{')) continue;
@@ -122,7 +127,8 @@ export function createGameProvisioner({ root, compose = path.join(root, 'local/c
   }
 
   function seedFailure(result) {
-    const code = { USERNAME_TAKEN: 'USERNAME_TAKEN', MISMATCH: 'MISMATCH', MISSING: 'MISSING', UNAVAILABLE: 'UNAVAILABLE' }[result.code] ?? 'FAILED';
+    // SCHEMA: the world server has not yet recorded the adoption schema that honors settlements.
+    const code = { USERNAME_TAKEN: 'USERNAME_TAKEN', MISMATCH: 'MISMATCH', MISSING: 'MISSING', UNAVAILABLE: 'UNAVAILABLE', SCHEMA: 'UNAVAILABLE' }[result.code] ?? 'FAILED';
     return new ProvisionError(String(result.error ?? 'The provisioning service refused the request.').slice(0, 500), code);
   }
 
@@ -182,10 +188,38 @@ export function createGameProvisioner({ root, compose = path.join(root, 'local/c
     if (adoptionIds.length > 256 || !adoptionIds.every(id => UUID.test(id))) throw new ProvisionError('Invalid adoption IDs.');
     const result = await runSeed({ op: 'receipts', adoptionIds });
     if (result.status !== 'ok' || !Array.isArray(result.receipts)) throw seedFailure(result);
-    return result.receipts.filter(item => UUID.test(item?.adoption_id ?? '') && adoptionIds.includes(item.adoption_id)
-      && ['visitor_id', 'owner_id', 'penguin_puffle_id', 'puffle_id', 'cost', 'coins_after', 'created_at'].every(key => Number.isSafeInteger(item[key]))
-      && typeof item.name === 'string').map(item => ({ adoptionId: item.adoption_id, visitorId: item.visitor_id, ownerId: item.owner_id,
-      puffleId: item.penguin_puffle_id, puffleType: item.puffle_id, name: item.name, cost: item.cost, coinsAfter: item.coins_after, createdAt: item.created_at }));
+    return result.receipts.filter(item => validReceipt(item) && adoptionIds.includes(item.adoption_id)).map(receiptFields);
+  }
+
+  /**
+   * Settle expired adoptions in the game database (project_adoption.settle).
+   * Each result arrived after its transaction committed: `charged` carries the
+   * receipt, `not-charged` the settlement time (Unix seconds). `open`,
+   * `conflict` and `unknown-visitor` wrote nothing. A failure, a timeout or a
+   * missing or malformed result decides nothing; repeating a request is safe.
+   */
+  async function settleAdoptions(adoptions) {
+    if (!adoptions.length) return [];
+    if (adoptions.length > 256 || new Set(adoptions.map(item => item.adoptionId)).size !== adoptions.length
+        || !adoptions.every(item => UUID.test(item.adoptionId ?? '') && positive(item.visitorId) && positive(item.ownerId) && positive(item.expiresAt))) {
+      throw new ProvisionError('Invalid adoptions to settle.');
+    }
+    const result = await runSeed({ op: 'settle', adoptions: adoptions.map(({ adoptionId, visitorId, ownerId, expiresAt }) => ({ adoptionId, visitorId, ownerId, expiresAt })) });
+    if (result.status !== 'ok' || !Array.isArray(result.results)) throw seedFailure(result);
+    const settled = [];
+    for (const item of result.results) {
+      const asked = adoptions.find(entry => entry.adoptionId === item?.adoptionId);
+      if (!asked || settled.some(entry => entry.adoptionId === asked.adoptionId)) continue;
+      if (item.outcome === 'charged' && validReceipt(item.receipt) && item.receipt.adoption_id === asked.adoptionId) {
+        settled.push({ adoptionId: asked.adoptionId, outcome: 'charged', receipt: receiptFields(item.receipt) });
+      } else if (item.outcome === 'not-charged' && item.settlement?.adoption_id === asked.adoptionId && item.settlement.visitor_id === asked.visitorId
+          && item.settlement.owner_id === asked.ownerId && positive(item.settlement.settled_at)) {
+        settled.push({ adoptionId: asked.adoptionId, outcome: 'not-charged', settledAt: item.settlement.settled_at, created: item.created === true });
+      } else if (['open', 'conflict', 'unknown-visitor'].includes(item.outcome)) {
+        settled.push({ adoptionId: asked.adoptionId, outcome: item.outcome });
+      }
+    }
+    return settled;
   }
 
   function close() {
@@ -193,5 +227,5 @@ export function createGameProvisioner({ root, compose = path.join(root, 'local/c
     for (const child of children) child.kill('SIGTERM');
   }
 
-  return { visitorUsername, ensureVisitor, ensureOwner, prepareIgloo, verifyOwners, readReceipts, close };
+  return { visitorUsername, ensureVisitor, ensureOwner, prepareIgloo, verifyOwners, readReceipts, settleAdoptions, close };
 }

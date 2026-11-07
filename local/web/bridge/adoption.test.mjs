@@ -74,6 +74,25 @@ test('a refusal is shown with the game\'s reason and withdrawn at the engine', a
   assert.equal(adoption.buy(3, 0, 'Moss').ok, true, 'a failed purchase can be tried again');
 });
 
+test('the game refusing a settled adoption ID is final and nothing was charged', async () => {
+  const { adoption, requests } = harness();
+  adoption.choose('p1');
+  adoption.buy(3, 0, 'Moss');
+  await tick();
+  adoption.onReply({ type: 'adoption-result', ok: false, adoptionId: ID, code: 'settled' });
+  assert.deepEqual([adoption.status().state, adoption.status().code], ['failed', 'settled']);
+  assert.match(adoption.status().message, /nothing was charged/);
+  await tick();
+  assert.deepEqual(requests.at(-1), ['adoptionResult', { adoptionId: ID, result: { ok: false, code: 'settled' } }]);
+  // An expired refusal alone is not treated as final: the engine still settles it in the database.
+  const late = harness();
+  late.adoption.choose('p1');
+  late.adoption.buy(3, 0, 'Moss');
+  await tick();
+  late.adoption.onReply({ type: 'adoption-result', ok: false, adoptionId: ID, code: 'expired' });
+  assert.notEqual(late.adoption.status().state, 'failed');
+});
+
 test('invalid requests and engine refusals never reach the game', async () => {
   const refusing = harness({ respond: { adopt: () => { throw new Error('This igloo already has 10 puffles.'); } } });
   refusing.adoption.choose('p1');
@@ -134,6 +153,13 @@ test('an uncertain purchase ends as not charged only when the engine settles it'
   await tick();
   await pending.timers[0].fn();
   assert.equal(pending.adoption.status().state, 'pending', 'an unsettled withdrawal is still uncertain');
+  // A not-charged code without the database's settled flag (an unverified older record) decides nothing.
+  respond.reconcile = () => ({ adoptions: [{ id: ID, state: 'withdrawn', code: 'not-charged', settled: false }] });
+  await pending.timers.at(-1).fn();
+  assert.equal(pending.adoption.status().state, 'pending');
+  respond.reconcile = () => { throw new Error('The provisioning service failed.'); };
+  await pending.timers.at(-1).fn();
+  assert.equal(pending.adoption.status().state, 'pending', 'a failed check decides nothing');
   respond.reconcile = () => ({ adoptions: [{ id: ID, state: 'withdrawn', code: 'not-charged', settled: true }] });
   await pending.timers.at(-1).fn();
   assert.deepEqual([pending.adoption.status().state, pending.adoption.status().code], ['failed', 'not-charged']);

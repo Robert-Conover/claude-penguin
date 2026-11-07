@@ -536,15 +536,37 @@ withdrawn. A timeout, failed lookup, or missing receipt does not prove that no
 coins were taken. The page keeps the purchase pending, shows its recovery notice,
 and checks again every 20 seconds without cancelling or sending another purchase.
 Matching late replies still resolve it, including after closing the module.
-The world server refuses a reservation once it has expired, so a receipt lookup
-that starts at least two minutes after expiry (a margin for host/VM clock skew
-and a transaction still committing) and finds nothing settles the operation:
-the engine records it as `not-charged`, and the page says nothing was charged
-and allows another adoption. A purchase the game reported as charged is never
-settled this way; a missing receipt for it stays withdrawn as `lost` for
-inspection. A
+"Not charged" is decided only by the game database. Once a reservation has
+expired by the engine's clock and has no receipt, the engine asks the
+provisioning service to **settle** it (`project_adoption.settle`). In one
+transaction, settlement takes the visitor's row lock, the same lock a purchase
+takes first, and holds it through commit. If a receipt exists, it returns that
+purchase. If the reservation has not expired on the database clock, it writes
+nothing. Otherwise it stores a row in `claude_penguin_adoption_settlement`. A
+purchase that acquires the lock after that commit finds the row and is refused
+(`settled`) without debiting coins or creating a puffle. A purchase also
+rechecks expiry with the database's `clock_timestamp()` after its lock waits,
+so one delayed on a lock past expiry is refused (`expired`). Purchase and
+settlement therefore serialize: whichever commits first decides. Only a
+committed settlement marks the adoption `not-charged`; the page then says
+nothing was charged and allows another adoption. An empty receipt lookup,
+elapsed time, a failed or timed-out request, or a database that still considers
+the reservation open decides nothing, and the adoption stays pending for the
+next check. A lost settlement reply is safe to repeat; it returns the same row.
+A purchase the game reported as charged is never sent for settlement; a missing
+receipt for it stays withdrawn as `lost` for inspection. A `settledAt` recorded
+by the earlier timeout-based version is treated as unverified and settled in
+the database at the next check. A
 confirmed receipt shows the certificate independently of worktree setup; a
 definitive pre-charge refusal allows another attempt. The visitor's own collection
-never gets the puffle. Adoption creates the receipt
-table `claude_penguin_adoption_receipt` (with `claude_penguin_schema`) in the
-game database when the world server starts.
+never gets the puffle. The world server creates the adoption tables
+(`claude_penguin_adoption_receipt`, `claude_penguin_adoption_settlement` and
+`claude_penguin_schema`) when it starts, at schema version 2. A version 1
+database (receipts only) is upgraded in one transaction that keeps every row;
+any other recorded version stops the handler. Only the world server's own
+startup records version 2, and the provisioning service refuses to settle
+(`SCHEMA`) until it has, so settlement is never written while an older purchase
+handler that ignores it is still running. The real lock ordering is covered by
+`./local/adoption-db-check`, which runs `local/test_adoption_postgres.py`
+against a throwaway PostgreSQL container on an internal Docker network; it needs
+the Houdini image from `./local/start` and never touches the game database.

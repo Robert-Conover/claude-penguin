@@ -71,11 +71,6 @@ const OPEN_ADOPTIONS = ['reserved', 'charged'];
 const SUBMITTABLE = ['idle', 'review', 'interrupted'];
 const USERNAME_ATTEMPTS = 5;
 const ADOPTION_TTL_MS = 10 * 60 * 1000;
-// Houdini refuses a reservation once its expiry has passed (checked when the
-// purchase transaction starts, on the game VM's clock). A receipt lookup that
-// starts this long after expiry and finds nothing proves no charge can follow;
-// the margin covers host/VM clock skew and a transaction still committing.
-const SETTLE_MARGIN_MS = 2 * 60 * 1000;
 const MAX_RECONCILED = 256;
 const absolute = value => typeof value === 'string' && path.isAbsolute(value);
 const record = value => Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -90,7 +85,14 @@ const REFUSALS = {
   failed: 'The game could not complete the purchase. Nothing was charged.', cancelled: 'Adoption cancelled before purchase.',
   lost: 'The game did not confirm the purchase and no receipt was found.',
   'not-charged': 'The reservation expired without a purchase. Nothing was charged.',
+  settled: 'The reservation expired without a purchase. Nothing was charged.',
 };
+// "Not charged" is final only when the game database committed a settlement
+// for the adoption ID (project_adoption.settle), which a purchase waiting for
+// the same lock then refuses. An empty receipt lookup, elapsed time, a failed
+// request or a timeout never establishes it. A `settledAt` written by the
+// earlier timeout-based version is not such a settlement and is checked again.
+const settledByDatabase = adoption => adoption.settlement?.source === 'database';
 
 export function sessionCaps(env = process.env) {
   const read = (key, fallback) => {
@@ -369,8 +371,9 @@ export async function createManager({ stateDir, onEvent = () => {}, claudePath =
   function adoptionView(adoption) {
     return { ...Object.fromEntries(['id', 'projectId', 'workerId', 'ownerId', 'state', 'error', 'code', 'createdAt', 'updatedAt', 'expiresAt'].map(key => [key, adoption[key] ?? null])),
       request: copy(adoption.request), receipt: adoption.receipt ? copy(adoption.receipt) : null, expired: adoption.state === 'reserved' && expired(adoption),
-      // Final: a receipt lookup after expiry plus the margin found nothing, so this ID can never be charged.
-      settled: adoption.state === 'withdrawn' && !adoption.receipt && typeof adoption.settledAt === 'string' };
+      ...(adoption.code === 'not-charged' && !settledByDatabase(adoption) ? { error: 'Waiting for the game database to confirm whether this purchase was charged.' } : {}),
+      // Final: the game database committed a settlement, so this ID can never be charged.
+      settled: adoption.state === 'withdrawn' && !adoption.receipt && settledByDatabase(adoption) };
   }
   function snapshot() {
     // A visitor that failed this run's verification is reported unverified, so the browser builds no mappings for it.
@@ -756,34 +759,60 @@ export async function createManager({ stateDir, onEvent = () => {}, claudePath =
     return worker;
   }
 
-  /** Confirm receipts for these adoptions through the provisioning service. A receipt always wins. */
+  /**
+   * Confirm receipts for these adoptions through the provisioning service, then
+   * ask the game database to settle the expired ones that have none. A receipt
+   * always wins. Only a committed settlement makes an adoption "not charged";
+   * anything ambiguous (no answer, an error, a reservation the database still
+   * considers open) leaves it pending for the next check.
+   */
   async function reconcileReceipts(adoptions) {
     if (!game || !adoptions.length) return [];
-    // Taken before the lookup: only a lookup that started after the margin can settle an adoption.
-    const lookupAt = clock();
     const receipts = await game.readReceipts(adoptions.map(item => item.id));
     assertOpen();
     const bound = [];
+    const accept = (adoption, receipt) => {
+      if (receipt.visitorId !== adoption.visitorId || receipt.ownerId !== adoption.ownerId || !catalogForPuffleType(receipt.puffleType)) {
+        setAdoption(adoption, { state: 'conflict', error: 'The stored receipt does not match this reservation. Nothing was bound; inspect it explicitly.' });
+        return;
+      }
+      const worker = bind(adoption, receipt);
+      if (worker) bound.push(worker.id);
+    };
+    const settle = [];
     for (const adoption of adoptions) {
       if (adoption.state === 'bound') continue;
       const receipt = receipts.find(item => item.adoptionId === adoption.id);
-      if (receipt) {
-        if (receipt.visitorId !== adoption.visitorId || receipt.ownerId !== adoption.ownerId || !catalogForPuffleType(receipt.puffleType)) {
-          setAdoption(adoption, { state: 'conflict', error: 'The stored receipt does not match this reservation. Nothing was bound; inspect it explicitly.' });
-          continue;
-        }
-        const worker = bind(adoption, receipt);
-        if (worker) bound.push(worker.id);
-      } else if (!adoption.settledAt && adoption.state !== 'charged' && adoption.code !== 'lost'
-          && lookupAt >= Date.parse(adoption.expiresAt) + SETTLE_MARGIN_MS) {
-        // The server refuses this ID from now on. A receipt found later still wins above. A purchase the
-        // game reported as charged is never settled as uncharged: its missing receipt needs inspection.
-        setAdoption(adoption, { state: 'withdrawn', error: REFUSALS['not-charged'], code: 'not-charged', settledAt: new Date(lookupAt).toISOString() });
-      } else if (adoption.state === 'reserved' && expired(adoption)) {
+      if (receipt) { accept(adoption, receipt); continue; }
+      if (adoption.state === 'reserved' && expired(adoption)) {
         setAdoption(adoption, { state: 'withdrawn', error: REFUSALS.expired });
       } else if (adoption.state === 'charged') {
         // The browser saw a purchase that has no receipt (yet): keep it open until it expires, then withdraw it.
         if (expired(adoption)) setAdoption(adoption, { state: 'withdrawn', error: REFUSALS.lost, code: 'lost' });
+        continue;
+      }
+      // A purchase the game reported as charged is never settled as uncharged: its missing receipt needs
+      // inspection. The engine's clock only decides when to ask; the database decides the outcome.
+      if (adoption.state === 'withdrawn' && adoption.code !== 'lost' && !settledByDatabase(adoption) && expired(adoption)) settle.push(adoption);
+    }
+    if (!settle.length || !game.settleAdoptions) return bound;
+    let results;
+    try {
+      results = await game.settleAdoptions(settle.map(item => ({ adoptionId: item.id, visitorId: item.visitorId, ownerId: item.ownerId,
+        expiresAt: Math.floor(Date.parse(item.expiresAt) / 1000) })));
+    } catch (error) {
+      onWarning(`Could not settle expired adoptions; they stay pending: ${String(error.message).slice(0, 200)}`);
+      return bound;
+    }
+    assertOpen();
+    for (const adoption of settle) {
+      const result = results.find(item => item.adoptionId === adoption.id);
+      if (result?.outcome === 'charged') accept(adoption, result.receipt);
+      else if (result?.outcome === 'not-charged') {
+        setAdoption(adoption, { state: 'withdrawn', error: REFUSALS['not-charged'], code: 'not-charged', settledAt: undefined,
+          settlement: { source: 'database', settledAt: new Date(result.settledAt * 1000).toISOString() } });
+      } else if (result?.outcome === 'conflict') {
+        setAdoption(adoption, { state: 'conflict', error: 'The game database holds this adoption ID for another visitor or owner. Nothing was bound; inspect it explicitly.' });
       }
     }
     return bound;

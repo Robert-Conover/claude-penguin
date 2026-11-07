@@ -16,10 +16,13 @@ const MESSAGES = {
   unknown: 'Your purchase is not confirmed yet. Checking again; please do not buy it again. You can also use Check purchase in Your Igloos.',
   disconnected: 'Your puffles are offline. Waiting for the local runtime.', busy: 'Another adoption is still open.',
   'not-charged': 'That adoption did not go through, and nothing was charged. You can adopt again.',
+  settled: 'That adoption did not go through, and nothing was charged. You can adopt again.',
 };
-// These replies establish that this request was refused before charging. Other
-// errors can follow a committed transaction or a lost earlier success reply.
-const REFUSED = new Set(['401', '441', '440', 'owner-online', 'unknown-puffle']);
+// These replies establish that this request was refused before charging
+// (`settled`: the game database holds a committed settlement for this ID, so it
+// can never charge). Other errors can follow a committed transaction or a lost
+// earlier success reply.
+const REFUSED = new Set(['401', '441', '440', 'owner-online', 'unknown-puffle', 'settled']);
 const PENDING = ['reserving', 'sent', 'checking', 'unknown'];
 const DISPATCHED = ['sent', 'checking', 'unknown'];
 
@@ -93,8 +96,8 @@ export function createAdoption({ getEngine, request, overlay, travel, setTimer =
           coins: record.receipt.coinsAfter, cost: record.receipt.cost, createdAt: record.receipt.createdAt }, code: null, message: '' });
         return;
       }
-      // The engine settles a record only after a receipt lookup that started
-      // well past the reservation's expiry, when the game refuses this ID.
+      // `settled` is true only once the game database committed a settlement
+      // for this ID; an empty lookup or elapsed time never sets it.
       if (record?.settled === true) {
         finishPhase('failed', { code: 'not-charged', message: MESSAGES['not-charged'] });
         return;
