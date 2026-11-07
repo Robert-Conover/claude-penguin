@@ -74,6 +74,25 @@ test('a refusal is shown with the game\'s reason and withdrawn at the engine', a
   assert.equal(adoption.buy(3, 0, 'Moss').ok, true, 'a failed purchase can be tried again');
 });
 
+test('the game refusing a settled adoption ID is final and nothing was charged', async () => {
+  const { adoption, requests } = harness();
+  adoption.choose('p1');
+  adoption.buy(3, 0, 'Moss');
+  await tick();
+  adoption.onReply({ type: 'adoption-result', ok: false, adoptionId: ID, code: 'settled' });
+  assert.deepEqual([adoption.status().state, adoption.status().code], ['failed', 'settled']);
+  assert.match(adoption.status().message, /nothing was charged/);
+  await tick();
+  assert.deepEqual(requests.at(-1), ['adoptionResult', { adoptionId: ID, result: { ok: false, code: 'settled' } }]);
+  // An expired refusal alone is not treated as final: the engine still settles it in the database.
+  const late = harness();
+  late.adoption.choose('p1');
+  late.adoption.buy(3, 0, 'Moss');
+  await tick();
+  late.adoption.onReply({ type: 'adoption-result', ok: false, adoptionId: ID, code: 'expired' });
+  assert.notEqual(late.adoption.status().state, 'failed');
+});
+
 test('invalid requests and engine refusals never reach the game', async () => {
   const refusing = harness({ respond: { adopt: () => { throw new Error('This igloo already has 10 puffles.'); } } });
   refusing.adoption.choose('p1');
@@ -124,6 +143,37 @@ test('uncertain purchases stay pending and check the same receipt without cancel
     await pending.timers.at(-1).fn();
     assert.equal(pending.adoption.status().state, 'done', 'automatic receipt retry recovers');
   }
+});
+
+test('an uncertain purchase ends as not charged only when the engine settles it', async () => {
+  const respond = { reconcile: () => ({ adoptions: [{ id: ID, state: 'withdrawn', code: 'lost', settled: false }] }) };
+  const pending = harness({ respond });
+  pending.adoption.choose('p1');
+  pending.adoption.buy(0, 0, 'Atlas');
+  await tick();
+  await pending.timers[0].fn();
+  assert.equal(pending.adoption.status().state, 'pending', 'an unsettled withdrawal is still uncertain');
+  // A not-charged code without the database's settled flag (an unverified older record) decides nothing.
+  respond.reconcile = () => ({ adoptions: [{ id: ID, state: 'withdrawn', code: 'not-charged', settled: false }] });
+  await pending.timers.at(-1).fn();
+  assert.equal(pending.adoption.status().state, 'pending');
+  respond.reconcile = () => { throw new Error('The provisioning service failed.'); };
+  await pending.timers.at(-1).fn();
+  assert.equal(pending.adoption.status().state, 'pending', 'a failed check decides nothing');
+  respond.reconcile = () => ({ adoptions: [{ id: ID, state: 'withdrawn', code: 'not-charged', settled: true }] });
+  await pending.timers.at(-1).fn();
+  assert.deepEqual([pending.adoption.status().state, pending.adoption.status().code], ['failed', 'not-charged']);
+  assert.match(pending.adoption.status().message, /nothing was charged/);
+  assert.equal(pending.requests.some(([name]) => name === 'cancelAdoption'), false);
+  assert.equal(pending.requests.filter(([name]) => name === 'adopt').length, 1, 'nothing is bought again automatically');
+  assert.equal(pending.adoption.buy(0, 0, 'Atlas').ok, true, 'the visitor can adopt again');
+  // A receipt in the same record still confirms the purchase.
+  const settled = harness({ respond: { reconcile: () => ({ adoptions: [{ id: ID, state: 'withdrawn', settled: true, receipt }] }) } });
+  settled.adoption.choose('p1');
+  settled.adoption.buy(0, 0, 'Atlas');
+  await tick();
+  await settled.timers[0].fn();
+  assert.equal(settled.adoption.status().state, 'done', 'a receipt always wins over a settled flag');
 });
 
 test('late world replies resolve uncertain purchases even after the module closes', async () => {

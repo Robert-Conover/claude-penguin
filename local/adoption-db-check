@@ -1,0 +1,40 @@
+#!/bin/sh
+# Real-PostgreSQL concurrency checks for project adoption (local/test_adoption_postgres.py).
+#
+# Starts a throwaway PostgreSQL 16 container loaded with the vendored
+# houdini.sql on an internal Docker network (no published ports), runs the
+# tests in the Houdini image, and removes both. The game's own database,
+# volumes and accounts are never touched. Needs ./local/start to have built
+# club-penguin-houdini:local; the Colima VM must be running.
+set -eu
+project_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+export DOCKER_CONTEXT=colima-club-penguin
+name="cp-adoption-db-$$"
+password=$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')
+
+cleanup() {
+  docker rm -f "$name" >/dev/null 2>&1 || true
+  docker network rm "$name" >/dev/null 2>&1 || true
+}
+trap cleanup EXIT INT TERM
+
+docker image inspect club-penguin-houdini:local >/dev/null 2>&1 || {
+  echo 'club-penguin-houdini:local is missing; run ./local/start first.' >&2; exit 1; }
+docker network create --internal "$name" >/dev/null
+docker run -d --name "$name" --network "$name" \
+  -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD="$password" -e POSTGRES_DB=houdini \
+  -v "$project_dir/houdini/houdini.sql:/docker-entrypoint-initdb.d/01-houdini.sql:ro" \
+  postgres:16-alpine >/dev/null
+
+# The init scripts run on a socket-only server; TCP readiness means the real start.
+tries=0
+until docker exec "$name" pg_isready -q -h 127.0.0.1 -U postgres -d houdini 2>/dev/null; do
+  tries=$((tries + 1))
+  if [ "$tries" -gt 120 ]; then echo 'The throwaway database did not start.' >&2; docker logs --tail 20 "$name" >&2; exit 1; fi
+  sleep 1
+done
+
+docker run --rm --network "$name" \
+  -e CP_ADOPTION_PG_DSN="postgresql://postgres:$password@$name:5432/houdini" \
+  -v "$project_dir/local:/local:ro" --entrypoint python \
+  club-penguin-houdini:local -B /local/test_adoption_postgres.py "$@"

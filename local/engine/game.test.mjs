@@ -188,6 +188,33 @@ test('seed requests and credentials travel on stdin only, with fixed Compose arg
   await assert.rejects(provisioner.verifyOwners([{ key: 'p', username: 'player' }]), /non-managed/);
 });
 
+test('settlements go through the service and only committed, matching outcomes are returned', async () => {
+  const id = '0b6f8a52-5f1e-4f53-9d0e-4b8e8b7e2a11';
+  const other = '6a1d7f3e-2c4b-4e8f-9a1b-3c5d7e9f1a2b';
+  const third = '1c2d3e4f-5a6b-4c7d-8e9f-0a1b2c3d4e5f';
+  const ask = [{ adoptionId: id, visitorId: 107, ownerId: 201, expiresAt: 1800000600 }, { adoptionId: other, visitorId: 107, ownerId: 201, expiresAt: 1800000600 },
+    { adoptionId: third, visitorId: 107, ownerId: 201, expiresAt: 1800000600 }];
+  const receipt = { adoption_id: other, visitor_id: 107, owner_id: 201, penguin_puffle_id: 40, puffle_id: 0, name: 'Rex', cost: 400, coins_after: 4600, created_at: 1800000000 };
+  let reply = { status: 'ok', results: [
+    { adoptionId: id, outcome: 'not-charged', created: true, settlement: { adoption_id: id, visitor_id: 107, owner_id: 201, expires_at: 1800000600, settled_at: 1800000700 } },
+    { adoptionId: other, outcome: 'charged', receipt },
+    { adoptionId: third, outcome: 'not-charged', settlement: { adoption_id: third, visitor_id: 999, owner_id: 201, settled_at: 1800000700 } },
+    { adoptionId: '9c2d3e4f-5a6b-4c7d-8e9f-0a1b2c3d4e5f', outcome: 'not-charged' }] };
+  const { spawn, runs } = fakeSpawn(() => ({ stdout: JSON.stringify(reply) }));
+  const provisioner = createGameProvisioner({ root: '/repo', spawn });
+  assert.deepEqual(await provisioner.settleAdoptions(ask), [
+    { adoptionId: id, outcome: 'not-charged', settledAt: 1800000700, created: true },
+    { adoptionId: other, outcome: 'charged', receipt: { adoptionId: other, visitorId: 107, ownerId: 201, puffleId: 40, puffleType: 0, name: 'Rex', cost: 400, coinsAfter: 4600, createdAt: 1800000000 } }],
+  'a settlement for other identities, or for an ID not asked about, decides nothing');
+  assert.deepEqual(runs[0].request, { op: 'settle', adoptions: ask });
+  reply = { status: 'failed', code: 'SCHEMA', error: 'The world server has not recorded adoption schema version 2.' };
+  await assert.rejects(provisioner.settleAdoptions(ask), error => error.code === 'UNAVAILABLE' && /schema version 2/.test(error.message));
+  assert.deepEqual(await provisioner.settleAdoptions([]), []);
+  assert.equal(runs.length, 2, 'nothing to settle runs nothing');
+  await assert.rejects(provisioner.settleAdoptions([{ ...ask[0], expiresAt: 0 }]), /Invalid adoptions/);
+  await assert.rejects(provisioner.settleAdoptions([ask[0], ask[0]]), /Invalid adoptions/);
+});
+
 test('receipts are read through the service by adoption ID and validated before use', async () => {
   const id = '0b6f8a52-5f1e-4f53-9d0e-4b8e8b7e2a11';
   const row = { adoption_id: id, visitor_id: 107, owner_id: 201, penguin_puffle_id: 40, puffle_id: 1006, name: 'Rex', cost: 800, coins_after: 4200, created_at: 1800000000 };

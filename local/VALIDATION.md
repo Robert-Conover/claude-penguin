@@ -4,10 +4,19 @@
 
 **The multi-project agent loop has recorded browser and real-Claude acceptance;
 coverage remains partial.** The latest live evidence is from November 6, 2026:
-[project adoption and puffle teams](#project-adoption-and-puffle-teams--november-6-2026)
+[database-confirmed adoption settlement](#database-confirmed-adoption-settlement--november-6-2026)
+covers an expired purchase stalled on the visitor's database lock resolving as
+not charged in the browser, the settled ID being refused afterwards, a fresh
+adoption charging once, the live schema upgrade, and real PostgreSQL tests of
+both purchase/settlement orders. Earlier the same day,
+[live adoption and puffle-team acceptance](#live-adoption-and-puffle-team-acceptance--november-6-2026)
+covers two real Claude tasks editing code at once in one igloo, independent
+drafts, the overall session cap, exact resume after a restart, paid adoption
+recovery after a lost reply and an engine crash, Retry after a failed worktree
+setup, the server's own full-igloo refusal and an ordinary 8080 adoption.
+[Project adoption and puffle teams](#project-adoption-and-puffle-teams--november-6-2026)
 covers adopting puffles at the Pet Shop into project igloos, one charge per
-purchase, a 10-puffle igloo, two real Claude sessions in one igloo, session
-limits, reconnect and the v3 state migration. Earlier evidence from November 5:
+purchase, a 10-puffle igloo, session limits, reconnect and the v3 state migration. Earlier evidence from November 5:
 [Stage 3](#multi-project-experience-stage-3--november-5-2026) covers native map
 visits, two concurrent puffles, permissions, changes review, reconnect, exact
 session resume, and the real Atlas archive migration. The
@@ -37,10 +46,12 @@ separate `current_status` overview.
 - Individual puffle animation frames tied to real agent states, and live
   puffle-name rejection/correction. Animation routing and rejection logic have
   automated coverage; the local name-filter data did not produce a live rejection.
-- Adoption edge paths checked only by automated tests: a live retry after a
-  failed puffle worktree setup, and the server's own full-igloo refusal (440),
-  which the engine's earlier refusal prevents from being reached in normal use.
-  A native `p#pn` purchase on the 8080 page was not repeated on November 6.
+- Adoption edge paths: the default overall cap of six has not been filled live
+  (the queue was checked at a cap of four), and the lost-reply, crash and
+  setup-failure recovery purchases were driven through the page adoption
+  controller, not the native catalog UI. Settling an expired purchase as not
+  charged is now confirmed by the game database and was checked live; an agent
+  page whose purchase stalls on a database lock loses its game connection.
 - Full-stack operation on Intel Macs or other host platforms. The recorded
   game acceptance used Apple Silicon macOS; offline CI is separate coverage.
 
@@ -850,3 +861,252 @@ and no owned puffles. Browser WebSocket instrumentation did not capture Ruffle's
 worker game sockets, so this is UI/database evidence, not packet-level proof.
 No real purchases or Claude sessions were created. The temporary engine stopped
 and released its runtime and publication locks.
+
+## Live adoption and puffle-team acceptance — November 6, 2026
+
+Tested commit: `c4e1a7c` on `dev` (PR #11 merge; `main` at `46f2896` has the
+same tree), rebuilt overlay and derived Pet Shop module (`adoption-build.json`
+output SHA-256 `2acafec3…`). Apple Silicon macOS 27.2, Node 26.13.0, Claude
+Code 2.1.318 in manual permission mode. The engine ran as `adoptcheck` with a
+dedicated `CP_ENGINE_STATE_DIR`/`CP_ENGINE_WORKTREE_ROOT` and the throwaway
+`calc-app` and `notes-app` repositories from the earlier entry. Browser checks
+used the Claude desktop browser pane, which was hidden for most of the run:
+screenshots lagged, so state was confirmed through overlay callbacks, the engine
+snapshot and the database.
+
+Each item is labelled **real** (actual purchase, actual Claude task, actual
+process failure) or **simulated** (a condition the operator induced or a fixture
+written by hand).
+
+**Two real coding tasks at once in one igloo (real).** Moss and Rex resumed
+their saved `calc-app` sessions (`238b09d5…`, `a57d8a1c…`). Moss was asked to fix
+`add()` (`return a - b`); Rex to add a Usage section to `README.md`. Both
+reached their own edit permission prompts at the same time, each showing only
+its own file. Rex was stopped at its prompt (status **interrupted**, process
+gone) while Moss stayed live; one **Yes** (not the auto-accept option) let Moss
+finish. Rex was then resumed on the same session ID, redid the edit and got one
+**Yes**. The `diff` action returned only `calc.py` for Moss and only `README.md`
+for Rex, on separate branches with base `572531f`. In Moss's worktree
+`add(2, 3)` returned 5; the source checkout and Rex's worktree kept
+`return a - b`. No `.claude/` settings were written to the source repository.
+
+**Drafts (real UI).** In the `calc-app` igloo the native card showed Moss's
+green portrait and the two-puffle roster. Different unsent drafts were typed for
+Moss and Rex, then the roster was switched Moss → Rex → Moss → Rex quickly; each
+puffle's text came back unchanged.
+
+**Overall session cap and restart resume (real; cap lowered).** The engine was
+stopped normally (both locks released, no Claude processes left) and restarted
+with `CP_ENGINE_SESSIONS=4` so the overall limit binds before the per-igloo
+limit. Moss and Rex resumed their exact session IDs; Snowy and Ash started in
+`notes-app`; Berry queued with "2 of 3 sessions in this igloo and 4 of 4 overall
+are running". Stopping Snowy started Berry. Asked without tools, Moss correctly
+described its earlier `calc.py` change. The default cap of six was not filled.
+The notes-app sessions were stopped at their first-run trust prompts.
+
+**Lost reply (real purchase, simulated loss).** Through the page adoption
+controller (the calls the Pet Shop module makes), Pebble (pink, 400) was bought
+for `calc-app` with the overlay's `adoption-result` event dropped in the page.
+The world server charged once (4,800 → 4,400, puffle 25). The page stayed
+pending for 20 seconds, then resolved **done** from the stored receipt at the
+first recheck. The engine bound Pebble with a ready worktree. This run did not
+drive the native catalog UI for this purchase.
+
+**Engine crash after the debit (real purchase, real SIGKILL).** Quartz (black,
+400) was bought the same way with the reply dropped, and the engine was killed
+with `kill -9` right after the world reply, before any report or recheck. The
+database had the charge (4,400 → 4,000), puffle 26 and the receipt; the engine
+state still had the adoption as `reserved` with no worker. No orphaned Claude
+processes remained. Restart refused the stale `runtime.lock`, as designed; after
+confirming the PID was gone, `runtime.lock` and
+`.local/native-igloos/owner.lock` were removed by hand. Startup reconcile then
+bound Quartz to the reserved worker ID with a ready worktree.
+
+The kill also dropped the agent page's game connection, which runs through the
+engine on 8081. A purchase attempted before relogging (Ruby) stayed pending
+with "not confirmed yet"; the world log showed the disconnect and the database
+showed no charge. The open reservation was cancelled by hand after that check.
+The page keeps an unknown outcome pending even after the reservation expires,
+when the server would refuse it anyway (see gaps).
+
+**Setup failure after purchase, then Retry (real purchase, simulated cause).**
+A config-defined hook (`hook.cpcheck.command`) was added to the throwaway
+`calc-app` repository. Ruby (red, 400) was bought after relogging: charged once
+(4,000 → 3,600, puffle 27) and bound, and its worktree setup failed with the Git
+policy message naming the hook, marked retryable. After the hook was removed,
+**Retry** (`retryWorker`) built the worktree from `572531f`. One receipt and one
+charge.
+
+**Server-side full-igloo refusal (real handler, simulated reservation).** With
+the engine stopped, `published.json` was hand-written to list the full
+`notes-app` igloo (owner 117, 10 indoor puffles) and a fresh reservation, which
+the engine itself would refuse. A protocol client built on `verify_game.py`
+logged in as `adoptcheck` and sent `p#cpadopt`. Houdini replied `error 440`;
+coins (3,600), owner 117's puffles (10) and receipts (15) were unchanged. The
+publication was restored afterwards.
+
+**Ordinary adoption on 8080 (real).** A disposable fixture account,
+`nativecheck` (id 118, fixture-marked email), was created through
+`game_accounts.ensure_fixture_account`. Signed in on `localhost:8080`, it went
+through the new-player tour, entered the Pet Shop and adopted Nimbus (blue) from
+the original catalog, with no destination picker; naming showed the server's
+check mark and the original certificate appeared. The database showed 10,000 →
+9,600 and puffle 28 on `nativecheck` itself, with no project receipt.
+
+**Totals and untouched accounts.** `adoptcheck` 4,800 → 3,600 (three purchases);
+receipts 12 → 15; `calc-app` owner now has 5 puffles. `player` (99,580),
+`localcheck` (9,580, one puffle) and `bridgecheck` (10,000) were unchanged. At
+the end the engine was stopped with no locks left. The throwaway repository had
+no changes and no hooks, and the game stack was stopped with `./local/stop`.
+
+**Remaining gaps from this run.**
+
+- The default overall cap of six was not filled; the queue was checked at four.
+- The lost-reply, crash and setup-failure purchases used the page adoption
+  controller, not clicks through the native catalog; the native catalog flow was
+  checked in the earlier entry and on 8080 here.
+- An unknown outcome stays pending after its reservation has expired, although
+  the server refuses an expired reservation. A purchase sent while the game
+  connection was down therefore needed a manual database check and cancel.
+- Restarting the engine drops the 8081 game session; the player must reload and
+  log in again.
+- No code changed in this run, so no automated suites were rerun.
+
+**Follow-up fix (automated coverage only).** After this run the engine settles
+an adoption as `not-charged` when a receipt lookup that started at least two
+minutes after the reservation expired finds no receipt. The world server
+refuses expired reservations, so no charge can follow. The page then ends the
+purchase with "nothing was charged" and allows another adoption. A purchase the
+game reported as charged is never settled this way, and a receipt still wins.
+Engine 114, web 59 and bridge contract 28 tests passed, including new
+regressions for the margin, a lookup that starts inside it, persistence across
+a restart, the reported-charge exclusion and a late receipt. This was not
+rechecked live in the browser.
+
+*Superseded later the same day.* Review showed the margin did not prove that no
+charge could follow: the handler checked expiry before waiting for the visitor
+lock, so a purchase delayed on that lock could still commit after an empty
+lookup. This was reproduced against PostgreSQL with the handler at `215a771`.
+The timeout settlement was replaced by a settlement committed in the game
+database; see the
+[next entry](#database-confirmed-adoption-settlement--november-6-2026).
+
+## Database-confirmed adoption settlement — November 6, 2026
+
+Tested revision: `cdbc734` on `live-adoption-acceptance` (PR #13), the
+implementation commit before this record. Apple Silicon macOS 27.2, Node
+26.13.0, PostgreSQL 16 (`postgres:16-alpine`), Houdini image with Python 3.11
+and asyncpg 0.32.0. Live checks used the `adoptcheck` visitor, its dedicated
+`CP_ENGINE_STATE_DIR`/`CP_ENGINE_WORKTREE_ROOT` and the throwaway `calc-app`
+repository from the previous entry, in the Claude desktop browser pane (hidden
+for most of the run, so state was also read from the page controller, engine
+state and database).
+
+**What changed.** "Not charged" is now decided only by a settlement committed
+in the game database (`project_adoption.settle`), which takes the visitor's row
+lock, the same lock a purchase takes first. A purchase that acquires the lock
+after a settlement is refused (`settled`), and it rechecks expiry with
+`clock_timestamp()` after its lock waits. The engine no longer infers anything
+from an empty lookup or elapsed time. See the
+[engine guide](AGENT_ENGINE.md#adoption-into-a-project-igloo).
+
+**Real PostgreSQL concurrency tests (automated, real database).**
+`./local/adoption-db-check` ran `local/test_adoption_postgres.py` in the
+Houdini image against a throwaway PostgreSQL 16 container loaded with the
+vendored `houdini.sql`, on an internal Docker network; each test cloned its own
+database. Purchases and settlements ran on separate connections, ordered behind
+a third connection holding the visitor lock and confirmed waiting through
+`pg_stat_activity`. All 12 passed, each asserting coins, owner puffles, receipts
+and settlements:
+
+- settlement queued first, purchase sent before expiry: settlement commits,
+  the waiting purchase is refused `settled`, nothing charged;
+- purchase queued first: it commits, and the waiting settlement returns its
+  receipt (even before expiry);
+- the counterexample: a purchase sent before expiry and held on the lock until
+  2 seconds after it, with an empty receipt lookup during the wait, is refused
+  `expired`; the settlement queued behind it then commits;
+- expiry while waiting for the owner lock: refused `expired`;
+- settlement of an open reservation writes nothing; repeats return the same
+  row; other identities get `conflict`, an unknown visitor `unknown-visitor`;
+- a committed settlement whose response is discarded: the retry returns the
+  same row and a later purchase with a fresh expiry is refused `settled`;
+- a settlement whose backend is terminated while waiting writes nothing; the
+  retry settles;
+- a purchase that fails after its debit (foreign-key violation) rolls back
+  completely and then settles as not charged;
+- an uncontended purchase charges once, and its replay returns the receipt;
+- fresh install records version 2 (concurrently from two connections and
+  repeated); a version 1 database with a receipt and puffle upgrades in place
+  with every row, account count and balance unchanged; version 3 is refused
+  before any DDL.
+
+The same counterexample script against the previous handler (`215a771`) in
+the same setup charged 400 coins and created the puffle after the lock was
+released, although the receipt lookup during the wait was empty.
+
+**Live schema upgrade (real).** `./local/start` restarted the world server
+with the new handler, which upgraded the persistent game database from version
+1 to 2 at boot. The 15 existing receipts and every checked balance (`player`
+99,580, `localcheck` 9,580, `bridgecheck` 10,000, `nativecheck` 9,600,
+`adoptcheck` 3,600) were unchanged. When the engine started, it settled the two
+cancelled reservations from the previous entry (Moss and the first Ruby, no
+receipts) through the provisioning service.
+
+**Expired purchase stalled on the lock, in the browser (real purchase,
+simulated stall).** Through the native Pet Shop picker and catalog on 8081,
+`adoptcheck` chose `calc-app` and named a blue puffle Locky. Before **Adopt**,
+a separate `psql` session locked `adoptcheck`'s penguin row and slept for 720
+seconds (03:32:33–03:44:33 UTC). The reservation (`15ec768f…`) expired at
+03:42:43. `pg_stat_activity` showed the world server's purchase transaction
+waiting on `SELECT coins … FOR UPDATE`. The page showed "Your purchase is not
+confirmed yet…" and stayed pending. The lock was released at 03:44:32.981; the
+engine's settlement committed at 03:44:32.991. Which of the two queued
+transactions took the lock first was not captured. The database showed no
+receipt, no new puffle and 3,600 coins. The engine recorded `not-charged` from
+the database settlement, and the page ended the purchase with "That adoption
+did not go through, and nothing was charged. You can adopt again." The game
+connection had dropped by then: Houdini handles one client's packets in order,
+so the client went unanswered for the whole stall (world log disconnect at
+03:44:32.989).
+
+**The settled ID cannot charge afterwards (real handler, simulated
+reservation).** With the engine stopped, `published.json` was hand-written to
+list `15ec768f…` for owner 116 with an expiry an hour ahead, so the handler's
+publication check passed. A `verify_game.py`-based client logged in as
+`adoptcheck` and sent `p#cpadopt` with that ID. Houdini replied `error
+settled`; coins (3,600), receipts and owner 116's puffles (5) were unchanged.
+The empty publication was restored.
+
+**A fresh adoption succeeds once (real).** After restarting the engine and
+logging in again, `adoptcheck` adopted a green puffle, Fresh, into `calc-app`
+through the native picker and catalog. The certificate appeared, the page
+reported `done`, and the database showed one receipt (`6545fadb…`, puffle 29),
+3,600 → 3,200 coins and owner 116 with 6 puffles. The engine bound Fresh with a
+ready worktree.
+
+**Automated suites at `cdbc734`.** Engine 116, web 60, bridge contract 28,
+client-bridge Python 16, Python host suites 36 (provisioning, native igloos,
+adoption with an in-memory fake), Houdini container regressions 13, real
+PostgreSQL 12; launcher syntax and `git diff --check` clean. CI adds a Linux job
+that runs the PostgreSQL suite against a service container.
+
+**Totals.** `adoptcheck` 3,600 → 3,200 (one purchase); receipts 15 → 16;
+settlements 0 → 3 (two earlier cancelled reservations and Locky). `player`,
+`localcheck`, `bridgecheck` and `nativecheck` were unchanged.
+
+**Remaining gaps.**
+
+- The live stall showed the database outcome and the page result, not the
+  order in which the queued purchase and settlement took the lock; both orders
+  are covered by the PostgreSQL tests.
+- An agent page whose purchase is stalled on a database lock loses its game
+  connection; the player must reload and log in again.
+- The engine's settlement relies on the provisioning service, so each check
+  starts a container (a few seconds). The engine's clock decides only when to
+  ask; a database that still considers the reservation open leaves it pending.
+- The default overall cap of six has still not been filled live, and the
+  earlier recovery purchases were not repeated through native catalog clicks.
+- `CREATE TABLE IF NOT EXISTS` would accept an unrelated relation already named
+  `claude_penguin_adoption_settlement`; no such object exists in the vendored
+  schema.

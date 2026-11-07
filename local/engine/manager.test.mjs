@@ -254,6 +254,97 @@ test('a receipt always wins over a withdrawn or expired reservation', async t =>
   assert.equal((await e.manager.reserveAdoption({ projectId: project.id, typeId: 1, subtypeId: 0, name: 'Fresh' })).state, 'reserved', 'an expired reservation no longer blocks');
 });
 
+test('an expired adoption is not charged only once the game database commits a settlement', async t => {
+  let clock = Date.now();
+  const e = await engine(t, { clock: () => clock });
+  e.game.db.now = () => clock;
+  const { project } = await e.register('settle');
+  const record = id => e.view().adoptions.find(item => item.id === id);
+  const reconcile = () => e.manager.reconcileAdoptions({ projectId: project.id });
+  const settleCalls = () => e.game.calls.filter(([op]) => op === 'settle');
+  // Sent, but the purchase never reached the world server (for example, a dropped connection).
+  const gone = await e.manager.reserveAdoption({ projectId: project.id, typeId: 0, subtypeId: 0, name: 'Gone' });
+  const expiry = Date.parse(gone.expiresAt);
+  clock = expiry - 1000;
+  await reconcile();
+  assert.equal(settleCalls().length, 0, 'an open reservation is not settled');
+  // Long past expiry, an empty receipt lookup alone never settles: a failed settlement leaves it pending.
+  clock = expiry + 60 * 60 * 1000;
+  e.game.fail.settle = new ProvisionError('The provisioning service failed.', 'UNAVAILABLE');
+  await reconcile();
+  assert.deepEqual([record(gone.id).state, record(gone.id).settled], ['withdrawn', false]);
+  // The database clock still considers it open: nothing is written, nothing is final.
+  e.game.db.now = () => expiry - 1000;
+  await reconcile();
+  assert.deepEqual([record(gone.id).settled, e.game.db.settlements.length], [false, 0]);
+  e.game.db.now = () => clock;
+  // The settlement commits but its response is lost: still pending, and the retry returns the same row.
+  const settle = e.game.settleAdoptions;
+  e.game.settleAdoptions = async items => { await settle(items); throw new ProvisionError('The provisioning service failed (signal SIGTERM).', 'UNAVAILABLE'); };
+  await reconcile();
+  e.game.settleAdoptions = settle;
+  assert.deepEqual([record(gone.id).settled, e.game.db.settlements.length], [false, 1]);
+  const settled = (await reconcile()).adoptions.find(item => item.id === gone.id);
+  assert.deepEqual([settled.state, settled.code, settled.settled, e.game.db.settlements.length], ['withdrawn', 'not-charged', true, 1]);
+  assert.match(settled.error, /Nothing was charged/);
+  // The original adoption ID can never charge afterwards.
+  const coins = e.game.db.coins;
+  assert.deepEqual(e.game.purchase({ adoptions: [{ adoptionId: gone.id, ownerId: gone.ownerId, expiresAt: 4e9 }] }, { adoptionId: gone.id, typeId: 0, subtypeId: 0, name: 'Gone' }),
+    { ok: false, code: 'settled' });
+  assert.equal(e.game.db.coins, coins);
+  await e.restart();
+  await e.manager.verifyGameMappings();
+  await e.manager.settled(project.id);
+  assert.equal(record(gone.id).settled, true, 'the settlement persists');
+  const asked = settleCalls().length;
+  await reconcile();
+  assert.equal(settleCalls().length, asked, 'a database settlement is not asked for again');
+
+  // The purchase commits between the receipt lookup and the settlement: the settlement returns its receipt.
+  const race = await e.manager.reserveAdoption({ projectId: project.id, typeId: 0, subtypeId: 0, name: 'Race' });
+  clock = Date.parse(race.expiresAt) + 1000;
+  e.game.before.settle = () => {
+    e.game.purchase({ adoptions: [{ adoptionId: race.id, ownerId: race.ownerId, expiresAt: 4e9 }] }, { adoptionId: race.id, typeId: 0, subtypeId: 0, name: 'Race' });
+  };
+  await reconcile();
+  delete e.game.before.settle;
+  await e.manager.settled(project.id);
+  assert.deepEqual([record(race.id).state, record(race.id).settled, e.game.db.settlements.length], ['bound', false, 1]);
+
+  // The game reported a charge but no receipt exists: never settled as uncharged.
+  const odd = await e.manager.reserveAdoption({ projectId: project.id, typeId: 0, subtypeId: 0, name: 'Odd' });
+  await e.manager.reportAdoption({ adoptionId: odd.id, result: { ok: true, puffleId: 77 } });
+  assert.equal(record(odd.id).state, 'charged');
+  clock = Date.parse(odd.expiresAt) + 10 * 60 * 1000;
+  await reconcile();
+  await reconcile();
+  assert.deepEqual([record(odd.id).state, record(odd.id).code, record(odd.id).settled], ['withdrawn', 'lost', false]);
+  assert.equal(settleCalls().some(([, items]) => items.some(item => item.adoptionId === odd.id)), false, 'a reported charge is never sent for settlement');
+});
+
+test('a not-charged result saved by the timeout-based version is checked against the database again', async t => {
+  let clock = Date.now();
+  const e = await engine(t, { clock: () => clock });
+  e.game.db.now = () => clock;
+  const { project } = await e.register('legacy-settle');
+  const old = await e.manager.reserveAdoption({ projectId: project.id, typeId: 0, subtypeId: 0, name: 'Old' });
+  clock = Date.parse(old.expiresAt) + 5 * 60 * 1000;
+  await e.manager.close();
+  const file = path.join(e.stateDir, 'state.json');
+  const saved = JSON.parse(fs.readFileSync(file, 'utf8'));
+  Object.assign(saved.adoptions.find(item => item.id === old.id), { state: 'withdrawn', code: 'not-charged',
+    error: 'The reservation expired without a purchase. Nothing was charged.', settledAt: new Date(clock).toISOString() });
+  fs.writeFileSync(file, JSON.stringify(saved));
+  e.game.fail.settle = new ProvisionError('The provisioning service failed.', 'UNAVAILABLE');
+  e.manager = await createManager(e.options);
+  await e.manager.verifyGameMappings();
+  let view = e.view().adoptions.find(item => item.id === old.id);
+  assert.equal(view.settled, false, 'an unverified settledAt is not final');
+  assert.doesNotMatch(view.error, /Nothing was charged/);
+  view = (await e.manager.reconcileAdoptions({ projectId: project.id })).adoptions.find(item => item.id === old.id);
+  assert.deepEqual([view.settled, e.game.db.settlements.map(item => item.adoptionId)], [true, [old.id]]);
+});
+
 test('a receipt for another owner or visitor is a conflict and binds nothing', async t => {
   const e = await engine(t);
   const { project } = await e.register('conflict');

@@ -31,6 +31,14 @@ Operations:
   {"op": "receipts", "adoptionIds": [uuid, ...]}
       Read-only: stored project-adoption receipts for these IDs. The receipt
       table belongs to project_adoption.py, which the world server creates.
+  {"op": "settle", "adoptions": [{adoptionId, visitorId, ownerId, expiresAt}, ...]}
+      Decide expired adoptions (expiresAt in Unix seconds) as charged or not
+      charged, each in its own transaction on the visitor's row lock
+      (project_adoption.settle). Each result is reported only after its
+      transaction committed; a lost response is safe to repeat. Refused with
+      SCHEMA until the world server has recorded adoption schema version 2,
+      which is what makes its purchase handler honor settlements. Only a marked
+      test visitor's adoptions can be settled.
 
 Igloo creation is not done here; the engine performs it through the owner's
 ordinary game session. Project adoption happens only through the visitor's own
@@ -287,6 +295,36 @@ async def receipts(connection, request):
     return {'status': 'ok', 'schema': True, 'receipts': await project_adoption.read_receipts(connection, ids)}
 
 
+async def settle(connection, request):
+    items = request.get('adoptions')
+    if not isinstance(items, list) or not 1 <= len(items) <= MAX_RECEIPTS:
+        raise RequestError(f'Pass 1 to {MAX_RECEIPTS} adoptions')
+    seen = set()
+    for item in items:
+        if not isinstance(item, dict) or set(item) != {'adoptionId', 'visitorId', 'ownerId', 'expiresAt'} \
+                or not isinstance(item['adoptionId'], str) or not project_adoption.ADOPTION_ID.match(item['adoptionId']) \
+                or item['adoptionId'] in seen or not all(isinstance(item[key], int) and not isinstance(item[key], bool)
+                                                         and item[key] > 0 for key in ('visitorId', 'ownerId', 'expiresAt')):
+            raise RequestError('Each adoption needs a distinct lowercase adoptionId and positive visitorId, ownerId and expiresAt')
+        seen.add(item['adoptionId'])
+    version = await project_adoption.schema_version(connection)
+    if version != project_adoption.SCHEMA_VERSION:
+        return failure('SCHEMA', f'The world server has not recorded adoption schema version {project_adoption.SCHEMA_VERSION} '
+                       f'(found {version}); restart it with the current handler before settling.')
+    visitors = {}
+    results = []
+    for item in items:
+        visitor_id = item['visitorId']
+        if visitor_id not in visitors:
+            visitors[visitor_id] = await connection.fetchval('SELECT username FROM penguin WHERE id = $1', visitor_id)
+        if visitors[visitor_id] not in VISITOR_USERNAMES:
+            results.append({'adoptionId': item['adoptionId'], 'outcome': 'unknown-visitor'})
+            continue
+        result = await project_adoption.settle(connection, item['adoptionId'], visitor_id, item['ownerId'], item['expiresAt'])
+        results.append({'adoptionId': item['adoptionId'], **result})
+    return {'status': 'ok', 'results': results}
+
+
 async def handle(request, connection, environ=os.environ):
     if not isinstance(request, dict):
         raise RequestError('Expected a JSON object')
@@ -299,6 +337,8 @@ async def handle(request, connection, environ=os.environ):
         return await verify(connection, request)
     if operation == 'receipts':
         return await receipts(connection, request)
+    if operation == 'settle':
+        return await settle(connection, request)
     raise RequestError('Unknown provisioning operation')
 
 
