@@ -64,10 +64,13 @@ export class FakePty {
  * accounts. `fake.fail[op]` (a function or ProvisionError) injects one
  * failure; `fake.before[op]` runs a check at call time. `fake.purchase` plays
  * the visitor's purchase against the game, as the browser overlay would.
+ * `fake.settleAdoptions` models project_adoption.settle (`db.settlements`,
+ * decided on `db.now()`, the database clock); real lock ordering is covered
+ * against PostgreSQL by local/test_adoption_postgres.py, not here.
  */
 export function fakeGame({ visitorId = 107, filtered = ['Badword'], visitorUsername = 'bridgecheck', coins = 5000 } = {}) {
   const db = { visitorId, nextVisitor: 300, owners: [], nextOwner: 201, nextIgloo: 9, nextPuffle: 31, taken: new Set(),
-    filtered: new Set(filtered.map(name => name.toLowerCase())), receipts: [], coins, online: new Set() };
+    filtered: new Set(filtered.map(name => name.toLowerCase())), receipts: [], settlements: [], coins, online: new Set(), now: () => Date.now() };
   const calls = [];
   const fake = { db, calls, fail: {}, before: {}, visitorUsername };
   const title = name => name.slice(0, 1).toUpperCase() + name.slice(1).toLowerCase();
@@ -139,6 +142,19 @@ export function fakeGame({ visitorId = 107, filtered = ['Badword'], visitorUsern
     await step('receipts', ids);
     return db.receipts.filter(item => ids.includes(item.adoptionId)).map(item => ({ ...item }));
   };
+  fake.settleAdoptions = async items => {
+    await step('settle', items);
+    return items.map(item => {
+      const receipt = db.receipts.find(entry => entry.adoptionId === item.adoptionId);
+      if (receipt) return receipt.visitorId === item.visitorId && receipt.ownerId === item.ownerId ? { adoptionId: item.adoptionId, outcome: 'charged', receipt: { ...receipt } } : { adoptionId: item.adoptionId, outcome: 'conflict' };
+      const stored = db.settlements.find(entry => entry.adoptionId === item.adoptionId);
+      if (stored) return stored.visitorId === item.visitorId && stored.ownerId === item.ownerId ? { adoptionId: item.adoptionId, outcome: 'not-charged', settledAt: stored.settledAt, created: false } : { adoptionId: item.adoptionId, outcome: 'conflict' };
+      if (db.now() < item.expiresAt * 1000) return { adoptionId: item.adoptionId, outcome: 'open' };
+      const settlement = { ...item, settledAt: Math.floor(db.now() / 1000) };
+      db.settlements.push(settlement);
+      return { adoptionId: item.adoptionId, outcome: 'not-charged', settledAt: settlement.settledAt, created: true };
+    });
+  };
   /**
    * The visitor's purchase as the world server handles it: `published` is the
    * engine's current publication. Returns the overlay's reply shape.
@@ -156,7 +172,8 @@ export function fakeGame({ visitorId = 107, filtered = ['Badword'], visitorUsern
       if (stored.ownerId !== owner.ownerId || stored.puffleType !== puffleType || stored.name !== title(name)) return { ok: false, code: 'conflict' };
       return reply(stored);
     }
-    if (reservation.expiresAt * 1000 <= Date.now()) return { ok: false, code: 'expired' };
+    if (db.settlements.some(item => item.adoptionId === adoptionId)) return { ok: false, code: 'settled' };
+    if (reservation.expiresAt * 1000 <= db.now()) return { ok: false, code: 'expired' };
     if (db.online.has(owner.ownerId)) return { ok: false, code: 'owner-online' };
     const cost = prices[puffleType] ?? 400;
     if (db.coins < cost) return { ok: false, code: '401' };

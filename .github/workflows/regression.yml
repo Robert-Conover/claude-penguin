@@ -15,6 +15,48 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  adoption-postgres:
+    # The purchase/settlement lock ordering needs a real database; the host
+    # suites use an in-memory fake. Service containers run only on Linux.
+    name: Adoption concurrency (PostgreSQL 16)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: ci-only-disposable
+          POSTGRES_DB: houdini
+        ports: ['127.0.0.1:5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres -d houdini"
+          --health-interval 3s --health-timeout 3s --health-retries 40
+    steps:
+      - name: Check out owned source without media submodules
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+          submodules: false
+
+      - name: Set up Python (the Houdini image runs 3.11)
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.11'
+
+      - name: Install asyncpg at the Houdini image's version
+        run: python -m pip install --disable-pip-version-check 'asyncpg==0.32.0'
+
+      - name: Load the vendored Houdini schema
+        env:
+          PGPASSWORD: ci-only-disposable
+        run: psql -v ON_ERROR_STOP=1 -q -h 127.0.0.1 -U postgres -d houdini -f houdini/houdini.sql > /dev/null
+
+      - name: Test purchase and settlement against PostgreSQL
+        env:
+          CP_ADOPTION_PG_DSN: postgresql://postgres:ci-only-disposable@127.0.0.1:5432/houdini
+        run: python -B local/test_adoption_postgres.py
+
   regression:
     name: Regression (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -55,7 +97,7 @@ jobs:
 
       - name: Check launcher syntax
         run: |
-          for file in local/start local/stop local/compose local/verify local/agent-start local/bridge-fixtures; do
+          for file in local/start local/stop local/compose local/verify local/agent-start local/bridge-fixtures local/adoption-db-check; do
             sh -n "$file"
           done
           bash -n local/web/setup-ruffle.sh
@@ -87,7 +129,9 @@ jobs:
           cat >> "$GITHUB_STEP_SUMMARY" <<'EOF'
           These checks use fake Claude PTYs, temporary repositories and worktrees, local HTTP/socket
           fixtures, client contract doubles, synthetic SWF preservation and stale-overlay rejection, and host tests
-          for game provisioning and the native igloo adapter.
+          for game provisioning and the native igloo adapter. The separate Linux job runs the
+          adoption purchase/settlement transactions against a PostgreSQL 16 service with the
+          vendored schema, not against the running game server.
           The generated-overlay preservation test skips because this job does not
           download the pinned media archive or build the overlay.
 

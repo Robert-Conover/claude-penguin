@@ -4,6 +4,8 @@
     "status": "multi_project_browser_and_real_claude_acceptance_with_open_gaps",
     "scope": "Overview of existing dated evidence, not a new acceptance run or live machine state. Other top-level records retain their checkpoint-specific status.",
     "evidence_records": [
+      "database_confirmed_settlement_2026_11_06",
+      "live_adoption_acceptance_2026_11_06",
       "adoption_recovery_paging_2026_11_06",
       "project_adoption_teams_2026_11_06",
       "multi_project_experience_stage_3_2026_11_05",
@@ -16,7 +18,7 @@
       "Ordinary player browser logoff/relogin persistence (agent-page reconnect and resume were checked separately)",
       "Automatic interrupt confirmation on the tested CLI and cancellation during a running tool",
       "Individual real-agent animation frames and live puffle-name rejection/correction",
-      "Adoption edge paths covered only by tests: live retry after a failed puffle worktree setup, the server-side 440 refusal, and a repeated native p#pn purchase on the 8080 page",
+      "Adoption edge paths: the default overall cap of six not filled live; recovery purchases not driven through native catalog clicks; a purchase stalled on a database lock drops the agent page game connection",
       "Full-stack operation on Intel Macs or other host platforms"
     ]
   },
@@ -829,6 +831,217 @@
     "not_validated_in_this_run": [
       "Paid database adoption recovery",
       "Two simultaneous real coding tasks in one igloo"
+    ]
+  },
+  "live_adoption_acceptance_2026_11_06": {
+    "date": "2026-11-06",
+    "document": "local/VALIDATION.md#live-adoption-and-puffle-team-acceptance--november-6-2026",
+    "tested_commit": "c4e1a7c",
+    "environment": {
+      "host": "macOS 27.2 arm64",
+      "node": "26.13.0",
+      "claude_code": "2.1.318",
+      "permission_mode": "manual",
+      "visitor": "adoptcheck",
+      "engine_state": "dedicated CP_ENGINE_STATE_DIR and worktree root",
+      "repositories": [
+        "calc-app (throwaway)",
+        "notes-app (throwaway)"
+      ],
+      "derived_module_sha256": "2acafec391df2d9dc0871af38363ad63ea3c7bf870fa1820829eab58066b94d6"
+    },
+    "real_coding_tasks": {
+      "concurrent_in_one_igloo": 2,
+      "tasks": {
+        "Moss": "fix add() in calc.py",
+        "Rex": "add Usage section to README.md"
+      },
+      "separate_permission_prompts": true,
+      "approval": "single Yes each; no auto-accept",
+      "separate_diffs": {
+        "Moss": [
+          "calc.py"
+        ],
+        "Rex": [
+          "README.md"
+        ]
+      },
+      "fix_checked": "add(2, 3) == 5 in Moss's worktree; source checkout unchanged",
+      "stop_one_other_continues": true
+    },
+    "drafts_independent_with_rapid_switching": true,
+    "session_cap": {
+      "overall_cap_used": 4,
+      "per_igloo": 3,
+      "fifth_start": "queued on overall cap, started after a stop",
+      "default_cap_of_six_filled": false
+    },
+    "restart_resume": {
+      "exact_session_ids": true,
+      "conversation_memory_checked": true
+    },
+    "purchases": [
+      {
+        "puffle": "Pebble",
+        "kind": "real purchase, simulated lost reply",
+        "result": "pending 20 s, resolved from receipt, bound",
+        "charged": 400
+      },
+      {
+        "puffle": "Quartz",
+        "kind": "real purchase, real SIGKILL after debit",
+        "result": "stale lock refused; locks removed by hand; startup reconcile bound",
+        "charged": 400
+      },
+      {
+        "puffle": "Ruby",
+        "kind": "real purchase, simulated setup failure (config hook)",
+        "result": "setup failed retryable; Retry after removing hook produced ready worktree",
+        "charged": 400
+      },
+      {
+        "puffle": "Nimbus",
+        "kind": "real native 8080 adoption by disposable nativecheck",
+        "result": "original catalog and certificate; puffle on own account; no project receipt",
+        "charged": 400
+      }
+    ],
+    "unsent_while_disconnected": "page stayed pending; no charge in database; reservation cancelled by hand",
+    "server_440": {
+      "kind": "real handler, simulated hand-written publication",
+      "reply": "error 440",
+      "charged": 0
+    },
+    "totals": {
+      "adoptcheck_coins": [
+        4800,
+        3600
+      ],
+      "receipts": [
+        12,
+        15
+      ],
+      "nativecheck_coins": [
+        10000,
+        9600
+      ],
+      "unchanged_accounts": [
+        "player",
+        "localcheck",
+        "bridgecheck"
+      ]
+    },
+    "cleanup": "engine stopped with no locks; throwaway repo clean and hook removed; game stack stopped with ./local/stop",
+    "not_validated_in_this_run": [
+      "Default overall cap of six filled live",
+      "Recovery purchases through clicks in the native catalog (driven through the page adoption controller)",
+      "Automated suites (no code changed)"
+    ],
+    "open_findings": [
+      "An unknown purchase outcome stays pending after its reservation expires",
+      "Restarting the engine drops the 8081 game session; reload and log in again"
+    ],
+    "follow_up_fix": {
+      "change": "Engine settles an adoption as not-charged when a receipt lookup starting at least 2 minutes after expiry finds no receipt; page ends the purchase as failed with 'nothing was charged'. Reported charges are never settled; a receipt still wins.",
+      "automated": {
+        "engine": 114,
+        "web": 59,
+        "bridge_contract": 28,
+        "diff_check": "passed"
+      },
+      "live_recheck": false,
+      "superseded": {
+        "by": "database_confirmed_settlement_2026_11_06",
+        "reason": "The handler checked expiry before waiting for the visitor lock, so a purchase delayed on that lock could still commit after an empty lookup past the margin; reproduced against PostgreSQL with the handler at 215a771."
+      }
+    }
+  },
+  "database_confirmed_settlement_2026_11_06": {
+    "date": "2026-11-06",
+    "document": "local/VALIDATION.md#database-confirmed-adoption-settlement--november-6-2026",
+    "tested_commit": "cdbc734",
+    "environment": {
+      "host": "Apple Silicon macOS 27.2",
+      "node": "26.13.0",
+      "postgres": "16 (postgres:16-alpine)",
+      "houdini_python": "3.11",
+      "asyncpg": "0.32.0",
+      "visitor": "adoptcheck with dedicated engine state and throwaway calc-app"
+    },
+    "change": "Not-charged is decided only by a settlement committed in the game database on the visitor row lock; purchases refuse settled IDs and recheck expiry with clock_timestamp() after lock waits; the engine no longer infers anything from an empty lookup or elapsed time.",
+    "postgres_concurrency_tests": {
+      "kind": "automated, real PostgreSQL",
+      "passed": 12,
+      "failed": 0,
+      "covers": [
+        "settlement first refuses waiting purchase",
+        "purchase first returns receipt to waiting settlement",
+        "delayed-lock counterexample refused expired",
+        "expiry while waiting for owner lock",
+        "open reservation writes nothing; idempotent repeat; conflict; unknown visitor",
+        "lost settlement response then retry",
+        "settlement killed before commit then retry",
+        "purchase rollback then settle",
+        "uncontended purchase charges once",
+        "fresh install, v1 to v2 upgrade keeping rows, v3 refused before DDL"
+      ],
+      "previous_handler_215a771": "counterexample charged 400 coins after an empty receipt lookup"
+    },
+    "live_schema_upgrade": {
+      "kind": "real",
+      "from": 1,
+      "to": 2,
+      "receipts_preserved": 15,
+      "balances_unchanged": true
+    },
+    "stalled_expired_purchase_in_browser": {
+      "kind": "real purchase, simulated lock stall",
+      "adoption": "15ec768f",
+      "lock_held_utc": "03:32:33-03:44:33",
+      "expired_utc": "03:42:43",
+      "settled_utc": "03:44:32.991",
+      "page_result": "failed/not-charged with nothing-was-charged message",
+      "charged": false,
+      "lock_order_captured": false,
+      "game_connection_dropped": true
+    },
+    "settled_id_replay": {
+      "kind": "real handler, hand-written publication",
+      "reply": "error settled",
+      "charged": false
+    },
+    "fresh_adoption": {
+      "kind": "real, native picker and catalog",
+      "puffle": "Fresh (green, puffle 29)",
+      "coins": "3600 -> 3200",
+      "receipts": "15 -> 16",
+      "bound_worktree_ready": true
+    },
+    "automated": {
+      "engine": 116,
+      "web": 60,
+      "bridge_contract": 28,
+      "client_bridge_python": 16,
+      "python_host": 36,
+      "houdini_container": 13,
+      "postgres": 12,
+      "diff_check": "passed"
+    },
+    "totals": {
+      "adoptcheck": "3600 -> 3200",
+      "settlements": "0 -> 3",
+      "untouched": [
+        "player",
+        "localcheck",
+        "bridgecheck",
+        "nativecheck"
+      ]
+    },
+    "open_findings": [
+      "Lock order of the live stalled purchase and settlement not captured (both orders covered by PostgreSQL tests)",
+      "A purchase stalled on a database lock drops the agent page game connection",
+      "Each settlement check starts a provisioning container",
+      "Default overall cap of six not filled live; recovery purchases not repeated through native catalog clicks"
     ]
   }
 }

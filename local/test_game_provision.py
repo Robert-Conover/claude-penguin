@@ -3,7 +3,8 @@
 
 Run: python3 -m unittest local/test_game_provision.py
 No asyncpg, bcrypt, Docker, or running game is needed. Real database behavior
-is covered only by the live provisioning path behind ./local/start.
+is covered by the live provisioning path behind ./local/start and, for adoption
+settlement, by local/test_adoption_postgres.py (./local/adoption-db-check).
 """
 import asyncio
 import contextlib
@@ -63,6 +64,8 @@ class FakeConnection:
             return self.schema is not None
         if 'FROM claude_penguin_schema' in query:
             return self.schema
+        if query.startswith('SELECT username FROM penguin WHERE id'):
+            return next((row['username'] for row in self.penguins if row['id'] == values[0]), None)
         if 'FROM penguin WHERE id' in query:
             return next((row['id'] for row in self.penguins if row['id'] == values[0]), None)
         if 'lower(username)' in query:
@@ -197,6 +200,33 @@ class ProvisionTests(unittest.TestCase):
             with self.assertRaises(game_provision.RequestError):
                 run(game_provision.handle({'op': 'receipts', 'adoptionIds': bad}, db))
         self.assertFalse(any(statement.lstrip().upper().startswith(('INSERT', 'UPDATE', 'DELETE')) for statement in db.statements))
+
+    def test_settle_needs_schema_two_and_a_marked_visitor_and_reports_each_outcome(self):
+        db = FakeConnection()
+        db.penguins = [{'id': 107, 'username': 'adoptcheck'}, {'id': 101, 'username': 'player'}]
+        first, second = '0b6f8a52-5f1e-4f53-9d0e-4b8e8b7e2a11', '6a1d7f3e-2c4b-4e8f-9a1b-3c5d7e9f1a2b'
+        item = {'adoptionId': first, 'visitorId': 107, 'ownerId': 201, 'expiresAt': 1800000600}
+        calls = []
+
+        async def settle(connection, adoption_id, visitor_id, owner_id, expires_at):
+            calls.append((adoption_id, visitor_id, owner_id, expires_at))
+            return {'outcome': 'not-charged', 'created': True, 'settlement': {'adoption_id': adoption_id}}
+        with patch.object(game_provision.project_adoption, 'settle', settle):
+            for version in (None, 1):
+                db.schema = version
+                result = run(game_provision.handle({'op': 'settle', 'adoptions': [item]}, db))
+                self.assertEqual((result['status'], result['code']), ('failed', 'SCHEMA'), 'only a version 2 world honors settlements')
+            self.assertEqual(calls, [])
+            db.schema = 2
+            result = run(game_provision.handle({'op': 'settle', 'adoptions': [item, dict(item, adoptionId=second, visitorId=101)]}, db))
+            self.assertEqual(result, {'status': 'ok', 'results': [
+                {'adoptionId': first, 'outcome': 'not-charged', 'created': True, 'settlement': {'adoption_id': first}},
+                {'adoptionId': second, 'outcome': 'unknown-visitor'}]}, 'an interactive account is never settled')
+            self.assertEqual(calls, [(first, 107, 201, 1800000600)])
+            for bad in ([], [item, item], [dict(item, adoptionId=first.upper())], [dict(item, expiresAt=0)],
+                        [dict(item, ownerId=True)], [dict(item, extra=1)], 'nope'):
+                with self.assertRaises(game_provision.RequestError):
+                    run(game_provision.handle({'op': 'settle', 'adoptions': bad}, db))
 
     def test_protocol_verifiers_refuse_interactive_accounts_before_connecting(self):
         from types import SimpleNamespace

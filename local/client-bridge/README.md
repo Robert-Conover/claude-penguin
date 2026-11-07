@@ -75,7 +75,9 @@ for all 32 supported projects. Change returns to the selected project's page;
 removed or reordered destinations are resolved by project identity. An uncertain
 purchase stays pending and displays the page's recovery notice while receipt
 checks continue. Neither a timeout nor a hook exception claims that no coins
-were taken. `adoption-picker.test.mjs` executes the owned AS3 picker/status methods
+were taken. Only a settlement committed in the game database (the engine's
+`settled` record, or the server refusing the ID as `settled`) ends it as a
+failure; see the [engine guide](../AGENT_ENGINE.md#adoption-into-a-project-igloo). `adoption-picker.test.mjs` executes the owned AS3 picker/status methods
 with display doubles; real Ruffle rendering remains a separate browser check.
 
 ## Browser contract, version 5

@@ -2,8 +2,10 @@
 """Host checks for the owned project adoption transaction (project_adoption.py).
 
 Run: python3 -m unittest local/test_project_adoption.py
-A small in-memory stand-in for asyncpg models the rows and the transaction
-rollback; the real database path is exercised by the live adoption checks.
+A small in-memory stand-in for asyncpg models the rows, the database clock and
+the transaction rollback. It cannot model lock waits or commit visibility; the
+real concurrency guarantees are checked against PostgreSQL by
+local/test_adoption_postgres.py (./local/adoption-db-check).
 """
 import asyncio
 import copy
@@ -26,24 +28,29 @@ NOW = 1_800_000_000
 
 
 class FakeDatabase:
-    """Tables: penguin {id: coins}, penguin_puffle [rows], receipts {id: row}, schema {component: version}."""
+    """Tables: penguin {id: coins}, penguin_puffle [rows], receipts and settlements {id: row}, schema {component: version}."""
 
-    def __init__(self, coins=1000, puffles=()):
+    def __init__(self, coins=1000, puffles=(), clock=NOW):
         self.penguins = {VISITOR: coins, OWNER: 0, OTHER_OWNER: 0, STRANGER: 5000}
         self.puffles = [dict(row) for row in puffles]
         self.receipts = {}
+        self.settlements = {}
         self.schema = {}
-        self.tables = False
+        self.tables = set()
+        self.clock = clock
         self.fail_on = None
         self.locks = []
 
+    def state(self):
+        return copy.deepcopy((self.penguins, self.puffles, self.receipts, self.settlements, self.schema, self.tables))
+
     @contextlib.asynccontextmanager
     async def transaction(self):
-        saved = copy.deepcopy((self.penguins, self.puffles, self.receipts, self.schema, self.tables))
+        saved = self.state()
         try:
             yield
         except BaseException:
-            self.penguins, self.puffles, self.receipts, self.schema, self.tables = saved
+            self.penguins, self.puffles, self.receipts, self.settlements, self.schema, self.tables = saved
             raise
 
     def _fail(self, statement):
@@ -52,9 +59,11 @@ class FakeDatabase:
 
     async def execute(self, statement, *args):
         self._fail(statement)
-        if statement.startswith('CREATE TABLE'):
-            self.tables = True
+        if statement.startswith('CREATE TABLE IF NOT EXISTS'):
+            self.tables.add(statement.split()[5])
         elif statement.startswith('INSERT INTO claude_penguin_schema'):
+            self.schema[args[0]] = args[1]
+        elif statement.startswith('UPDATE claude_penguin_schema'):
             self.schema[args[0]] = args[1]
 
     async def fetchval(self, statement, *args):
@@ -77,7 +86,11 @@ class FakeDatabase:
         if statement.startswith('SELECT version FROM claude_penguin_schema'):
             return self.schema.get(args[0])
         if statement.startswith("SELECT to_regclass"):
-            return self.tables
+            return 'claude_penguin_schema' in self.tables
+        if statement.startswith('SELECT clock_timestamp() >= to_timestamp'):
+            return self.clock >= args[0]
+        if statement.startswith('SELECT 1 FROM claude_penguin_adoption_settlement'):
+            return 1 if args[0] in self.settlements else None
         raise AssertionError(statement)
 
     async def fetchrow(self, statement, *args):
@@ -90,6 +103,14 @@ class FakeDatabase:
             row = dict(zip(('adoption_id', 'visitor_id', 'owner_id', 'penguin_puffle_id', 'puffle_id', 'name', 'cost',
                             'coins_after'), args), created_at=NOW)
             self.receipts[args[0]] = row
+            return copy.deepcopy(row)
+        if 'FROM claude_penguin_adoption_settlement' in statement:
+            return copy.deepcopy(self.settlements.get(args[0]))
+        if statement.lstrip().startswith('INSERT INTO claude_penguin_adoption_settlement'):
+            if args[0] in self.settlements:
+                raise RuntimeError('duplicate key')
+            row = dict(zip(('adoption_id', 'visitor_id', 'owner_id', 'expires_at'), args), settled_at=self.clock)
+            self.settlements[args[0]] = row
             return copy.deepcopy(row)
         raise AssertionError(statement)
 
@@ -129,17 +150,20 @@ def name_ok(_, name):
 
 
 class ProjectAdoptionTests(unittest.TestCase):
-    def run_adopt(self, db, p=None, pub=None, adoption=ADOPTION, type_id=0, name='pebble', subtype=0, now=NOW):
+    def run_adopt(self, db, p=None, pub=None, adoption=ADOPTION, type_id=0, name='pebble', subtype=0):
         p = p or penguin()
         return p, asyncio.run(adopt(p, pub or publication(), adoption, type_id, name, subtype,
-                                    connection=db, check_name=name_ok, now=lambda: now))
+                                    connection=db, check_name=name_ok))
 
     def refused(self, db, code, **kwargs):
-        before = copy.deepcopy((db.penguins, db.puffles, db.receipts))
+        before = db.state()
         with self.assertRaises(Refusal) as raised:
             self.run_adopt(db, **kwargs)
         self.assertEqual(raised.exception.code, code)
-        self.assertEqual((db.penguins, db.puffles, db.receipts), before, 'a refusal changes nothing')
+        self.assertEqual(db.state(), before, 'a refusal changes nothing')
+
+    def settle(self, db, adoption=ADOPTION, visitor=VISITOR, owner=OWNER, expires_at=NOW + 600):
+        return asyncio.run(project_adoption.settle(db, adoption, visitor, owner, expires_at))
 
     def test_adoption_debits_once_and_binds_the_puffle_to_the_owner(self):
         db = FakeDatabase(coins=1000)
@@ -171,9 +195,42 @@ class ProjectAdoptionTests(unittest.TestCase):
     def test_a_receipt_wins_after_expiry_but_a_new_expired_adoption_is_refused(self):
         db = FakeDatabase(coins=1000)
         self.run_adopt(db)
-        _, late = self.run_adopt(db, now=NOW + 10_000)
+        db.clock = NOW + 10_000
+        _, late = self.run_adopt(db)
         self.assertEqual(late[1], 'ok')
-        self.refused(FakeDatabase(), 'expired', now=NOW + 10_000)
+        self.refused(FakeDatabase(clock=NOW + 600), 'expired')
+        self.refused(FakeDatabase(clock=NOW + 10_000), 'expired')
+
+    def test_expiry_is_checked_on_the_database_clock_after_both_locks(self):
+        db = FakeDatabase(coins=1000, clock=NOW + 600)
+        self.refused(db, 'expired')
+        self.assertEqual(db.locks, [('penguin', VISITOR), ('penguin', OWNER)], 'checked only once both locks are held')
+
+    def test_a_settled_adoption_is_refused_and_never_charges(self):
+        db = FakeDatabase(coins=1000, clock=NOW + 601)
+        settled = self.settle(db)
+        self.assertEqual((settled['outcome'], settled['created']), ('not-charged', True))
+        db.clock = NOW  # even if the clock disagreed, the settlement decides
+        self.refused(db, 'settled')
+        self.assertEqual((db.penguins[VISITOR], db.puffles, db.receipts), (1000, [], {}))
+
+    def test_settlement_returns_a_receipt_first_and_repeats_its_own_row(self):
+        db = FakeDatabase(coins=1000)
+        self.assertEqual(self.settle(db)['outcome'], 'open', 'not expired on the database clock')
+        self.assertEqual(db.settlements, {})
+        self.run_adopt(db)
+        db.clock = NOW + 601
+        charged = self.settle(db)
+        self.assertEqual((charged['outcome'], charged['receipt']['coins_after']), ('charged', 600))
+        self.assertEqual(self.settle(db, owner=OTHER_OWNER)['outcome'], 'conflict')
+        self.assertEqual(db.settlements, {})
+        first = self.settle(db, adoption=SECOND)
+        again = self.settle(db, adoption=SECOND)
+        self.assertEqual((first['created'], again['created'], first['settlement'], len(db.settlements)),
+                         (True, False, again['settlement'], 1))
+        self.assertEqual(self.settle(db, adoption=SECOND, visitor=STRANGER)['outcome'], 'conflict')
+        self.assertEqual(self.settle(db, adoption=SECOND, visitor=999)['outcome'], 'unknown-visitor')
+        self.assertEqual(db.locks[-1], ('penguin', 999), 'settlement locks the visitor first')
 
     def test_the_same_id_with_different_parameters_is_refused(self):
         db = FakeDatabase(coins=1000)
@@ -228,10 +285,19 @@ class ProjectAdoptionTests(unittest.TestCase):
         self.assertEqual(asyncio.run(project_adoption.read_receipts(db, [ADOPTION])), [], 'no table means no receipts')
         asyncio.run(project_adoption.ensure_schema(db))
         asyncio.run(project_adoption.ensure_schema(db))
-        self.assertEqual(db.schema, {'adoption-receipts': 1})
-        db.schema['adoption-receipts'] = 2
+        self.assertEqual(db.schema, {'adoption-receipts': 2})
+        self.assertIn('claude_penguin_adoption_settlement', db.tables)
+        upgraded = FakeDatabase()
+        upgraded.schema['adoption-receipts'] = 1
+        upgraded.tables = {'claude_penguin_schema', 'claude_penguin_adoption_receipt'}
+        self.assertEqual(asyncio.run(project_adoption.schema_version(upgraded)), 1)
+        asyncio.run(project_adoption.ensure_schema(upgraded))
+        self.assertEqual((upgraded.schema, 'claude_penguin_adoption_settlement' in upgraded.tables), ({'adoption-receipts': 2}, True))
+        db.schema['adoption-receipts'] = 3
+        db.tables = {'claude_penguin_schema'}
         with self.assertRaises(project_adoption.SchemaError):
             asyncio.run(project_adoption.ensure_schema(db))
+        self.assertEqual(db.tables, {'claude_penguin_schema'}, 'refused before any other DDL')
         with self.assertRaises(project_adoption.SchemaError):
             asyncio.run(project_adoption.read_receipts(db, [ADOPTION]))
 

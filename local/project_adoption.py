@@ -7,27 +7,40 @@ host engine reserved and published (``published.json`` version 2). This module
 validates it against that publication and performs one database transaction:
 
   lock the visitor, then the owner; reuse a stored receipt for the same ID;
-  check coins and the owner's indoor capacity (at most 10, an intentional
-  departure from upstream's 75-puffle limit with backyard eviction); debit the
-  visitor; insert the puffle with ``penguin_id = owner``; insert the receipt.
+  refuse an ID the engine has settled as not charged; recheck expiry on the
+  database clock after the lock waits; check coins and the owner's indoor
+  capacity (at most 10, an intentional departure from upstream's 75-puffle
+  limit with backyard eviction); debit the visitor; insert the puffle with
+  ``penguin_id = owner``; insert the receipt.
+
+Settlement (``settle``) is the only way the engine learns that an adoption was
+*not* charged. It takes the same visitor row lock and holds it through commit,
+so a purchase and a settlement of one ID serialize: whichever commits first
+decides, and the other sees it. A committed settlement row means this ID can
+never debit coins or create a puffle; a committed receipt means it did.
 
 Then it sets the visitor's in-memory coins from the committed value. Houdini
 caches coins and writes ``p.coins - cost`` on the next change, so a debit made
 anywhere else while the visitor is online would be overwritten. Supplies are not
 granted: the visitor does not own the puffle and the managed owner never plays.
 
-The receipt table is project-owned DDL created idempotently at world start with
-a version check; vendored ``houdini.sql`` is not edited. ``game_provision.py``
-reads receipts with ``read_receipts`` (the engine's ``receipts`` operation).
+The receipt and settlement tables are project-owned DDL created idempotently at
+world start with a version check (version 2 added settlements; a version 1
+database is upgraded in one transaction); vendored ``houdini.sql`` is not
+edited. Only the world server's ``ensure_schema`` records version 2, so a
+version 2 database means the running purchase handler honors settlements.
+``game_provision.py`` reads receipts with ``read_receipts`` and settles with
+``settle`` (the engine's ``receipts`` and ``settle`` operations).
 """
 # No `from __future__ import annotations`: Houdini converts packet arguments by
 # reading the handler's annotations as real types (str, int).
 import re
-import time
 from types import SimpleNamespace
 
 SCHEMA_COMPONENT = 'adoption-receipts'
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
+# Versions whose receipts can be read. Settling needs SCHEMA_VERSION.
+READABLE_VERSIONS = (1, 2)
 CAPACITY = 10
 ADOPTION_ID = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
 # (client type ID, client subtype ID) -> server puffle ID. Ten ordinary colors,
@@ -35,10 +48,10 @@ ADOPTION_ID = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9
 # upstream adoption rules and are not offered for project igloos.
 CATALOG = {**{(type_id, 0): type_id for type_id in range(10)}, (0, 1006): 1006, (8, 1007): 1007}
 
-DDL = (
-    '''CREATE TABLE IF NOT EXISTS claude_penguin_schema (
+SCHEMA_DDL = '''CREATE TABLE IF NOT EXISTS claude_penguin_schema (
            component TEXT PRIMARY KEY,
-           version INTEGER NOT NULL)''',
+           version INTEGER NOT NULL)'''
+DDL = (
     # Plain integer IDs, not foreign keys: a receipt must never block or
     # cascade with upstream account maintenance. Receipts are never deleted.
     '''CREATE TABLE IF NOT EXISTS claude_penguin_adoption_receipt (
@@ -51,6 +64,14 @@ DDL = (
            cost INTEGER NOT NULL,
            coins_after INTEGER NOT NULL,
            created_at TIMESTAMPTZ NOT NULL DEFAULT now())''',
+    # Version 2. One row per adoption ID the engine settled as not charged,
+    # with the identities it was reserved for. Never deleted.
+    '''CREATE TABLE IF NOT EXISTS claude_penguin_adoption_settlement (
+           adoption_id UUID PRIMARY KEY,
+           visitor_id INTEGER NOT NULL,
+           owner_id INTEGER NOT NULL,
+           expires_at TIMESTAMPTZ NOT NULL,
+           settled_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp())''',
 )
 
 RECEIPT_COLUMNS = 'adoption_id::text AS adoption_id, visitor_id, owner_id, penguin_puffle_id, puffle_id, name, cost, ' \
@@ -62,34 +83,46 @@ class SchemaError(RuntimeError):
 
 
 async def ensure_schema(connection):
-    """Create the receipt table once; refuse an unknown recorded schema version."""
+    """Create or upgrade the adoption tables to SCHEMA_VERSION in one transaction.
+
+    Fresh databases get version 2 directly; version 1 gains the settlement table
+    (receipts and every other row are untouched). Repeating it changes nothing.
+    Any other recorded version is refused before any DDL runs.
+    """
     async with connection.transaction():
         # Serialize concurrent world starts on this DDL.
         await connection.execute("SELECT pg_advisory_xact_lock(hashtext('claude_penguin_schema'))")
-        for statement in DDL:
-            await connection.execute(statement)
+        await connection.execute(SCHEMA_DDL)
         recorded = await connection.fetchval(
             'SELECT version FROM claude_penguin_schema WHERE component = $1', SCHEMA_COMPONENT)
+        if recorded not in (None, *READABLE_VERSIONS):
+            raise SchemaError(f'Adoption receipt schema version {recorded} is not the supported {SCHEMA_VERSION}; '
+                              'refusing to start the project adoption handler.')
+        for statement in DDL:
+            await connection.execute(statement)
         if recorded is None:
             await connection.execute('INSERT INTO claude_penguin_schema (component, version) VALUES ($1, $2)',
                                      SCHEMA_COMPONENT, SCHEMA_VERSION)
         elif recorded != SCHEMA_VERSION:
-            raise SchemaError(f'Adoption receipt schema version {recorded} is not the supported {SCHEMA_VERSION}; '
-                              'refusing to start the project adoption handler.')
+            await connection.execute('UPDATE claude_penguin_schema SET version = $2 WHERE component = $1',
+                                     SCHEMA_COMPONENT, SCHEMA_VERSION)
+
+
+async def schema_version(connection):
+    """The recorded adoption schema version, or None before the world server created it."""
+    exists = await connection.fetchval("SELECT to_regclass('claude_penguin_schema') IS NOT NULL")
+    if not exists:
+        return None
+    recorded = await connection.fetchval(
+        'SELECT version FROM claude_penguin_schema WHERE component = $1', SCHEMA_COMPONENT)
+    if recorded is not None and recorded not in READABLE_VERSIONS:
+        raise SchemaError(f'Adoption receipt schema version {recorded} is not supported.')
+    return recorded
 
 
 async def schema_ready(connection):
-    """True when the receipt table exists at the supported version."""
-    exists = await connection.fetchval("SELECT to_regclass('claude_penguin_schema') IS NOT NULL")
-    if not exists:
-        return False
-    recorded = await connection.fetchval(
-        'SELECT version FROM claude_penguin_schema WHERE component = $1', SCHEMA_COMPONENT)
-    if recorded is None:
-        return False
-    if recorded != SCHEMA_VERSION:
-        raise SchemaError(f'Adoption receipt schema version {recorded} is not supported.')
-    return True
+    """True when the receipt table exists at a readable version."""
+    return await schema_version(connection) is not None
 
 
 def receipt_view(row):
@@ -105,6 +138,52 @@ async def read_receipts(connection, adoption_ids):
                                   'WHERE adoption_id = ANY($1::uuid[]) ORDER BY created_at, adoption_id',
                                   list(adoption_ids))
     return [receipt_view(row) for row in rows]
+
+
+SETTLEMENT_COLUMNS = 'adoption_id::text AS adoption_id, visitor_id, owner_id, ' \
+                     'extract(epoch FROM expires_at)::bigint AS expires_at, extract(epoch FROM settled_at)::bigint AS settled_at'
+
+
+def settlement_view(row):
+    return {key: row[key] for key in ('adoption_id', 'visitor_id', 'owner_id', 'expires_at', 'settled_at')}
+
+
+async def settle(connection, adoption_id, visitor_id, owner_id, expires_at):
+    """Decide one expired adoption as charged or not charged, on the visitor's lock.
+
+    Returns ``{'outcome': ...}`` once the transaction has committed:
+      charged      a receipt exists (``receipt``); the purchase won.
+      not-charged  a settlement row exists (``settlement``, ``created``); this ID
+                   can never charge. Repeating the call returns the same row.
+      open         the reservation has not expired on the database clock; nothing
+                   was written.
+      conflict     the stored receipt or settlement belongs to other identities.
+      unknown-visitor  no such visitor row; nothing was written.
+    The caller must have checked ``schema_version(connection) == SCHEMA_VERSION``.
+    """
+    async with connection.transaction():
+        # The same row lock a purchase takes first, held through commit.
+        if await connection.fetchval('SELECT id FROM penguin WHERE id = $1 FOR UPDATE', visitor_id) is None:
+            return {'outcome': 'unknown-visitor'}
+        stored = await connection.fetchrow(f'SELECT {RECEIPT_COLUMNS} FROM claude_penguin_adoption_receipt '
+                                           'WHERE adoption_id = $1::uuid', adoption_id)
+        if stored is not None:
+            if (stored['visitor_id'], stored['owner_id']) != (visitor_id, owner_id):
+                return {'outcome': 'conflict'}
+            return {'outcome': 'charged', 'receipt': receipt_view(stored)}
+        settled = await connection.fetchrow(f'SELECT {SETTLEMENT_COLUMNS} FROM claude_penguin_adoption_settlement '
+                                            'WHERE adoption_id = $1::uuid', adoption_id)
+        if settled is not None:
+            if (settled['visitor_id'], settled['owner_id']) != (visitor_id, owner_id):
+                return {'outcome': 'conflict'}
+            return {'outcome': 'not-charged', 'created': False, 'settlement': settlement_view(settled)}
+        if not await connection.fetchval('SELECT clock_timestamp() >= to_timestamp($1::float8)', float(expires_at)):
+            return {'outcome': 'open'}
+        settled = await connection.fetchrow(
+            f'''INSERT INTO claude_penguin_adoption_settlement (adoption_id, visitor_id, owner_id, expires_at)
+                VALUES ($1::uuid, $2, $3, to_timestamp($4::float8)) RETURNING {SETTLEMENT_COLUMNS}''',
+            adoption_id, visitor_id, owner_id, float(expires_at))
+        return {'outcome': 'not-charged', 'created': True, 'settlement': settlement_view(settled)}
 
 
 class Refusal(Exception):
@@ -144,11 +223,10 @@ def validate(p, publication, adoption_id, type_id, name, subtype_id, *, check_na
                            cost=p.server.puffles[puffle_id].cost, expires_at=reservation.expires_at)
 
 
-async def transact(p, request, connection, now=time.time):
+async def transact(p, request, connection):
     """Perform one validated adoption in one transaction. Returns the reply fields."""
     adoption_id, owner_id, puffle_id, name, cost = (request.adoption_id, request.owner_id, request.puffle_id,
                                                     request.name, request.cost)
-    expired = request.expires_at <= now()
 
     async with connection.transaction():
         # Lock order: visitor, then owner. Duplicates of one adoption ID and any
@@ -163,8 +241,11 @@ async def transact(p, request, connection, now=time.time):
                     (p.id, owner_id, puffle_id, name):
                 raise Refusal('conflict')
             return success_reply(adoption_id, receipt_view(stored), visitor_coins)
-        if expired:
-            raise Refusal('expired')
+        # A settlement committed while this purchase waited for the lock is visible
+        # here: each statement after the lock wait reads the latest commits.
+        if await connection.fetchval('SELECT 1 FROM claude_penguin_adoption_settlement WHERE adoption_id = $1::uuid',
+                                     adoption_id) is not None:
+            raise Refusal('settled')
         # The engine refuses a reservation while it holds the owner's game
         # session; this also covers any other login, whose in-memory puffle
         # list would otherwise go stale.
@@ -172,6 +253,10 @@ async def transact(p, request, connection, now=time.time):
             raise Refusal('owner-online')
         if await connection.fetchval('SELECT id FROM penguin WHERE id = $1 FOR UPDATE', owner_id) is None:
             raise Refusal('unknown-adoption')
+        # Expiry on the database clock after both lock waits. clock_timestamp(),
+        # not now(): now() is the transaction start and goes stale while waiting.
+        if await connection.fetchval('SELECT clock_timestamp() >= to_timestamp($1::float8)', float(request.expires_at)):
+            raise Refusal('expired')
         if visitor_coins < cost:
             raise Refusal('401')
         indoor = await connection.fetchval(
@@ -193,10 +278,10 @@ async def transact(p, request, connection, now=time.time):
     return success_reply(adoption_id, receipt_view(stored), coins_after)
 
 
-async def adopt(p, publication, adoption_id, type_id, name, subtype_id, *, connection, check_name, now=time.time):
+async def adopt(p, publication, adoption_id, type_id, name, subtype_id, *, connection, check_name):
     """Validate and perform one adoption. Returns the ``cpadopt`` reply fields."""
     request = validate(p, publication, adoption_id, type_id, name, subtype_id, check_name=check_name)
-    return await transact(p, request, connection, now)
+    return await transact(p, request, connection)
 
 
 def adoption_handler(publication, acquire, check_name, logger=None):
