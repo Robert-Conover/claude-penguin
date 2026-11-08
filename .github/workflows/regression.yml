@@ -100,7 +100,7 @@ jobs:
           for file in local/start local/stop local/compose local/verify local/agent-start local/bridge-fixtures local/adoption-db-check local/doctor launch local/controller/build-supervise.sh; do
             sh -n "$file"
           done
-          bash -n local/web/setup-ruffle.sh macos/scripts/build-app.sh macos/scripts/make-dmg.sh macos/scripts/notarize.sh
+          bash -n local/web/setup-ruffle.sh macos/scripts/build-app.sh macos/scripts/make-dmg.sh macos/scripts/notarize.sh macos/scripts/lib/check-min-os.sh
 
       - name: Test agent engine with disposable repositories and fake PTYs
         run: npm test --prefix local/engine

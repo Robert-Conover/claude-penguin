@@ -201,6 +201,7 @@ The macOS app's controller (`local/controller/`) runs the engine natively. Each 
 | `CP_LOGIN_SHELL_ENV=1` | Capture the user's login-shell environment once at startup (`$SHELL -i -l -c` with markers around `env -0`, 10 s timeout) as Claude's base environment. The engine's own variables are removed before the shell runs. |
 | `CP_BUNDLED_GIT_DIR`, `CP_ENGINE_GIT` | Git fallback for Claude, and the absolute git the engine itself runs. |
 | `CP_ENGINE_CONTROL_TOKEN` | Enables `GET /engine/control/status` for the controller. |
+| `CP_ENGINE_PTY_GUARD` | Absolute path of the app's `cp-supervise`. Each Claude terminal then starts as `cp-supervise guard --owner-pid <engine> --grace-ms 1500 -- <claude> ...`. |
 
 - **Claude's environment.** Claude never receives `CP_*`, `POSTGRES_*` or `CLAUDE_PENGUIN_*` variables, apart from the three hook variables.
 - **Sign-in variables.** Variables that sign Claude in pass through unchanged, because the Claude Code rules forbid restricting built-in sign-in methods. These are the `CLAUDE_CODE_USE_*` provider flags, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN` and the profile variables. In app mode the session card says which method Claude will use (names only, never values), and warns when a shell variable overrides the app's `/login`. Sign-in through `apiKeyHelper` or managed settings is not visible to this check.
@@ -209,7 +210,8 @@ The macOS app's controller (`local/controller/`) runs the engine natively. Each 
   - When `PATH` reaches only Apple's `/usr/bin/git` stub, the engine runs `xcode-select -p` and checks for `<dir>/usr/bin/git`. It never runs the stub. If that file exists, the user's Git is used.
   - Otherwise the bundled `git-only/` directory goes just before `/usr/bin`.
 - **Controller endpoint.** `/engine/control/status` requires the controller's bearer token, a loopback peer and no `Origin` header. It reports sessions, sign-in method, Git and Claude version. The UI token never works on it.
-- **Resume.** **Copy resume command** names the managed executable, and the config directory when set: `cd '<worktree>' && CLAUDE_CONFIG_DIR='<dir>' '<claude>' --resume <id>`.
+- **Claude's process when the engine dies.** node-pty gives every terminal its own session, so Claude is outside the engine's process group and the engine's supervisor cannot reach it. With `CP_ENGINE_PTY_GUARD`, `guard` execs Claude in place (same PID, terminal and foreground group, so the engine's own stop and the session checks are unchanged) and leaves a detached watcher. If the engine exits, even by SIGKILL, the watcher sends Claude SIGTERM, waits 1.5 s, then SIGKILLs Claude's process group. Processes that Claude's tools move into another session or group are not covered. Checked with fake programs in real node-pty terminals, not yet with real Claude.
+- **Resume.** **Copy resume command** names the managed executable, and the config directory and update setting when set: `cd '<worktree>' && CLAUDE_CONFIG_DIR='<dir>' DISABLE_UPDATES=1 '<claude>' --resume <id>`.
 - **Locks after a crash.** The engine still never removes a stale `runtime.lock` or publication `owner.lock` itself. The controller removes them only when they name the engine PID it launched (`data/journal/engine.json`), that process is gone, and its process group is empty.
 
 ## Verify and extend

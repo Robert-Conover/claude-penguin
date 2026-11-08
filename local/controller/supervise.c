@@ -3,6 +3,7 @@
  *
  *   cp-supervise --owner-pid <pid> --record <path> --stop-signal <SIGTERM|SIGINT|SIGQUIT|SIGHUP>
  *                --grace-ms <n> [--cwd <dir>] -- <program> [args...]
+ *   cp-supervise guard --owner-pid <pid> [--stop-signal <SIG>] [--grace-ms <n>] -- <program> [args...]
  *   cp-supervise lock <fd>
  *
  * Starts <program> in a new process group (the program is the group leader), forwards
@@ -101,6 +102,7 @@ static int status_to_exit(int status) {
 
 static void usage(void) {
   fprintf(stderr, "usage: cp-supervise --owner-pid <pid> --record <file> --stop-signal <SIG> --grace-ms <n> [--cwd <dir>] -- <program> [args...]\n"
+                  "       cp-supervise guard --owner-pid <pid> [--stop-signal <SIG>] [--grace-ms <n>] -- <program> [args...]\n"
                   "       cp-supervise lock <fd>\n"
                   "       cp-supervise pidpath <pid>\n");
   exit(EX_USAGE);
@@ -118,7 +120,150 @@ static int run_pidpath(const char *arg) {
   return 0;
 }
 
+static long now_ms(void) {
+  struct timeval tv;
+  gettimeofday(&tv, NULL);
+  return (long)tv.tv_sec * 1000L + tv.tv_usec / 1000L;
+}
+
+static int pgrp_alive(pid_t group) {
+  return group > 1 && (kill(-group, 0) == 0 || errno == EPERM);
+}
+
+/* Closes every descriptor above stderr except `keep` (listed with proc_pidinfo, so a raised
+ * descriptor limit costs nothing). */
+static void close_others(int keep) {
+  int bytes = proc_pidinfo(getpid(), PROC_PIDLISTFDS, 0, NULL, 0);
+  if (bytes <= 0) return;
+  struct proc_fdinfo *fds = malloc((size_t)bytes);
+  if (!fds) return;
+  bytes = proc_pidinfo(getpid(), PROC_PIDLISTFDS, 0, fds, bytes);
+  for (int k = 0; bytes > 0 && k < bytes / (int)sizeof *fds; k++) {
+    if (fds[k].proc_fd > 2 && fds[k].proc_fd != keep) close(fds[k].proc_fd);
+  }
+  free(fds);
+}
+
+/* SIGKILLs what is left of `group` and waits up to 3 s for it to empty. */
+static int sweep_group(pid_t group) {
+  if (!pgrp_alive(group)) return 0;
+  kill(-group, SIGKILL);
+  long give_up = now_ms() + 3000;
+  while (pgrp_alive(group) && now_ms() < give_up) usleep(10000);
+  return pgrp_alive(group) ? -1 : 0;
+}
+
+/* The watcher half of `guard` (runs detached, in its own session, with no terminal). */
+static void guard_watch(pid_t owner, pid_t target, int ready_fd) {
+  int kq = kqueue();
+  if (kq < 0) _exit(EX_SOFTWARE);
+  struct kevent change;
+  int owner_gone = 0, target_gone = 0;
+  EV_SET(&change, owner, EVFILT_PROC, EV_ADD | EV_ENABLE | EV_ONESHOT, NOTE_EXIT, 0, NULL);
+  if (kevent(kq, &change, 1, NULL, 0, NULL) < 0) owner_gone = 1;
+  EV_SET(&change, target, EVFILT_PROC, EV_ADD | EV_ENABLE | EV_ONESHOT, NOTE_EXIT, 0, NULL);
+  if (kevent(kq, &change, 1, NULL, 0, NULL) < 0) target_gone = 1;
+  /* Both watches exist before the program is allowed to exec, so its PID cannot be reused unseen. */
+  (void)!write(ready_fd, "1", 1);
+  close(ready_fd);
+
+  while (!owner_gone && !target_gone) {
+    struct kevent events[2];
+    struct timespec wait = {1, 0}; /* bounded: a missed NOTE_EXIT can never wedge the watcher */
+    int n = kevent(kq, NULL, 0, events, 2, &wait);
+    for (int e = 0; e < n; e++) {
+      if ((pid_t)events[e].ident == owner) owner_gone = 1;
+      if ((pid_t)events[e].ident == target) target_gone = 1;
+    }
+    if (n == 0) {
+      if (kill(owner, 0) != 0 && errno == ESRCH) owner_gone = 1;
+      if (kill(target, 0) != 0 && errno == ESRCH) target_gone = 1;
+    }
+  }
+  if (!target_gone) {
+    /* The owner died first: stop the program as the owner itself would, then take its group down. */
+    kill(target, stop_signal);
+    long deadline = now_ms() + grace_ms;
+    while (!target_gone && now_ms() < deadline) {
+      struct kevent event;
+      long left = deadline - now_ms();
+      struct timespec wait = {left / 1000, (left % 1000) * 1000000L};
+      if (kevent(kq, NULL, 0, &event, 1, &wait) > 0 && (pid_t)event.ident == target) target_gone = 1;
+      else if (kill(target, 0) != 0 && errno == ESRCH) target_gone = 1;
+    }
+  }
+  _exit(sweep_group(target) == 0 ? 0 : EX_SOFTWARE);
+}
+
+/*
+ * cp-supervise guard --owner-pid <pid> [--stop-signal <SIG>] [--grace-ms <n>] -- <program> [args...]
+ *
+ * Execs <program> in place, so it keeps this PID, session, terminal and process group, after
+ * starting a detached watcher. When the owner exits first, the watcher sends the stop signal to
+ * the program, waits the grace period, SIGKILLs the program's process group and confirms it is
+ * empty. When the program exits first, the watcher sweeps what is left of its group and exits.
+ * For Claude's terminals: node-pty gives each one its own session, outside the engine's group,
+ * so a killed engine's own shim cannot reach them. The program must lead its process group.
+ */
+static int run_guard(int argc, char **argv) {
+  pid_t owner = 0;
+  stop_signal = SIGTERM;
+  grace_ms = 1500;
+  int i = 2;
+  for (; i < argc; i++) {
+    if (!strcmp(argv[i], "--")) { i++; break; }
+    if (i + 1 >= argc) usage();
+    if (!strcmp(argv[i], "--owner-pid")) owner = (pid_t)atoi(argv[++i]);
+    else if (!strcmp(argv[i], "--stop-signal")) { stop_signal = parse_signal(argv[++i]); if (stop_signal < 0) usage(); }
+    else if (!strcmp(argv[i], "--grace-ms")) { grace_ms = atoi(argv[++i]); if (grace_ms < 0) usage(); }
+    else usage();
+  }
+  if (owner <= 1 || i >= argc) usage();
+  char **program = argv + i;
+  pid_t self = getpid();
+  if (getpgrp() != self) {
+    fprintf(stderr, "cp-supervise guard: the program must lead its own process group (start it in a new session, as a terminal does)\n");
+    return EX_SOFTWARE;
+  }
+  if (kill(owner, 0) != 0 && errno == ESRCH) {
+    fprintf(stderr, "cp-supervise guard: owner %d is not running; not starting the program\n", (int)owner);
+    return EX_OWNER_DEAD;
+  }
+  int ready[2];
+  if (pipe(ready) != 0) fail(EX_SOFTWARE, "pipe");
+  fcntl(ready[0], F_SETFD, FD_CLOEXEC);
+  fcntl(ready[1], F_SETFD, FD_CLOEXEC);
+  pid_t middle = fork();
+  if (middle < 0) fail(EX_SOFTWARE, "fork");
+  if (middle == 0) {
+    /* Double fork: the watcher is reparented to launchd and is never the program's child. */
+    pid_t watcher = fork();
+    if (watcher != 0) _exit(watcher < 0 ? EX_SOFTWARE : 0);
+    close(ready[0]);
+    setsid(); /* its own session: no terminal, outside the program's group */
+    signal(SIGHUP, SIG_IGN);
+    signal(SIGINT, SIG_IGN);
+    signal(SIGPIPE, SIG_IGN);
+    int null = open("/dev/null", O_RDWR);
+    if (null >= 0) { dup2(null, 0); dup2(null, 1); dup2(null, 2); if (null > 2) close(null); }
+    close_others(ready[1]); /* above all, never hold the terminal open after the program exits */
+    guard_watch(owner, self, ready[1]);
+  }
+  close(ready[1]);
+  int status = 0;
+  while (waitpid(middle, &status, 0) < 0 && errno == EINTR) {}
+  char ok = 0;
+  ssize_t got;
+  while ((got = read(ready[0], &ok, 1)) < 0 && errno == EINTR) {}
+  close(ready[0]);
+  if (got != 1) { fprintf(stderr, "cp-supervise guard: the watcher did not start\n"); return EX_SOFTWARE; }
+  execvp(program[0], program);
+  fprintf(stderr, "cp-supervise guard: exec %s: %s\n", program[0], strerror(errno));
+  return 127;
+}
+
 int main(int argc, char **argv) {
+  if (argc >= 2 && !strcmp(argv[1], "guard")) return run_guard(argc, argv);
   if (argc >= 2 && !strcmp(argv[1], "pidpath")) {
     if (argc != 3) usage();
     return run_pidpath(argv[2]);

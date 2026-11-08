@@ -276,6 +276,22 @@ export async function ensureSecrets(rawConfig) {
   return secrets;
 }
 
+/**
+ * The engine's game-provisioning environment (secrets/provision-env.json, mode 0600). It holds absolute
+ * runtime paths, so the controller rewrites it before every engine start: an app that was moved or
+ * renamed since setup must never provision through its old location.
+ */
+export async function writeProvisionEnv(rawConfig, secrets = readSecrets(resolve(rawConfig))) {
+  const c = resolve(rawConfig);
+  const file = dataPath(c, 'secrets/provision-env.json');
+  await writePrivateJson(file, {
+    POSTGRES_HOST: LOOPBACK, POSTGRES_PORT: String(c.ports.postgres), POSTGRES_USER: secrets.user,
+    POSTGRES_DB: secrets.database, POSTGRES_PASSWORD: secrets.password,
+    PYTHONPATH: rt(c, 'envs/houdini'), PYTHONDONTWRITEBYTECODE: '1', PYTHONNOUSERSITE: '1',
+  });
+  return file;
+}
+
 async function writePrivateJson(file, value) {
   const temp = `${file}.${process.pid}.tmp`;
   const handle = await open(temp, fsc.O_WRONLY | fsc.O_CREAT | fsc.O_TRUNC, 0o600);
@@ -329,11 +345,7 @@ export async function prepareData(rawConfig, { onProgress = () => {}, signal } =
     await rename(temp, cluster);
   }
   progress('Writing provisioning settings', 3);
-  await writePrivateJson(dataPath(c, 'secrets/provision-env.json'), {
-    POSTGRES_HOST: LOOPBACK, POSTGRES_PORT: String(c.ports.postgres), POSTGRES_USER: secrets.user,
-    POSTGRES_DB: secrets.database, POSTGRES_PASSWORD: secrets.password,
-    PYTHONPATH: rt(c, 'envs/houdini'), PYTHONDONTWRITEBYTECODE: '1', PYTHONNOUSERSITE: '1',
-  });
+  await writeProvisionEnv(c, secrets);
   progress('Data directory ready', 4);
   return { secretsPath: secretsPath(c), postgresDir: cluster };
 }

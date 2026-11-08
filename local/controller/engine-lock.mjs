@@ -9,7 +9,8 @@ import { groupAlive, pidAlive, processIdentity } from './procinfo.mjs';
  * before recovering locks"):
  *   - the lock names the PID of an engine this controller launched (journal/engine.json);
  *   - that process is gone (or its PID now belongs to a process with another start time);
- *   - and its process group, which held Claude's PTYs and their descendants, is empty.
+ *   - and its process group is empty. (Claude's terminals have sessions of their own; in the app each runs
+ *     through `cp-supervise guard`, which stops it when the engine dies.)
  * Anything else keeps the lock and reports why; nothing is removed on a PID alone.
  */
 export async function recoverEngineLock({ stateDir, journalFile, lockPath = path.join(stateDir, 'runtime.lock'), identity = processIdentity, alive = pidAlive, group = groupAlive }) {
@@ -27,7 +28,7 @@ export async function recoverEngineLock({ stateDir, journalFile, lockPath = path
     if (!now || !journal.startTime || now.startTime === journal.startTime) return { action: 'keep', reason: `The engine (PID ${lock.pid}) is still running.`, lockPath };
   }
   if (Number.isSafeInteger(journal.pgid) && journal.pgid > 1 && group(journal.pgid)) {
-    return { action: 'keep', reason: `Processes from the old engine's group (${journal.pgid}) are still running, possibly Claude sessions.`, lockPath };
+    return { action: 'keep', reason: `Processes from the old engine's group (${journal.pgid}) are still running.`, lockPath };
   }
   await rm(lockPath, { force: true });
   return { action: 'removed', lockPath, pid: lock.pid };

@@ -311,6 +311,8 @@ describe('code mode and the engine service', () => {
     assert.equal(engineEnv.CP_LOGIN_SHELL_ENV, '1');
     assert.equal(engineEnv.CP_BUNDLED_GIT_DIR, path.join(env.runtimes, 'git-only'));
     assert.equal(engineEnv.CP_ENGINE_GIT, '/opt/homebrew/bin/git');
+    assert.equal(engineEnv.CP_ENGINE_PTY_GUARD, path.join(env.runtimes, 'supervise', 'cp-supervise'), 'Claude terminals start through cp-supervise guard');
+    assert.equal(readFileSync(path.join(env.track, 'provision-env.written'), 'utf8'), env.runtimes, 'the provisioning settings are rewritten for this start');
     assert.match(engineEnv.CP_ENGINE_CONTROL_TOKEN, /^[A-Za-z0-9_-]{20,}$/);
     assert.equal(engineEnv.FAKE_ENGINE_ENV, '1', 'engineEnvironment(config) is included');
     assert.equal(engineEnv.PATH, '/usr/bin:/bin:/usr/sbin:/sbin');

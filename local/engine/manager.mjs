@@ -357,7 +357,7 @@ export async function createManager({ stateDir, onEvent = () => {}, claudePath =
     return { id: worker.id, projectId: worker.projectId, name: worker.name, sessionId: worker.sessionId, established: worker.established,
       createdAt: worker.createdAt, taskHistory: copy(worker.taskHistory), archived: copy(worker.archived),
       originalPath: worker.workspace.path, baseCommit: worker.workspace.baseCommit, workspaceKind: worker.workspace.kind,
-      resumeCommand: worker.established ? resumeCommandFor({ workspacePath: worker.workspace.path, sessionId: worker.sessionId, claudePath, configDir: claudeRuntime?.configDir ?? null }) : null };
+      resumeCommand: worker.established ? resumeCommandFor({ workspacePath: worker.workspace.path, sessionId: worker.sessionId, claudePath, configDir: claudeRuntime?.configDir ?? null, disableUpdates: claudeRuntime?.disableUpdates === true }) : null };
   }
   function adoptionView(adoption) {
     return { ...Object.fromEntries(['id', 'projectId', 'workerId', 'ownerId', 'state', 'error', 'code', 'createdAt', 'updatedAt', 'expiresAt'].map(key => [key, adoption[key] ?? null])),
@@ -1052,7 +1052,12 @@ export async function createManager({ stateDir, onEvent = () => {}, claudePath =
       worker.exitCode = undefined;
       worker.outsideWorkspace = null;
       update(worker, 'starting', worker.established ? 'Resuming the saved Claude conversation.' : 'Starting Claude Code.');
-      const proc = ptySpawn(claudePath, args, { name: 'xterm-256color', cols: worker.cols, rows: worker.rows, cwd: worker.workspace.path,
+      // In the app, Claude runs through `cp-supervise guard` (exec in place: same PID and terminal), which
+      // stops its process group if this engine is killed and so cannot stop it itself.
+      const [file, argv] = claudeRuntime?.ptyGuard
+        ? [claudeRuntime.ptyGuard, ['guard', '--owner-pid', String(process.pid), '--grace-ms', '1500', '--', claudePath, ...args]]
+        : [claudePath, args];
+      const proc = ptySpawn(file, argv, { name: 'xterm-256color', cols: worker.cols, rows: worker.rows, cwd: worker.workspace.path,
         env: { ...(claudeRuntime ? claudeRuntime.environment() : claudeEnvironment()), CLAUDE_PENGUIN_HOOK_URL: hookUrl.href,
           CLAUDE_PENGUIN_WORKER_ID: worker.id, CLAUDE_PENGUIN_HOOK_TOKEN: runtime.token } });
       if (!Number.isSafeInteger(proc.pid) || proc.pid <= 0) { proc.kill(); throw new Error('The terminal did not provide a valid process ID.'); }

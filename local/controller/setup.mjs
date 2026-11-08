@@ -103,7 +103,13 @@ function buildSteps(ctx) {
         const step = state.steps.extensions;
         if (!step?.ok) return false;
         if (step.fallback) return exists(path.join(step.root, 'engine.swf'));
-        return step.patchset === release.patchset && (await exists(path.join(step.root, 'engine.swf')));
+        if (step.patchset !== release.patchset) return false;
+        // Every installed file is checked against the patches, so a damaged one sends setup back to rebuild it.
+        let patcher = null;
+        try { patcher = await deps.patcher(); } catch { /* not available: fall back to presence */ }
+        if (!patcher?.verifyInstalledPatchSet || !(await isDir(config.paths.patches))) return exists(path.join(step.root, 'engine.swf'));
+        try { return (await patcher.verifyInstalledPatchSet({ patches: config.paths.patches, dir: step.root })).ok; }
+        catch { return false; }
       },
       async run({ signal }) {
         const media = state.steps.media?.root ?? mediaTarget(config, release).root;

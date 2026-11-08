@@ -2,17 +2,21 @@ import { randomBytes } from 'node:crypto';
 import { accessSync, constants, existsSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import path from 'node:path';
+import { gitVersionSupported, parseGitVersion } from '../engine/git-policy.mjs';
 
 const BASE_PATH = '/usr/bin:/bin:/usr/sbin:/sbin';
 
 /**
  * The user's working git, found without ever running /usr/bin/git (Apple's stub opens an install dialog
  * when no developer tools are present). /usr/bin/git counts only when `xcode-select -p` names a
- * developer directory that actually contains usr/bin/git. Returns an absolute path or null.
+ * developer directory that actually contains usr/bin/git. A git older than the engine's minimum
+ * (engine/git-policy.mjs) is skipped, so the caller falls back to the bundled one instead of an engine
+ * that refuses to start. Returns an absolute path or null.
  */
-export function findUserGit({ env = process.env, bundledGit, exists = existsSync, developerDir = defaultDeveloperDir } = {}) {
+export function findUserGit({ env = process.env, bundledGit, exists = existsSync, developerDir = defaultDeveloperDir, versionOf = gitVersionText } = {}) {
   const dirs = [...(env.PATH ?? '').split(':').filter(Boolean), '/opt/homebrew/bin', '/usr/local/bin'];
   const seen = new Set();
+  const usable = candidate => gitVersionSupported(parseGitVersion(versionOf(candidate)));
   for (const dir of dirs) {
     if (!path.isAbsolute(dir) || seen.has(dir)) continue;
     seen.add(dir);
@@ -22,11 +26,18 @@ export function findUserGit({ env = process.env, bundledGit, exists = existsSync
       const dev = developerDir();
       if (!dev || !exists(path.join(dev, 'usr', 'bin', 'git'))) continue;
     }
-    return candidate;
+    if (usable(candidate)) return candidate;
   }
   const dev = developerDir();
-  if (dev && exists(path.join(dev, 'usr', 'bin', 'git')) && isExecutable(path.join(dev, 'usr', 'bin', 'git'))) return path.join(dev, 'usr', 'bin', 'git');
+  const developerGit = dev && path.join(dev, 'usr', 'bin', 'git');
+  if (developerGit && exists(developerGit) && isExecutable(developerGit) && usable(developerGit)) return developerGit;
   return null;
+}
+
+/** `git --version` output, or '' when it cannot be run (then the candidate is not used). */
+function gitVersionText(git) {
+  try { return execFileSync(git, ['--version'], { encoding: 'utf8', timeout: 3000, env: { PATH: BASE_PATH }, stdio: ['ignore', 'pipe', 'ignore'] }); }
+  catch { return ''; }
 }
 
 function isExecutable(file) { try { accessSync(file, constants.X_OK); return true; } catch { return false; } }
@@ -48,6 +59,8 @@ export function baseEnvironment(env = process.env) {
  */
 export async function engineService({ config, deps, claudePath, token = randomBytes(24).toString('base64url'), env = process.env }) {
   const native = await deps.native();
+  // Regenerated on every start, so its runtime paths follow the app if it has moved since setup.
+  await native.writeProvisionEnv(config);
   const git = (deps.findGit ?? (() => findUserGit({ env, bundledGit: config.paths.bundledGit })))() ?? config.paths.bundledGit;
   const engineEnv = {
     ...baseEnvironment(env),
@@ -62,6 +75,7 @@ export async function engineService({ config, deps, claudePath, token = randomBy
     CP_BUNDLED_GIT_DIR: config.paths.gitOnly,
     CP_ENGINE_GIT: git,
     CP_ENGINE_CONTROL_TOKEN: token,
+    CP_ENGINE_PTY_GUARD: config.paths.supervise,
   };
   return {
     token,

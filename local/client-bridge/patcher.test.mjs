@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import zlib from 'node:zlib';
-import { applySwfPatch, installPatchSet, buildSwf, splitSwf, PatchError, PATCH_FORMAT, PATCHSET_FORMAT, main } from './patcher.mjs';
+import { applySwfPatch, installPatchSet, verifyInstalledPatchSet, buildSwf, splitSwf, PatchError, PATCH_FORMAT, PATCHSET_FORMAT, main } from './patcher.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const sha = data => createHash('sha256').update(data).digest('hex');
@@ -264,6 +264,36 @@ test('switching current replaces the link in one step: readers only ever see a w
   assert.deepEqual([...errors].filter(code => code !== 'ENOENT' && code !== 'EINVAL'), []);
   assert.equal(readlinkSync(path.join(a.out, 'current')), 'ps-b');
   assert.deepEqual(listing(a.out).filter(name => name.startsWith('.current-') || name.startsWith('.staging-')), []);
+});
+
+test('verifyInstalledPatchSet checks every installed file, and reinstalling repairs each kind of damage', async () => {
+  const w = world();
+  await installPatchSet({ media: w.media, patches: w.patchDir, out: w.out });
+  const dir = path.join(w.out, 'current');
+  assert.deepEqual(await verifyInstalledPatchSet({ patches: w.patchDir, dir }), { ok: true, patchset: 'ps-test' });
+  const damage = [
+    ['puffle_adoption.swf', file => writeFileSync(file, 'damaged'), /puffle_adoption\.swf does not match adoption-build\.json/],
+    ['puffle_adoption.swf', file => rmSync(file), /puffle_adoption\.swf is missing/],
+    ['build.json', file => writeFileSync(file, '{'), /engine\.swf does not match build\.json/],
+    ['patchset.json', file => writeFileSync(file, '{}'), /patchset\.json is missing or differs/],
+    ['patchset.json', file => rmSync(file), /patchset\.json is missing or differs/],
+  ];
+  for (const [name, hurt, problem] of damage) {
+    hurt(path.join(w.out, 'ps-test', name));
+    const verdict = await verifyInstalledPatchSet({ patches: w.patchDir, dir });
+    assert.equal(verdict.ok, false, name);
+    assert.match(verdict.problem, problem);
+    await installPatchSet({ media: w.media, patches: w.patchDir, out: w.out });
+    assert.deepEqual(await verifyInstalledPatchSet({ patches: w.patchDir, dir }), { ok: true, patchset: 'ps-test' }, `${name} repaired`);
+  }
+  // A file and record rewritten together still has to match the patch's expected contents.
+  const engine = path.join(w.out, 'ps-test', 'engine.swf');
+  const other = buildSwf('CWS', 8, Buffer.from('not the patched engine'));
+  writeFileSync(engine, other);
+  const record = JSON.parse(readFileSync(path.join(w.out, 'ps-test', 'build.json'), 'utf8'));
+  writeFileSync(path.join(w.out, 'ps-test', 'build.json'), JSON.stringify({ ...record, outputSha256: sha(other) }));
+  assert.match((await verifyInstalledPatchSet({ patches: w.patchDir, dir })).problem, /engine\.swf differs from the patch result/);
+  assert.equal((await verifyInstalledPatchSet({ patches: w.patchDir, dir: path.join(w.root, 'nowhere') })).ok, false);
 });
 
 test('current that is a real directory is not replaced', async () => {

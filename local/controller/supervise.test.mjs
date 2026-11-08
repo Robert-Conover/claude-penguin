@@ -1,6 +1,6 @@
 import { after, before, describe, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { mkdtempSync, openSync, readFileSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -133,5 +133,75 @@ describe('cp-supervise', () => {
   test('bad usage exits 64', async () => {
     const result = await new Promise(resolve => spawn(shim, ['--owner-pid', '1'], { stdio: 'ignore' }).once('exit', resolve));
     assert.equal(result, 64);
+  });
+
+  test('it runs on macOS 26, the app\'s minimum, whatever macOS built it', () => {
+    const build = execFileSync('/usr/bin/vtool', ['-show-build', shim], { encoding: 'utf8' });
+    assert.match(build, /^\s*minos 26\.0$/m);
+  });
+});
+
+// `guard` execs the program in place (Claude in its terminal) and leaves a detached watcher behind.
+describe('cp-supervise guard', () => {
+  // Detached, as node-pty's own spawn is: the program starts in a new session and leads its group.
+  function guard(ownerPid, program, { grace = 300, detached = true } = {}) {
+    const child = spawn(shim, ['guard', '--owner-pid', String(ownerPid), '--grace-ms', String(grace), '--', ...program], { stdio: 'ignore', detached });
+    spawned.push(child);
+    const exited = new Promise(resolve => child.once('exit', (code, sig) => resolve({ code, sig })));
+    return { child, exited };
+  }
+
+  test('owner SIGKILL: the program (ignoring SIGTERM and SIGHUP) and its group are stopped', async () => {
+    const o = owner();
+    const g = guard(o.pid, [process.execPath, ...stubborn('guard-kill', "process.on('SIGHUP', () => {});")]);
+    const [program, kid] = await readPids('guard-kill');
+    pidsToKill.add(program);
+    assert.equal(program, g.child.pid, 'exec in place: the program keeps the PID its parent started');
+    await sleep(200);
+    assert.ok(alive(program) && alive(kid), 'the guard leaves a running program alone while the owner lives');
+    const started = Date.now();
+    process.kill(o.pid, 'SIGKILL');
+    const result = await g.exited;
+    const took = Date.now() - started;
+    assert.equal(result.sig, 'SIGKILL');
+    assert.ok(took >= 250, `waited the grace period (${took} ms)`);
+    assert.ok(took < 3000, `finished promptly (${took} ms)`);
+    await waitFor(() => allGone([program, kid]), { what: 'program and descendant gone' });
+  });
+
+  test('a program that exits on its own keeps its status, and the watcher sweeps its group', async () => {
+    const o = owner();
+    const kidFile = path.join(scratch, 'guard-status.kid');
+    const g = guard(o.pid, ['/bin/sh', '-c', `trap '' TERM HUP; sleep 300 & echo $! > ${kidFile}; exit 17`]);
+    assert.equal((await g.exited).code, 17);
+    const kid = readPid(kidFile);
+    await waitFor(() => !alive(kid), { what: 'left-over group member killed' });
+    assert.ok(alive(o.pid), 'the owner is never touched');
+    process.kill(o.pid, 'SIGKILL');
+  });
+
+  test('a program that does not lead its own process group is refused (70) and never started', async () => {
+    const o = owner();
+    const marker = path.join(scratch, 'guard-group.started');
+    const g = guard(o.pid, ['/bin/sh', '-c', `touch ${marker}`], { detached: false });
+    assert.equal((await g.exited).code, 70);
+    assert.throws(() => readFileSync(marker), /ENOENT/);
+    process.kill(o.pid, 'SIGKILL');
+  });
+
+  test('an owner that is already dead: 71, and the program is never started', async () => {
+    const o = owner();
+    process.kill(o.pid, 'SIGKILL');
+    await waitFor(() => !alive(o.pid));
+    const marker = path.join(scratch, 'guard-dead.started');
+    const g = guard(o.pid, ['/bin/sh', '-c', `touch ${marker}`]);
+    assert.equal((await g.exited).code, 71);
+    assert.throws(() => readFileSync(marker), /ENOENT/);
+  });
+
+  test('exec failure reports 127', async () => {
+    const o = owner();
+    assert.equal((await guard(o.pid, ['/nonexistent/program']).exited).code, 127);
+    process.kill(o.pid, 'SIGKILL');
   });
 });

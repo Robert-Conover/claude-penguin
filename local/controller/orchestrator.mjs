@@ -1,15 +1,21 @@
 import { spawn } from 'node:child_process';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, readFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { ControllerError } from './lock.mjs';
 import { closeLog, DEFAULT_LOG_CAP_BYTES, openLog, rotateIfNeeded } from './logs.mjs';
 import { updateRecord, removeRecord, writeJsonAtomic, writeRecord } from './owners.mjs';
-import { processIdentity } from './procinfo.mjs';
+import { groupAlive, processIdentity } from './procinfo.mjs';
 import { waitHealthy } from './health.mjs';
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const STOP_MARGIN_MS = 4000;
+
+/** The program's process group from the shim's `.child` sidecar, or null. */
+function sidecarGroup(recordFile) {
+  try { const value = JSON.parse(readFileSync(`${recordFile}.child`, 'utf8')); return Number.isInteger(value.pgid) && value.pgid > 1 ? value.pgid : null; }
+  catch { return null; }
+}
 
 export function validateServices(services) {
   const names = new Set(services.map(s => s.name));
@@ -97,10 +103,15 @@ export class Orchestrator {
         entry.exited = { code, signal: sig };
         const wasHealthy = entry.state === 'healthy';
         entry.state = 'exited';
-        // A shim that exited normally has confirmed its group is gone. A shim killed by a signal may have left
-        // its program running, so its record stays for the next controller to evaluate.
+        // The record goes only when cleanup is confirmed: the shim exited on its own and the program's
+        // process group is empty. A shim killed by a signal, or one that exits 70 because the group did not
+        // exit (a status a program can also return), leaves the record for recovery to evaluate.
         // Awaited before the exit resolves, so a controller shutting down never leaves a stale record behind.
-        const removed = code !== null ? removeRecord(this.ownersDir, def.name).catch(() => {}) : Promise.resolve();
+        if (!entry.pgid) entry.pgid = sidecarGroup(recordFile);
+        const groupGone = !entry.pgid || !groupAlive(entry.pgid);
+        entry.cleanupConfirmed = code !== null && groupGone;
+        if (code !== null && !groupGone) this.log(`${def.name}: its supervisor exited (${code}) but process group ${entry.pgid} is still running; keeping its ownership record for recovery`);
+        const removed = entry.cleanupConfirmed ? removeRecord(this.ownersDir, def.name).catch(() => {}) : Promise.resolve();
         this.emit({ event: 'service', name: def.name, state: 'exited', pid: entry.programPid ?? undefined, code: code ?? (sig ? 128 : null) });
         if (!entry.stopping && wasHealthy) {
           this.onFailure(def.name, { code, signal: sig, reason: 'exited' });
@@ -149,9 +160,21 @@ export class Orchestrator {
     return null;
   }
 
+  /** True once the program's group is confirmed empty (waiting up to `waitMs`); the record is then removed. */
+  async #confirmGone(entry, waitMs = 0) {
+    if (entry.cleanupConfirmed) return true;
+    const deadline = Date.now() + waitMs;
+    while (entry.pgid && groupAlive(entry.pgid) && Date.now() < deadline) await sleep(20);
+    if (entry.pgid && groupAlive(entry.pgid)) return false;
+    await removeRecord(this.ownersDir, entry.def.name).catch(() => {});
+    entry.cleanupConfirmed = true;
+    return true;
+  }
+
   async #stopOne(entry) {
     const { def } = entry;
-    if (entry.state === 'exited') return true;
+    // Already exited: stopped only if its group is gone (a shim killed by a signal can leave its program running).
+    if (entry.state === 'exited') return this.#confirmGone(entry);
     entry.stopping = true;
     entry.state = 'stopping';
     this.emit({ event: 'service', name: def.name, state: 'stopping', pid: entry.programPid ?? undefined });
@@ -159,12 +182,14 @@ export class Orchestrator {
     try { process.kill(shim, 'SIGUSR1'); } catch { /* shim already gone */ }
     const bound = (entry.stop.graceMs ?? 5000) + STOP_MARGIN_MS;
     const exited = await Promise.race([entry.exitPromise.then(() => true), sleep(bound).then(() => false)]);
-    if (exited) return true;
+    if (exited) return this.#confirmGone(entry);
     // The shim did not finish in time: take the group down ourselves.
     this.log(`${def.name}: shim did not exit within ${bound} ms; killing its process group`);
     if (entry.pgid) try { process.kill(-entry.pgid, 'SIGKILL'); } catch { /* gone */ }
     try { process.kill(shim, 'SIGKILL'); } catch { /* gone */ }
-    return Promise.race([entry.exitPromise.then(() => true), sleep(4000).then(() => false)]);
+    const gone = await Promise.race([entry.exitPromise.then(() => true), sleep(4000).then(() => false)]);
+    // The shim was killed, so its own confirmation is missing: check the group here.
+    return gone && this.#confirmGone(entry, 3000);
   }
 
   /** Reverse dependency order, bounded per step; services in the same step stop concurrently. Returns names that did not stop. */

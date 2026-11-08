@@ -201,6 +201,33 @@ async function readIfExists(file) {
 }
 
 /**
+ * Checks an installed patch set (`dir`, for example <out>/current) against the patch set it was built from:
+ * the same manifest and, for every target, a record of this set that names the file's hash and contents that
+ * decompress to the patch's expected result. Nothing is written.
+ * @returns {Promise<{ ok: true, patchset: string } | { ok: false, problem: string }>}
+ */
+export async function verifyInstalledPatchSet({ patches, dir }) {
+  const { manifest, manifestText, patches: loaded } = await loadPatchSet(patches);
+  const installedManifest = await readIfExists(path.join(dir, MANIFEST_NAME));
+  if (!installedManifest || installedManifest.toString() !== manifestText) return { ok: false, problem: `${MANIFEST_NAME} is missing or differs from patch set ${manifest.id}` };
+  for (const patch of loaded) {
+    validatePatch(patch);
+    const file = await readIfExists(path.join(dir, patch.target));
+    if (!file) return { ok: false, problem: `${patch.target} is missing` };
+    let record = null;
+    try { record = JSON.parse((await readIfExists(path.join(dir, patch.recordFile)))?.toString() ?? ''); } catch { /* reported below */ }
+    if (!record || record.patchset !== manifest.id || record.outputSha256 !== sha256(file)) return { ok: false, problem: `${patch.target} does not match ${patch.recordFile}` };
+    let parsed;
+    try { parsed = splitSwf(file, patch.target); } catch { return { ok: false, problem: `${patch.target} is not a readable SWF` }; }
+    const { result } = patch;
+    if (parsed.signature !== result.signature || parsed.version !== result.version || parsed.body.length !== result.decompressedLength || sha256(parsed.body) !== result.decompressedSha256) {
+      return { ok: false, problem: `${patch.target} differs from the patch result` };
+    }
+  }
+  return { ok: true, patchset: manifest.id };
+}
+
+/**
  * Apply every patch of a set and install the result atomically.
  * Output: <out>/<patchset>/{engine.swf, puffle_adoption.swf, build.json, adoption-build.json, patchset.json}
  * and <out>/current -> <patchset> (temp symlink + rename). Nothing under <out> changes unless all patches verify.
@@ -242,6 +269,8 @@ export async function installPatchSet({ media, patches, out, patchset, onProgres
 
     const finalDir = path.join(out, id);
     const same = async () => {
+      const installedManifest = await readIfExists(path.join(finalDir, MANIFEST_NAME));
+      if (!installedManifest || installedManifest.toString() !== manifestText) return false;
       for (const file of installed) {
         const existing = await readIfExists(path.join(finalDir, file.target));
         if (!existing || sha256(existing) !== file.sha256) return false;

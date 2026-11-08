@@ -194,6 +194,9 @@ JSON
 fi
 
 # ---- 4. sign (inside out) -----------------------------------------------------------------------
+log "checking minimum macOS of every Mach-O file"
+"$HERE/lib/check-min-os.sh" 26.0 "$APP"   # matches LSMinimumSystemVersion above
+
 SIGN_FLAGS=(--force --sign "$IDENTITY")
 if [[ "$IDENTITY" != "-" ]]; then
   SIGN_FLAGS+=(--options runtime --timestamp)

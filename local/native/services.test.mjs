@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, readFile, rm, stat, writeFile, readdir } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { DEFAULT_PORTS, engineEnvironment, ensureSecrets, nativeServices, postgresReady, prepareData, readSecrets } from './services.mjs';
+import { DEFAULT_PORTS, engineEnvironment, ensureSecrets, nativeServices, postgresReady, prepareData, readSecrets, writeProvisionEnv } from './services.mjs';
 
 async function fixture() {
   const base = await mkdtemp(path.join(os.tmpdir(), 'cp native '));
@@ -154,6 +154,24 @@ test('prepareData is idempotent and never replaces an existing Postgres cluster'
     assert.equal(provision.PYTHONPATH, path.join(config.runtimes, 'envs/houdini'));
     for (const name of ['postgres', 'valkey', 'login', 'world', 'dash', 'snowflake', 'web']) await stat(path.join(config.data, 'logs', name));
     assert.deepEqual((await readdir(config.data)).filter(n => n.includes('tmp')), []);
+  } finally { await cleanup(); }
+});
+
+test('writeProvisionEnv follows the app to a new location (rewritten at every engine start)', async () => {
+  const { config, cleanup } = await fixture();
+  try {
+    await mkdir(path.join(config.data, 'postgres'), { recursive: true });
+    await writeFile(path.join(config.data, 'postgres', 'PG_VERSION'), '16\n');
+    await prepareData(config);
+    const file = path.join(config.data, 'secrets/provision-env.json');
+    const before = JSON.parse(await readFile(file, 'utf8'));
+    const moved = { ...config, runtimes: path.join(path.dirname(config.runtimes), 'Moved App', 'runtimes') };
+    assert.equal(await writeProvisionEnv(moved), file);
+    const after = JSON.parse(await readFile(file, 'utf8'));
+    assert.equal(after.PYTHONPATH, path.join(moved.runtimes, 'envs/houdini'));
+    assert.equal(after.POSTGRES_PASSWORD, before.POSTGRES_PASSWORD, 'the credentials come from db.json, unchanged');
+    assert.equal(await mode(file), 0o600);
+    assert.deepEqual((await readdir(path.join(config.data, 'secrets'))).filter(n => n.includes('tmp')), []);
   } finally { await cleanup(); }
 });
 

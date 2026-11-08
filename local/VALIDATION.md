@@ -1258,3 +1258,61 @@ These checks found five defects, all fixed before this record:
   - sleep and wake;
   - an interrupted media download, since no media host exists;
   - an Explore-to-Code switch in the app UI, which is not implemented.
+
+## macOS app prototype: lifecycle and packaging fixes — November 8, 2026
+
+A later run the same day, on the same Mac and branch. A review found four defects in the prototype recorded above and three smaller ones, and each was confirmed in the code before it was fixed. That record is unchanged; this one covers the fixes.
+
+| Defect | Fix |
+| --- | --- |
+| `cp-supervise` was built for the build Mac's macOS (`minos 27.2`), though the app requires macOS 26. It was the only bundled Mach-O file that needed a newer macOS than 26. | `build-supervise.sh` targets macOS 26.0. `build-app.sh` now runs `check-min-os.sh 26.0` over every Mach-O file in the bundle before signing, and a controller test checks the shim's minimum. |
+| Claude's terminal has its own session (node-pty), so a killed engine's supervisor could not reach it. A Claude that ignored SIGHUP would survive. | In the app the engine starts Claude through `cp-supervise guard` (`CP_ENGINE_PTY_GUARD`). Claude is exec'd in place with the same PID and terminal. A detached watcher stops Claude's process group when the engine exits. |
+| `provision-env.json`, which holds the absolute runtime path for Python, was written only during setup, so a moved app would provision through its old location. | It is rewritten before every engine start (`writeProvisionEnv`). |
+| The controller removed a service's ownership record on any numeric exit code, including the shim's 70 for "process group did not exit". | A record is removed only when the shim exited on its own and the group is empty. Otherwise it is kept and `stop` reports the service as not stopped. |
+| An installed Git older than the engine's minimum (2.48) was still chosen over the bundled Git, and then the engine refused to start. | `findUserGit` skips a Git older than 2.48, so the bundled Git is used. |
+| The setup check for the extensions only tested that `engine.swf` existed. Reinstalling the same set also ignored a damaged `patchset.json`. | `verifyInstalledPatchSet` checks both SWFs, their records and the manifest. Setup uses it. |
+| The copied resume command lacked `DISABLE_UPDATES=1`. | Added. |
+
+**Offline suites** (Node 26.13.0; the controller, installer and engine suites also under Node 22.23.4, the version CI uses):
+
+| Suite | Result |
+| --- | --- |
+| engine | 134 passed |
+| web | 68 passed |
+| client-bridge (Node) | 42 passed |
+| client-bridge (Python) | 29 passed |
+| controller | 51 passed |
+| native | 10 passed |
+| native adapters (Python) | 11 passed |
+| installer | 42 passed |
+
+The record above gave the native suite as 10 tests. It had 9; this run added one. Launcher and script syntax checks and `git diff --check` passed. The Swift sources did not change, and `swift test` was not rerun.
+
+**Checks on this Mac**
+
+- `cp-supervise guard` in real node-pty terminals, with stand-in programs:
+  - the exit status and output came through, and the terminal closed 113 ms after exit;
+  - typed input reached the program;
+  - when the owner was SIGKILLed, a program ignoring SIGHUP and SIGTERM, and its child, were gone after 507 ms (a 500 ms grace);
+  - no watcher remained afterwards.
+- The real Claude 2.1.311 was started by the engine manager through `guard`:
+  - it ran with fake game provisioning (no account or coins), a disposable repository and a scratch `CLAUDE_CONFIG_DIR`;
+  - it was not signed in and was in manual permission mode;
+  - Claude kept the PID the engine started, and stayed the terminal's foreground group;
+  - after a SIGKILL of the engine, Claude and the watcher were gone within 499 ms, and Claude's group was empty.
+
+  Without the guard, the same Claude also exited, 407 ms after the hangup. So Claude 2.1.311 at its first-run screen already exits on a terminal hangup. The guard covers a Claude that does not, and processes left in its group.
+- `./launch start --mode code` on the built runtimes:
+  - `verifyInstalledPatchSet` accepted the installed set `ps-ae39499484a07eb8`;
+  - `provision-env.json` was rewritten;
+  - the engine received `CP_ENGINE_PTY_GUARD`;
+  - every listener was on 127.0.0.1.
+
+  `./launch stop` left no ownership records and no runtime processes.
+- `check-min-os.sh 26.0` over `.local/runtimes` and the app executable passed (154 Mach-O files). Over the bundle built earlier, it failed on the old `cp-supervise` alone. The bundle was not rebuilt.
+
+**Not verified:**
+
+- a signed-in Claude in the middle of a task when the engine dies, and processes that Claude's tools move into other sessions;
+- the rebuilt app bundle, which would now include the shim built for macOS 26;
+- everything listed as not verified in the record above.

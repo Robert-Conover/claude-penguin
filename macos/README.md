@@ -70,7 +70,7 @@ The UI-only bundle looks for `Contents/Resources/dev/fake-controller.mjs` when t
 
 ## Packaging
 
-`build-app.sh` output: `build/Claude Penguin.app`. Resources are copied from an explicit allowlist (see the script): `local/{controller,engine,web,native,installer}` (no tests, no `node_modules`), the client-bridge patcher, `local/*.py` minus tests and `doctor.py`, `houdini/ dash/ snowflake/` (no `.git`), `templates/`, `servers.xml`, Ruffle, and the runtimes. `engine` and `web` production dependencies come from `npm ci --omit=dev --ignore-scripts` in a staging copy, and the script fails if node-pty's darwin-arm64 `pty.node` or `spawn-helper` is missing. Never copied: `vanilla-media/`, other `.local/` content, credentials, logs.
+`build-app.sh` output: `build/Claude Penguin.app`. Resources are copied from an explicit allowlist (see the script): `local/{controller,engine,web,native,installer}` (no tests, no `node_modules`), the client-bridge patcher, `local/*.py` minus tests and `doctor.py`, `houdini/ dash/ snowflake/` (no `.git`), `templates/`, `servers.xml`, Ruffle, and the runtimes. `engine` and `web` production dependencies come from `npm ci --omit=dev --ignore-scripts` in a staging copy, and the script fails if node-pty's darwin-arm64 `pty.node` or `spawn-helper` is missing. Never copied: `vanilla-media/`, other `.local/` content, credentials, logs. Before signing, `scripts/lib/check-min-os.sh 26.0` reads the minimum macOS of every Mach-O file in the bundle (`vtool -show-build`) and fails the build if any needs a newer macOS than `LSMinimumSystemVersion`.
 
 Layout facts other parts depend on (also written to `Resources/app/bundle-layout.json`):
 

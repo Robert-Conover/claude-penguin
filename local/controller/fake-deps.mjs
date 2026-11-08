@@ -50,6 +50,9 @@ export default function fakeDeps() {
         writeFileSync(path.join(config.data, 'secrets', 'db.json'), '{}', { mode: 0o600 });
         onProgress?.({ label: 'initdb', done: 2, total: 2 });
       },
+      async writeProvisionEnv(config) {
+        if (env.FAKE_TRACK_DIR) writeFileSync(path.join(env.FAKE_TRACK_DIR, 'provision-env.written'), config.runtimes ?? '');
+      },
       engineEnvironment: () => ({ FAKE_ENGINE_ENV: '1', FAKE_TRACK_DIR: env.FAKE_TRACK_DIR ?? '', CP_WEB_ORIGIN: 'http://localhost:1' }),
     }),
     claude: async () => ({

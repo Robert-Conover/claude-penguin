@@ -246,6 +246,8 @@ test('the resume command names the managed Claude and configuration with safe qu
   assert.equal(resumeCommandFor(base), "cd '/w/tree' && claude --resume abc");
   assert.equal(resumeCommandFor({ ...base, claudePath: '/data/claude/versions/2.1.5/claude', configDir: '/data/claude/config' }),
     "cd '/w/tree' && CLAUDE_CONFIG_DIR='/data/claude/config' '/data/claude/versions/2.1.5/claude' --resume abc");
+  assert.equal(resumeCommandFor({ ...base, claudePath: '/data/claude/versions/2.1.5/claude', configDir: '/data/claude/config', disableUpdates: true }),
+    "cd '/w/tree' && CLAUDE_CONFIG_DIR='/data/claude/config' DISABLE_UPDATES=1 '/data/claude/versions/2.1.5/claude' --resume abc");
   assert.equal(resumeCommandFor({ workspacePath: "/Users/o'neil/My Work/tree", sessionId: 'abc', claudePath: "/Users/o'neil/Application Support/claude", configDir: "/Users/o'neil/App Support/cfg" }),
     "cd '/Users/o'\\''neil/My Work/tree' && CLAUDE_CONFIG_DIR='/Users/o'\\''neil/App Support/cfg' '/Users/o'\\''neil/Application Support/claude' --resume abc");
 });
@@ -286,10 +288,31 @@ test('the manager gives Claude the managed environment plus only its hook variab
   assert.equal(options.env.CLAUDE_CONFIG_DIR, '/cfg');
   assert.equal(options.env.DISABLE_UPDATES, '1');
   assert.equal(options.env.PATH, '/b:/usr/bin:/bin');
+  assert.deepEqual(e.spawned.at(-1).args.slice(0, 2), ['--permission-mode', 'manual'], 'without a guard, Claude is the terminal\'s program');
 });
 
-test('an archived conversation resumes with the managed executable and configuration directory', async t => {
-  const runtime = await prepareClaudeRuntime({ settings: { CP_CLAUDE_CONFIG_DIR: '/data/Claude Penguin/cfg' }, detectGit: async () => ({ source: 'user', path: '/g', pathDir: null }) });
+test('with CP_ENGINE_PTY_GUARD, Claude starts through cp-supervise guard, owned by this engine', async t => {
+  const runtime = await prepareClaudeRuntime({ settings: { CP_ENGINE_PTY_GUARD: '/app/runtimes/supervise/cp-supervise' },
+    detectGit: async () => ({ source: 'user', path: '/g', pathDir: null }) });
+  await assert.rejects(prepareClaudeRuntime({ settings: { CP_ENGINE_PTY_GUARD: 'cp-supervise' }, detectGit: async () => ({ source: 'user', path: '/g', pathDir: null }) }), /absolute/);
+  const e = await managed(t, { claudeRuntime: runtime, claudePath: '/data/claude/versions/1.0.0/claude' });
+  const project = await e.manager.registerProject({ path: e.repo('guarded') });
+  await e.manager.settled(project.id);
+  const adoption = await e.manager.reserveAdoption({ projectId: project.id, typeId: 0, subtypeId: 0, name: 'Guard' });
+  const reply = e.options.game.purchase(e.options.publisher.payload, { adoptionId: adoption.id, typeId: 0, subtypeId: 0, name: 'Guard' });
+  await e.manager.reportAdoption({ adoptionId: adoption.id, result: reply });
+  await e.manager.settled(project.id);
+  const worker = e.manager.snapshot().workers[0];
+  await e.manager.start({ projectId: project.id, workerId: worker.id });
+  const { command, args, options } = e.spawned.at(-1);
+  assert.equal(command, '/app/runtimes/supervise/cp-supervise');
+  assert.deepEqual(args.slice(0, 7), ['guard', '--owner-pid', String(process.pid), '--grace-ms', '1500', '--', '/data/claude/versions/1.0.0/claude']);
+  assert.deepEqual(args.slice(7, 9), ['--permission-mode', 'manual']);
+  assert.equal(options.env.CP_ENGINE_PTY_GUARD, undefined, 'the setting never reaches Claude');
+});
+
+test('an archived conversation resumes with the managed executable, configuration directory and update setting', async t => {
+  const runtime = await prepareClaudeRuntime({ settings: { CP_CLAUDE_CONFIG_DIR: '/data/Claude Penguin/cfg', CP_CLAUDE_DISABLE_UPDATES: '1' }, detectGit: async () => ({ source: 'user', path: '/g', pathDir: null }) });
   const e = await managed(t, { claudeRuntime: runtime, claudePath: '/data/Claude Penguin/claude' });
   const source = e.repo('legacy');
   await e.manager.close();
@@ -298,7 +321,7 @@ test('an archived conversation resumes with the managed executable and configura
   const manager = await createManager(e.options);
   t.after(() => manager.close());
   const [archived] = manager.snapshot().archivedWorkers;
-  assert.equal(archived.resumeCommand, `cd '${source}' && CLAUDE_CONFIG_DIR='/data/Claude Penguin/cfg' '/data/Claude Penguin/claude' --resume ${archived.sessionId}`);
+  assert.equal(archived.resumeCommand, `cd '${source}' && CLAUDE_CONFIG_DIR='/data/Claude Penguin/cfg' DISABLE_UPDATES=1 '/data/Claude Penguin/claude' --resume ${archived.sessionId}`);
 });
 
 test('the engine Git binary is configurable', async t => {

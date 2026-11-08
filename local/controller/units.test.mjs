@@ -1,12 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, mkdtempSync, mkdirSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, mkdirSync, statSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { findUserGit, baseEnvironment } from './engine-service.mjs';
 import { rotateIfNeeded } from './logs.mjs';
 import { estimateSteps } from './setup.mjs';
-import { validateServices } from './orchestrator.mjs';
+import { Orchestrator, validateServices } from './orchestrator.mjs';
 import { freeBytes } from './preflight.mjs';
 
 const fakeGit = dir => { mkdirSync(dir, { recursive: true }); const f = path.join(dir, 'git'); writeFileSync(f, '#!/bin/sh\n'); chmodSync(f, 0o755); return f; };
@@ -14,12 +14,29 @@ const fakeGit = dir => { mkdirSync(dir, { recursive: true }); const f = path.joi
 test('findUserGit prefers a real git on PATH and skips the /usr/bin stub when no developer directory has one', () => {
   const root = mkdtempSync(path.join(os.tmpdir(), 'cps-git-'));
   const brew = fakeGit(path.join(root, 'brew'));
-  assert.equal(findUserGit({ env: { PATH: `/usr/bin:${path.join(root, 'brew')}` }, developerDir: () => null, exists: () => false }), brew);
+  const versionOf = () => 'git version 2.50.1';
+  assert.equal(findUserGit({ env: { PATH: `/usr/bin:${path.join(root, 'brew')}` }, developerDir: () => null, exists: () => false, versionOf }), brew);
   // Nothing but /usr/bin (which exists on every Mac as a stub): never chosen without developer tools.
-  assert.equal(findUserGit({ env: { PATH: '/usr/bin:/bin' }, developerDir: () => null, exists: () => false }) === '/usr/bin/git', false);
+  assert.equal(findUserGit({ env: { PATH: '/usr/bin:/bin' }, developerDir: () => null, exists: () => false, versionOf }) === '/usr/bin/git', false);
   // The bundled git is never reported as the user's.
   const bundled = fakeGit(path.join(root, 'bundled'));
-  assert.equal(findUserGit({ env: { PATH: path.join(root, 'bundled') }, bundledGit: bundled, developerDir: () => null, exists: () => false }) === bundled, false);
+  assert.equal(findUserGit({ env: { PATH: path.join(root, 'bundled') }, bundledGit: bundled, developerDir: () => null, exists: () => false, versionOf }) === bundled, false);
+});
+
+test('findUserGit skips a git older than the engine requires (2.48), so the bundled git is used instead', () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'cps-git-'));
+  const old = fakeGit(path.join(root, 'old'));
+  const current = fakeGit(path.join(root, 'current'));
+  const versions = { [old]: 'git version 2.39.5 (Apple Git-154)', [current]: 'git version 2.48.0' };
+  const versionOf = file => versions[file] ?? '';
+  const quiet = { developerDir: () => null, exists: () => false, versionOf };
+  assert.equal(findUserGit({ env: { PATH: path.join(root, 'old') }, ...quiet }), null, 'only an old git: none of the user\'s is used');
+  assert.equal(findUserGit({ env: { PATH: `${path.join(root, 'old')}:${path.join(root, 'current')}` }, ...quiet }), current, 'a later, new-enough git on PATH is chosen');
+  assert.equal(findUserGit({ env: { PATH: path.join(root, 'old') }, ...quiet, versionOf: () => '' }), null, 'a git that cannot report its version is not used');
+  // The real version probe runs the candidate directly (a shell script standing in for git).
+  writeFileSync(old, '#!/bin/sh\necho "git version 2.30.0"\n');
+  writeFileSync(current, '#!/bin/sh\necho "git version 2.51.2"\n');
+  assert.equal(findUserGit({ env: { PATH: `${path.join(root, 'old')}:${path.join(root, 'current')}` }, developerDir: () => null, exists: () => false }), current);
 });
 
 test('baseEnvironment passes only the documented variables', () => {
@@ -55,4 +72,30 @@ test('validateServices rejects cycles, unknown dependencies and relative program
 
 test('freeBytes walks up to an existing directory', async () => {
   assert.ok(await freeBytes(path.join(os.tmpdir(), 'does', 'not', 'exist')) > 0);
+});
+
+test('a supervisor that exits 70 with its program still running keeps the ownership record and reports a failed stop', async () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'cps-orch-'));
+  // Stands in for cp-supervise: starts the program in its own group, writes the sidecar, and on the stop
+  // request exits 70 ("process group did not exit") without stopping it.
+  const shim = path.join(root, 'fake-supervise');
+  writeFileSync(shim, `#!${process.execPath}
+const { spawn } = require('node:child_process'); const fs = require('node:fs');
+const args = process.argv.slice(2); const record = args[args.indexOf('--record') + 1]; const program = args.slice(args.indexOf('--') + 1);
+const child = spawn(program[0], program.slice(1), { detached: true, stdio: 'ignore' }); child.unref();
+fs.writeFileSync(record + '.child', JSON.stringify({ pid: child.pid, pgid: child.pid, shimPid: process.pid, startSec: 0 }));
+process.on('SIGUSR1', () => process.exit(70));
+setInterval(() => {}, 1000);
+`);
+  chmodSync(shim, 0o755);
+  const owners = path.join(root, 'owners');
+  const orchestrator = new Orchestrator({ superviseBin: shim, ownersDir: owners });
+  await orchestrator.start([{ name: 'svc', command: ['/bin/sleep', '300'], env: { PATH: '/usr/bin:/bin' },
+    health: { type: 'command', command: ['/usr/bin/true'] }, logDir: path.join(root, 'logs'), stop: { signal: 'SIGTERM', graceMs: 200 } }]);
+  const { pgid } = orchestrator.get('svc');
+  try {
+    assert.ok(pgid > 1);
+    assert.deepEqual(await orchestrator.stopAll(), ['svc'], 'not reported as stopped');
+    assert.ok(existsSync(path.join(owners, 'svc.json')), 'the record stays for recovery');
+  } finally { try { process.kill(-pgid, 'SIGKILL'); } catch { /* gone */ } }
 });

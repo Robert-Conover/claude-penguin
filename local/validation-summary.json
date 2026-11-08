@@ -1169,5 +1169,63 @@
       "Explore-to-Code switch in the app UI"
     ],
     "document": "local/VALIDATION.md#macos-app-prototype--november-8-2026"
+  },
+  "macos_app_lifecycle_fixes_2026_11_08": {
+    "date": "2026-11-08",
+    "scope": "Fixes after review of the macOS app prototype: supervisor deployment target and bundle minimum-OS audit, Claude terminal cleanup when the engine dies (cp-supervise guard), provisioning settings rewritten per start, ownership records kept unless cleanup is confirmed, Git version fallback, installed patch set verification, DISABLE_UPDATES in the resume command",
+    "offline_suites": {
+      "engine": 134,
+      "web": 68,
+      "client_bridge_node": 42,
+      "client_bridge_python": 29,
+      "controller": 51,
+      "native": 10,
+      "native_adapters_python": 11,
+      "installer": 42,
+      "failed": 0,
+      "node_22_rerun": [
+        "controller",
+        "installer",
+        "engine"
+      ]
+    },
+    "guard_pty": {
+      "normal_exit_ms": 113,
+      "input_reaches_program": true,
+      "stubborn_program_gone_ms": 507,
+      "grace_ms": 500,
+      "watchers_left": 0
+    },
+    "guard_real_claude": {
+      "claude_version": "2.1.311",
+      "signed_in": false,
+      "permission_mode": "manual",
+      "same_pid": true,
+      "gone_after_engine_sigkill_ms": 499,
+      "group_empty": true,
+      "without_guard_gone_ms": 407
+    },
+    "native_launch": {
+      "extensions_verified": true,
+      "provision_env_rewritten": true,
+      "engine_pty_guard_set": true,
+      "listeners_loopback_only": true,
+      "stop_records_left": 0
+    },
+    "min_os_audit": {
+      "target": "26.0",
+      "macho_files_passing": 154,
+      "old_bundle_failures": [
+        "cp-supervise (27.2)"
+      ],
+      "bundle_rebuilt": false
+    },
+    "not_checked": [
+      "signed-in Claude mid-task when the engine dies",
+      "processes Claude's tools move into other sessions",
+      "rebuilt app bundle",
+      "swift test (Swift sources unchanged)"
+    ],
+    "document": "local/VALIDATION.md#macos-app-prototype-lifecycle-and-packaging-fixes--november-8-2026"
   }
 }

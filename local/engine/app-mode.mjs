@@ -240,10 +240,13 @@ export function versionFromPath(claudePath) {
 const SAFE_WORD = /^[A-Za-z0-9._+@%=,:-]+$/;
 export function shellWord(value) { return SAFE_WORD.test(value) ? value : `'${String(value).replace(/'/g, `'\\''`)}'`; }
 
-/** The shell command that continues an archived conversation with the managed Claude and configuration. */
-export function resumeCommandFor({ workspacePath, sessionId, claudePath = 'claude', configDir = null }) {
+/**
+ * The shell command that continues an archived conversation with the managed Claude and configuration.
+ * `disableUpdates` keeps the pinned Claude from updating itself there too (DISABLE_UPDATES=1), as in the app.
+ */
+export function resumeCommandFor({ workspacePath, sessionId, claudePath = 'claude', configDir = null, disableUpdates = false }) {
   const executable = claudePath.includes('/') ? `'${claudePath.replace(/'/g, `'\\''`)}'` : shellWord(claudePath);
-  const prefix = set(configDir) ? `CLAUDE_CONFIG_DIR=${`'${configDir.replace(/'/g, `'\\''`)}'`} ` : '';
+  const prefix = (set(configDir) ? `CLAUDE_CONFIG_DIR=${`'${configDir.replace(/'/g, `'\\''`)}'`} ` : '') + (disableUpdates ? 'DISABLE_UPDATES=1 ' : '');
   return `cd '${String(workspacePath).replace(/'/g, `'\\''`)}' && ${prefix}${executable} --resume ${sessionId}`;
 }
 
@@ -264,6 +267,7 @@ export async function prepareClaudeRuntime({ settings = process.env, claudePath 
     else if (captured.warning) warnings.push(captured.warning);
   }
   if (set(settings.CP_CLAUDE_CONFIG_DIR) && !path.isAbsolute(settings.CP_CLAUDE_CONFIG_DIR)) throw invalid('CP_CLAUDE_CONFIG_DIR must be an absolute path.');
+  if (set(settings.CP_ENGINE_PTY_GUARD) && !path.isAbsolute(settings.CP_ENGINE_PTY_GUARD)) throw invalid('CP_ENGINE_PTY_GUARD must be an absolute path.');
   const probe = claudeEnvironment({ base: baseEnv, settings });
   const git = await detectGit({ pathValue: probe.PATH, bundledDir: set(settings.CP_BUNDLED_GIT_DIR) ? settings.CP_BUNDLED_GIT_DIR : null });
   if (git.source === 'missing') warnings.push('Claude cannot find Git. Install the Xcode Command Line Tools or Git, or use the app\'s bundled Git.');
@@ -273,6 +277,10 @@ export async function prepareClaudeRuntime({ settings = process.env, claudePath 
   return {
     baseEnv, loginShell, warnings, git, environment,
     configDir: set(settings.CP_CLAUDE_CONFIG_DIR) ? settings.CP_CLAUDE_CONFIG_DIR : null,
+    disableUpdates: settings.CP_CLAUDE_DISABLE_UPDATES === '1',
+    // The app's cp-supervise: Claude starts through `guard`, which stops its terminal's process group
+    // if this engine dies (node-pty gives each terminal its own session, outside the engine's group).
+    ptyGuard: set(settings.CP_ENGINE_PTY_GUARD) ? settings.CP_ENGINE_PTY_GUARD : null,
     appMode: isAppMode(settings),
     // Names only. The sign-in is recomputed from the live Claude environment.
     report() {
