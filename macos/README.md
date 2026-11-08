@@ -11,6 +11,7 @@ A SwiftUI/AppKit shell (Swift 6, macOS 26+, arm64) around the shared Node contro
 | `dev/fake-controller.mjs` | Dependency-free fake controller for UI work (protocol, scenarios, a test page). |
 | `scripts/build-app.sh`, `make-dmg.sh`, `notarize.sh` | Bundle, disk image, notarization. |
 | `Entitlements/` | `app.plist` (empty: no sandbox, no JIT), `node.plist` (`allow-jit`), `adhoc-test.plist` (local hardened-runtime tests only). |
+| `artwork/` | The v2 app icon, PNG masters and generation prompt, matching the homepage's classic 2D penguin artwork. |
 
 ## Build and run
 
@@ -78,6 +79,8 @@ Layout facts other parts depend on (also written to `Resources/app/bundle-layout
 - Client-bridge patches (from `.local/client-bridge-patches`, when present) go to `Contents/Resources/app/local/client-bridge/patches`, where `local/controller` reads them (`installPatchSet`).
 - Python must not write bytecode inside the bundle (set `PYTHONDONTWRITEBYTECODE=1`), or the code-signature seal breaks.
 
+Both full and UI-only builds copy `artwork/ClaudePenguin-v2.icns` to `Contents/Resources/ClaudePenguin.icns` and set `CFBundleIconFile` before signing. The build fails if the source icon is missing. The root README uses `artwork/app-icon-v2-1024.png` from this directory.
+
 Environment: `CP_SIGN_IDENTITY`, `CP_VERSION`, `CP_RUNTIMES_DIR`, `CP_RUFFLE_DIR`, `CP_PATCHES_DIR`, `CP_SKIP_SWIFT`, `CP_HARDENED`.
 
 ### Signing
@@ -103,7 +106,7 @@ Needs from the owner: a **Developer ID Application** certificate in the keychain
 
 ## Known gaps
 
-- No app icon or custom name artwork (waits on the naming decision); no Sparkle or other updater.
+- No Sparkle or other updater. The product name and artwork still need the planned review before public distribution.
 - The setup UI has no path from Explore to Code later (the controller supports it with `setup` mode `code`); `start` always uses the controller's default mode.
 - English only; accessibility labels and Dynamic Type are not audited.
 - Quit's confirmation, Force Quit and "taking a while" alerts were exercised only as far as seeing the windows appear, not by clicking them.

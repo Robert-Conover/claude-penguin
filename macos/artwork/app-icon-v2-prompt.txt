@@ -1,0 +1,22 @@
+Claude Penguin app icon v2 — classic Club Penguin homepage style
+Generated with the built-in image_gen tool on November 8, 2026.
+
+Style reference: local/web/home/igloo-workshop.png (approved homepage illustration).
+This version replaces the v1 creative direction: classic 2D penguin anatomy, bold navy outlines, saturated colors and restrained cel shading.
+
+Files:
+- app-icon-v2-master.png: original generated RGBA artwork.
+- app-icon-v2-1024.png: 1024 x 1024 PNG for app packaging.
+- ClaudePenguin-v2.icns: 16, 32, 128, 256 and 512 point images at 1x and 2x, packaged using sips and iconutil.
+
+Integration: macos/scripts/build-app.sh copies ClaudePenguin-v2.icns into Contents/Resources/ClaudePenguin.icns and sets CFBundleIconFile to ClaudePenguin.icns before signing. README.md uses app-icon-v2-1024.png in its header.
+
+Final prompt:
+Use case: style-transfer
+Asset type: revised macOS app icon for Claude Penguin.
+Input images: Image 1 is the previous app icon to replace. Image 2 is the APPROVED HOMEPAGE ARTWORK and the authoritative reference for the character design, linework and colors.
+Primary request: Completely redraw the app icon in the exact classic 2005–2013 Club Penguin 2D cartoon style used in Image 2. The previous 3D baby penguin was wrong. Match the blue penguin at the laptop in Image 2, adapted into a clear, compact Dock icon.
+Character: the classic cobalt-blue Club Penguin penguin, smooth tall oval body and small rounded head flowing into the body, two adjoining white oval eyes with small black pupils on the BLUE face, broad projecting golden-orange beak, friendly open smile, white BIB/BELLY that does not surround the eyes, simple long curved flippers, broad flat orange feet. NO hair tuft, NO cream heart-shaped facial mask, NO tiny chick proportions, NO giant glossy eyes. Preserve the reference character's recognizable anatomy.
+Composition: one large classic blue penguin, slightly turned three-quarter, looking toward the viewer, holding a small dark navy laptop in front of the lower belly with a simple golden ">_" terminal symbol. The penguin dominates the icon, with the face and orange feet readable at small sizes. A clean rounded-square sky-blue background with a simple snowy-white lower arc; no landscape details or extra characters.
+Style: confident thick dark navy outlines, flat saturated cobalt blue and orange, pure white belly and eyes, restrained TWO-TONE CEL SHADING only. Hand-drawn Flash-era promotional cartoon, exactly like the provided homepage illustration. No 3D rendering, no plush texture, no clay, no sculpted bevels, no toy finish or studio lighting. Do not reuse the previous icon's penguin design.
+Output: single square icon, 1024 x 1024 composition. Genuine transparent alpha outside the rounded-square background, even padding. No product name, logos, watermarks or text beyond ">_".

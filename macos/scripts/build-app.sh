@@ -31,6 +31,7 @@ IDENTITY="${CP_SIGN_IDENTITY:--}"
 RUNTIMES_SRC="${CP_RUNTIMES_DIR:-$REPO/.local/runtimes}"
 RUFFLE_SRC="${CP_RUFFLE_DIR:-$REPO/.local/ruffle}"
 PATCHES_SRC="${CP_PATCHES_DIR:-$REPO/.local/client-bridge-patches}"
+ICON_SRC="$MACOS/artwork/ClaudePenguin-v2.icns"
 
 BUILD="$MACOS/build"
 APP="$BUILD/$APP_NAME.app"
@@ -49,6 +50,8 @@ done
 log() { printf '\n==> %s\n' "$*"; }
 die() { printf 'error: %s\n' "$*" >&2; exit 1; }
 
+[[ -f "$ICON_SRC" ]] || die "missing app icon: $ICON_SRC"
+
 # ---- 1. compile -------------------------------------------------------------------------
 if [[ "${CP_SKIP_SWIFT:-0}" != 1 ]]; then
   log "swift build -c release (arm64)"
@@ -62,6 +65,7 @@ log "assembling $APP"
 rm -rf "$APP" "$STAGE"
 mkdir -p "$APP/Contents/MacOS" "$RES" "$STAGE"
 cp "$BIN_DIR/$EXECUTABLE" "$APP/Contents/MacOS/$EXECUTABLE"
+cp "$ICON_SRC" "$RES/ClaudePenguin.icns"
 
 USAGE_TAIL="Claude works in your repositories there when you ask a puffle to code for you."
 cat > "$APP/Contents/Info.plist" <<PLIST
@@ -72,6 +76,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleDevelopmentRegion</key><string>en</string>
   <key>CFBundleExecutable</key><string>$EXECUTABLE</string>
   <key>CFBundleIdentifier</key><string>$BUNDLE_ID</string>
+  <key>CFBundleIconFile</key><string>ClaudePenguin.icns</string>
   <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
   <key>CFBundleName</key><string>$APP_NAME</string>
   <key>CFBundleDisplayName</key><string>$APP_NAME</string>
@@ -100,7 +105,6 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 PLIST
 plutil -lint "$APP/Contents/Info.plist" >/dev/null
 printf 'APPL????' > "$APP/Contents/PkgInfo"
-# TODO(naming decision): app icon. No custom icon and no third-party marks until the name is settled.
 
 # ---- 3. resources ---------------------------------------------------------------------------
 # rsync with explicit excludes; tests and VCS data never ship.
