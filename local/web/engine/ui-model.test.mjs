@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { resolveTarget, targetForProject, controlsForWorker, animationForStatus, attentionCount, statusLabels, nextSnapshotRevision, terminalDimensions } from './ui-model.mjs';
+import { resolveTarget, targetForProject, controlsForWorker, animationForStatus, attentionCount, statusLabels, nextSnapshotRevision, terminalDimensions, describeSignIn, describeGit, hostHandler, hostMessage } from './ui-model.mjs';
 
 const snapshot = { projects: [{ id: 'a' }, { id: 'b' }, { id: 'c' }], workers: [{ id: 'w1', projectId: 'a', status: 'review', running: true },
   { id: 'w2', projectId: 'b', status: 'working', running: true }, { id: 'w3', projectId: 'b', status: 'idle', running: false }] };
@@ -47,4 +47,25 @@ test('terminal fit stays within the host PTY limits on small and large panels', 
   assert.deepEqual(terminalDimensions({ cols: 500, rows: 150 }), { cols: 300, rows: 100 });
   assert.deepEqual(terminalDimensions({ cols: 120, rows: 32 }), { cols: 120, rows: 32 });
   assert.equal(terminalDimensions(undefined), null);
+});
+test('sign-in text says when a shell variable overrides /login and how to change it, naming variables only', () => {
+  assert.equal(describeSignIn(undefined), null);
+  assert.deepEqual(describeSignIn({ method: 'login', overriddenBy: [] }).overridden, false);
+  const key = describeSignIn({ method: 'api-key', overriddenBy: ['ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN'] });
+  assert.equal(key.overridden, true);
+  assert.match(key.text, /overrides the app's \/login/);
+  assert.match(key.help, /remove ANTHROPIC_API_KEY, CLAUDE_CODE_OAUTH_TOKEN from your shell profile/);
+  for (const method of ['auth-token', 'oauth-token', 'bedrock', 'vertex', 'foundry', 'profile', 'federation']) assert.match(describeSignIn({ method, overriddenBy: ['X'] }).text, /shell environment/, method);
+});
+test('Git text names the source, and host messages are limited to the contract', () => {
+  assert.match(describeGit({ source: 'user', path: '/usr/local/bin/git' }), /your Git \(\/usr\/local\/bin\/git\)/);
+  assert.match(describeGit({ source: 'bundled' }), /bundled/);
+  assert.match(describeGit({ source: 'missing' }), /cannot find Git/);
+  assert.equal(describeGit(null), null);
+  assert.equal(hostHandler({}), null);
+  const handler = { postMessage() {} };
+  assert.equal(hostHandler({ webkit: { messageHandlers: { claudePenguinHost: handler } } }), handler);
+  assert.deepEqual(hostMessage('reveal', '/a/b'), { type: 'reveal', path: '/a/b' });
+  assert.equal(hostMessage('delete', '/a'), null);
+  assert.equal(hostMessage('reveal', 'relative'), null);
 });

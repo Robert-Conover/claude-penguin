@@ -1162,5 +1162,190 @@
       "player account",
       "Safari"
     ]
+  },
+  "macos_app_prototype_2026_11_08": {
+    "date": "2026-11-08",
+    "scope": "Internal macOS app prototype: native runtimes and servers, controller and supervisor, installer, extension patcher, engine app mode, SwiftUI/WKWebView app; ad-hoc signed, this Mac only",
+    "offline_suites": {
+      "engine": 133,
+      "web": 68,
+      "client_bridge_node": 41,
+      "client_bridge_python": 29,
+      "controller": 43,
+      "native": 10,
+      "installer": 42,
+      "python_host": 62,
+      "swift": 28,
+      "failed": 0,
+      "flaky": "controller 'service that dies while running' failed once under load in seven runs; passed alone"
+    },
+    "compose_regression": {
+      "verify": "passed",
+      "http_checks": 96,
+      "http_failures": 0,
+      "socket_checks": 4,
+      "houdini_container_tests": 13
+    },
+    "native_launch": {
+      "services": 7,
+      "listeners_loopback_only": true,
+      "claude_version": "2.1.311",
+      "claude_signed_in": false,
+      "native_provisioning": "managed owner created and world session verified",
+      "startup_seconds": 4,
+      "rss_mib": 815,
+      "runtimes_mib": 462
+    },
+    "crash_checks": {
+      "controller_sigkill": "all 16 managed processes exited in about 1.5 s",
+      "shim_sigkill_survivor": "identified by record and stopped on next launch",
+      "engine_sigkill": "SERVICE_FAILED; locks recovered only after ownership confirmed",
+      "clean_stop_records_left": 0,
+      "data_persisted": true
+    },
+    "app_bundle": {
+      "signature": "ad-hoc",
+      "nested_macho_signed": 155,
+      "size_mib": 515,
+      "explore_flow": true,
+      "code_flow": true,
+      "quit_cleanup": true,
+      "app_sigkill_cleanup": true
+    },
+    "not_checked": [
+      "game rendering, audio autoplay, login and room travel inside the visible app window (screen was locked)",
+      "real Claude session in app mode (needs owner /login)",
+      "Developer ID hardened-runtime build and notarization",
+      "clean Mac and quarantined DMG",
+      "sleep/wake",
+      "media download (no host decided)",
+      "Explore-to-Code switch in the app UI"
+    ],
+    "document": "local/VALIDATION.md#macos-app-prototype--november-8-2026"
+  },
+  "macos_app_lifecycle_fixes_2026_11_08": {
+    "date": "2026-11-08",
+    "scope": "Fixes after review of the macOS app prototype: supervisor deployment target and bundle minimum-OS audit, Claude terminal cleanup when the engine dies (cp-supervise guard), provisioning settings rewritten per start, ownership records kept unless cleanup is confirmed, Git version fallback, installed patch set verification, DISABLE_UPDATES in the resume command",
+    "offline_suites": {
+      "engine": 134,
+      "web": 68,
+      "client_bridge_node": 42,
+      "client_bridge_python": 29,
+      "controller": 51,
+      "native": 10,
+      "native_adapters_python": 11,
+      "installer": 42,
+      "failed": 0,
+      "node_22_rerun": [
+        "controller",
+        "installer",
+        "engine"
+      ]
+    },
+    "guard_pty": {
+      "normal_exit_ms": 113,
+      "input_reaches_program": true,
+      "stubborn_program_gone_ms": 507,
+      "grace_ms": 500,
+      "watchers_left": 0
+    },
+    "guard_real_claude": {
+      "claude_version": "2.1.311",
+      "signed_in": false,
+      "permission_mode": "manual",
+      "same_pid": true,
+      "gone_after_engine_sigkill_ms": 499,
+      "group_empty": true,
+      "without_guard_gone_ms": 407
+    },
+    "native_launch": {
+      "extensions_verified": true,
+      "provision_env_rewritten": true,
+      "engine_pty_guard_set": true,
+      "listeners_loopback_only": true,
+      "stop_records_left": 0
+    },
+    "min_os_audit": {
+      "target": "26.0",
+      "macho_files_passing": 154,
+      "old_bundle_failures": [
+        "cp-supervise (27.2)"
+      ],
+      "bundle_rebuilt": false
+    },
+    "not_checked": [
+      "signed-in Claude mid-task when the engine dies",
+      "processes Claude's tools move into other sessions",
+      "rebuilt app bundle",
+      "swift test (Swift sources unchanged)"
+    ],
+    "document": "local/VALIDATION.md#macos-app-prototype-lifecycle-and-packaging-fixes--november-8-2026"
+  },
+  "macos_app_rebuilt_bundle_2026_11_08": {
+    "date": "2026-11-08",
+    "commit": "b9ec7fb",
+    "ci": {
+      "regression_ubuntu_24_04": "pass",
+      "regression_macos_15": "pass",
+      "adoption_concurrency": "pass"
+    },
+    "build": {
+      "signature": "ad-hoc",
+      "hardened_runtime": true,
+      "size_mib": 515,
+      "macho_files": 156,
+      "macho_hardened": 156,
+      "min_os_all": "26.0",
+      "supervisor_has_guard": true,
+      "codesign_verify_deep_strict": true,
+      "gatekeeper": "rejected (expected for ad-hoc)",
+      "media_in_bundle": false
+    },
+    "run": {
+      "mode": "code",
+      "scratch_data": true,
+      "setup_seconds": 20,
+      "processes_from_bundle": 18,
+      "listeners_loopback_only": true,
+      "ruffle_loaded_client": true,
+      "verify_game_protocol_checks": 12,
+      "verify_game_status": "passed",
+      "http_checks": 96,
+      "http_failures": 0,
+      "socket_checks": 4,
+      "socket_failures": 0,
+      "quit_cleanup": true
+    },
+    "not_checked": [
+      "audio by ear",
+      "Developer ID signing and notarization",
+      "clean macOS 26 install",
+      "signed-in Claude task"
+    ],
+    "document": "local/VALIDATION.md#macos-app-prototype-rebuilt-bundle--november-8-2026",
+    "window_checks": {
+      "owner_present": true,
+      "input": "full-screen control (real keystrokes)",
+      "rendering": true,
+      "login": [
+        "localcheck",
+        "bridgecheck"
+      ],
+      "room_travel": [
+        "Dock",
+        "Plaza",
+        "Puffle Park",
+        "Town",
+        "Pet Shop",
+        "project igloo"
+      ],
+      "project_added_from_ui": true,
+      "adoption": "blue puffle for project igloo via patched adoption module (scratch coins)",
+      "terminal_input": "Claude 2.1.311 first-run picker responded to a real key; stopped before sign-in",
+      "session_stop_clean": true,
+      "quit_cleanup": true,
+      "audio": "music unmuted, no unmute overlay; not checked by ear",
+      "background_input_note": "background keystrokes dropped characters; real keystrokes did not"
+    }
   }
 }

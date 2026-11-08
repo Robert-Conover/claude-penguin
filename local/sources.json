@@ -112,5 +112,32 @@
     },
     "lockfile": "local/web/package-lock.json",
     "install": "npm ci --ignore-scripts --prefix local/web"
+  },
+  "macos_app_prototype": {
+    "status": "Internal prototype on branch macos-app; not released, signed with a Developer ID, or notarized",
+    "native_runtimes": {
+      "manifest": "local/native/runtimes.json",
+      "node": "24.22.2 (official darwin-arm64 binary)",
+      "python": "3.11.18 (astral-sh/python-build-standalone 20261026), one interpreter for Houdini, Dash and Snowflake",
+      "postgres": "16.15 (built from the postgresql.org source tarball)",
+      "valkey": "8.1.11 (built from the release tarball; SHA-256 recorded on first fetch, none is published)",
+      "git": "2.56.0 (built from kernel.org with RUNTIME_PREFIX)",
+      "service_packages": "local/native/requirements/{houdini,dash,snowflake}.txt (hash-locked; deviations from local/dependency-snapshots are listed in local/native/README.md)"
+    },
+    "claude_code_release": {
+      "pin": "local/installer/claude-release.json and local/controller/release.json",
+      "version": "2.1.311",
+      "channel": "stable on 2026-11-08",
+      "darwin_arm64_sha256": "85d8c08707fcfd1e78ffa0204eefbc6ec9e4fe22f375fb2767ef85d957ed3161",
+      "manifest_sha256": "d456e7293d621e6e09dd73b1d2a112bef62dae08d1ee44c1065356e64da65c0d",
+      "signing_key_fingerprint": "31DDDE24DDFAB679F42D7BD2BAA929FF1A7ECACE",
+      "signing_key_source": "https://code.claude.com/docs/en/setup (Binary integrity and code signing); key at https://downloads.claude.ai/keys/claude-code.asc",
+      "code_signing_team_id_observed": "Q6L2SF6YDW (from codesign on the downloaded binary; not stated in the docs)"
+    },
+    "extension_patchset": {
+      "id": "ps-ae39499484a07eb8",
+      "format": "local/client-bridge/PATCH_FORMAT.md",
+      "note": "Generated from the reference overlay builds into ignored .local/client-bridge-patches; not committed"
+    }
   }
 }

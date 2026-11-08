@@ -10,6 +10,7 @@
 // fixture visitor.
 import path from 'node:path';
 import { spawn as spawnProcess } from 'node:child_process';
+import { readProvisionEnvFile, parseProvisionCommand } from './app-mode.mjs';
 import { GameProtocolError, worldSession } from './game-protocol.mjs';
 
 export const VISITOR_USERNAME = 'bridgecheck';
@@ -87,7 +88,7 @@ function lastJson(text) {
  * Real provisioner. `spawn` and `session` are injectable for tests.
  */
 export function createGameProvisioner({ root, compose = path.join(root, 'local/compose'), spawn = spawnProcess, session = worldSession,
-  loginPort = 6112, worldPort = 9875, timeoutMs = 15000, seedTimeoutMs = 120000, env = process.env, visitorUsername = VISITOR_USERNAME } = {}) {
+  loginPort = 6112, worldPort = 9875, gameHost = null, provisionCommand = null, provisionEnvFile = null, timeoutMs = 15000, seedTimeoutMs = 120000, env = process.env, visitorUsername = VISITOR_USERNAME } = {}) {
   if (!VISITOR_USERNAMES.includes(visitorUsername)) throw new ProvisionError(`The visitor must be one of ${VISITOR_USERNAMES.join(', ')}.`);
   const children = new Set();
   // The fixture visitor password travels in the stdin request like owner
@@ -96,16 +97,29 @@ export function createGameProvisioner({ root, compose = path.join(root, 'local/c
   const visitorPassword = env.CLUB_PENGUIN_TEST_PASSWORD || null;
   const composeEnv = Object.fromEntries(Object.entries(env).filter(([key]) => key !== 'CLUB_PENGUIN_TEST_PASSWORD'));
   const lastSession = new Map();
+  // Native provisioning (macOS app): an absolute argv instead of Compose. Its extra
+  // environment file is read only when spawning and is never kept.
+  const nativeArgv = provisionCommand ? parseProvisionCommand(JSON.stringify(provisionCommand), 'provisionCommand') : null;
   let closed = false;
 
   function runSeed(request, { secrets = [] } = {}) {
     if (closed) return Promise.reject(new ProvisionError('The engine is stopping.', 'UNAVAILABLE'));
+    secrets = [...secrets];
     const redact = text => secrets.filter(Boolean).reduce((value, secret) => value.split(secret).join('[redacted]'), text);
     return new Promise((resolve, reject) => {
       // Only fixed arguments: requests and credentials travel on stdin.
       const args = ['run', '--rm', '--no-deps', '-T', 'provision'];
       let child;
-      try { child = spawn(compose, args, { cwd: root, stdio: ['pipe', 'pipe', 'pipe'], env: composeEnv }); }
+      try {
+        if (nativeArgv) {
+          const extra = provisionEnvFile ? readProvisionEnvFile(provisionEnvFile) : {};
+          for (const [key, value] of Object.entries(extra)) if (/PASSWORD|SECRET|TOKEN|KEY/i.test(key)) secrets.push(value);
+          // Only what the script needs: a basic process environment, the game's own
+          // CLUB_PENGUIN_* settings and the env file. No engine (CP_*) settings or tokens.
+          const base = Object.fromEntries(Object.entries(composeEnv).filter(([key]) => ['HOME', 'PATH', 'LANG', 'TMPDIR', 'USER', 'LOGNAME'].includes(key) || key.startsWith('CLUB_PENGUIN_')));
+          child = spawn(nativeArgv[0], nativeArgv.slice(1), { cwd: root, stdio: ['pipe', 'pipe', 'pipe'], env: { ...base, ...extra } });
+        } else child = spawn(compose, args, { cwd: root, stdio: ['pipe', 'pipe', 'pipe'], env: composeEnv });
+      }
       catch (error) { reject(new ProvisionError(`Could not run the provisioning service: ${error.message}`, 'UNAVAILABLE')); return; }
       children.add(child);
       let stdout = '', stderr = '';
@@ -159,7 +173,7 @@ export function createGameProvisioner({ root, compose = path.join(root, 'local/c
     if (wait > 0) await pause(wait);
     let world;
     try {
-      const opened = await session({ username, password, loginPort, worldPort, timeoutMs });
+      const opened = await session({ username, password, loginPort, worldPort, ...(gameHost ? { host: gameHost } : {}), timeoutMs });
       world = opened.world;
       if (opened.penguinId !== ownerId) throw new ProvisionError('The managed credentials logged in as a different penguin.', 'MISMATCH');
       return await prepareOwnerIgloo(world, { ownerId, recorded });

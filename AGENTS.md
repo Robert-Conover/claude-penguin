@@ -26,6 +26,7 @@ Read only what the task needs:
 | In-game bridge, Flash overlay, bridge fixtures | `local/GAME_BRIDGE.md` and `local/client-bridge/README.md` |
 | Checking gameplay claims or known gaps | `local/VALIDATION.md` and `local/validation-summary.json` |
 | Changing an upstream revision or runtime dependency | `local/sources.json`, `.gitmodules`, and the affected manifest |
+| macOS app prototype, native runtime or `./launch` | `macos/README.md`, `local/controller/README.md`, `local/native/README.md`, `local/installer/README.md`, `local/client-bridge/PATCHER.md` |
 | Contributor workflow and instruction-file maintenance | `CONTRIBUTING.md` |
 
 Search owned code first. Avoid recursively searching the multi-gigabyte media archive or dumping minified/binary assets into context unless the task requires a specific asset.

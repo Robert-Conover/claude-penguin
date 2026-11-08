@@ -2,9 +2,9 @@
 <servers>
    <environment name="live">
       <login address="{{ .Env.GAME_ADDRESS }}" port="{{ .Env.GAME_LOGIN_PORT }}" />
-      <redemption address="{{ .Env.GAME_ADDRESS }}" port="9875" />
+      <redemption address="{{ .Env.GAME_ADDRESS }}" port="{{ .Env.GAME_WORLD_PORT }}" />
       <language locale="en">
-         <server id="3100" name="Blizzard" safe="false" address="{{ .Env.GAME_ADDRESS }}" port="9875" />
+         <server id="3100" name="Blizzard" safe="false" address="{{ .Env.GAME_ADDRESS }}" port="{{ .Env.GAME_WORLD_PORT }}" />
       </language>
       <language locale="es">
          <server id="3101" name="Glaciar" safe="false" address="{{ .Env.GAME_ADDRESS }}" port="9876" />

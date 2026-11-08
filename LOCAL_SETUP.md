@@ -42,6 +42,20 @@ Node 22+, npm, a JDK, and Claude Code must be available on the host. The [agent 
 cover repository registration, permissions, session resume, and stopping this
 separate runtime. Starting the ordinary game does not launch coding agents.
 
+## Native runtime without Docker (`./launch`, experimental)
+
+`./launch` runs the same servers natively, with the controller the macOS app uses (see `macos/README.md`). It never touches the Compose stack: it has its own ports (game `http://localhost:47080/`, puffles `http://localhost:47081/`), database and data folder (`.local/launch/`). Its game accounts and progress are separate from the Compose game's.
+
+```sh
+node local/native/build-runtimes.mjs    # once: pinned Node, Python, Postgres 16, Valkey, Git into .local/runtimes (needs Xcode command line tools)
+./launch setup --mode explore           # or --mode code, which also installs and verifies the pinned Claude Code
+./launch start                          # foreground; Ctrl-C stops everything
+./launch status
+./launch stop                           # from another terminal
+```
+
+The patched in-game extensions come from `.local/client-bridge-patches/`, which `local/client-bridge/patch_generate.py` writes from the overlay builds (see `local/client-bridge/PATCHER.md`). Without it, setup reuses an existing `.local/client-bridge/` build and says so.
+
 ## Inspect and verify
 
 ```sh

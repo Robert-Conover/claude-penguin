@@ -306,6 +306,7 @@ def build():
     temporary = destination.with_suffix('.tmp')
     temporary.write_bytes(first)
     temporary.replace(destination)
+    decompressed = zlib.decompress(first[8:])
     provenance = {
         'version': 1, 'kind': 'project-adoption-module',
         'source': MODULE, 'sourceSha256': MODULE_SHA256,
@@ -313,6 +314,7 @@ def build():
         'extensionSha256': bridge_build.digest(SOURCE.read_bytes()),
         'hooks': [{'id': hook_id, 'class': PKG + cls, 'method': method} for hook_id, cls, method in HOOKS],
         'outputSha256': bridge_build.digest(first), 'deterministic': True, **summary,
+        'outputDecompressedSha256': bridge_build.digest(decompressed), 'outputDecompressedLength': len(decompressed),
     }
     (OUT / 'adoption-build.json').write_text(json.dumps(provenance, indent=2) + '\n')
     print(f'Built {destination}; {summary["unpatchedBodiesUnchanged"]} method bodies unchanged, '

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import net from 'node:net';
 import { once } from 'node:events';
-import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, rm, readFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { WebSocket } from 'ws';
@@ -97,4 +97,84 @@ test('serves preserved client, renders local addresses, proxies web services and
     await close(tcp);
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test('media, overlay and fixture roots are configurable and the world port is templated into servers.xml', async () => {
+  const base = await mkdtemp(path.join(os.tmpdir(), 'club-penguin-web-roots-'));
+  const root = path.join(base, 'resources with space');
+  const put = async (name, value) => {
+    await mkdir(path.dirname(name), { recursive: true });
+    await writeFile(name, value);
+  };
+  const media = path.join(base, 'media root'), bridge = path.join(base, 'bridge'), fixtures = path.join(base, 'public');
+  const servers = await readFile(new URL('../../servers.xml', import.meta.url), 'utf8');
+  await put(path.join(root, 'servers.xml'), servers);
+  await put(path.join(root, 'templates/vanilla-media/play/index.html.template'), '<html><head></head><body>{{ .Env.WEB_VANILLA_MEDIA }}</body></html>');
+  await put(path.join(media, 'media/play/v2/client/club_penguin.swf'), 'swf');
+  await put(path.join(media, 'play/js/original.js'), 'from-configured-play');
+  await put(path.join(bridge, 'engine.swf'), 'configured-overlay');
+  await put(path.join(bridge, 'puffle_adoption.swf'), 'configured-adoption');
+  await put(path.join(fixtures, 'fixtures.json'), 'not json');
+  await put(path.join(root, '.local/ruffle/ruffle.js'), 'ruffle');
+  // Decoys at today's default locations must be ignored.
+  await put(path.join(root, 'vanilla-media/play/js/original.js'), 'DEFAULT-PATH');
+  await put(path.join(root, '.local/client-bridge/engine.swf'), 'DEFAULT-OVERLAY');
+  const server = createLocalServer({
+    root, mediaRoot: media, clientBridgeRoot: bridge, bridgePublicRoot: fixtures, agentMode: true,
+    publicOrigin: 'http://localhost:47080', loginPort: 47112, worldPort: 47875, snowPort: 47002,
+  });
+  const port = await listen(server);
+  const origin = `http://127.0.0.1:${port}`;
+  try {
+    assert.equal(await fetch(`${origin}/js/original.js`).then(r => r.text()), 'from-configured-play');
+    assert.equal(await fetch(`${origin}/bridge/assets/engine.swf`).then(r => r.text()), 'configured-overlay');
+    assert.equal(await fetch(`${origin}/bridge/assets/puffle_adoption.swf`).then(r => r.text()), 'configured-adoption');
+    assert.equal((await fetch(`${origin}/media/play/v2/client/club_penguin.swf`)).status, 200);
+    assert.deepEqual(await fetch(`${origin}/healthz`).then(r => r.json()), { status: 'ready', clientPresent: true, rufflePresent: true });
+    // fixtures.json is read from the configured directory (invalid JSON there is a 500, not a 503 "run the script").
+    assert.equal((await fetch(`${origin}/bridge/fixtures.json`)).status, 500);
+    for (const lang of ['servers.xml', 'media/servers.xml']) {
+      const xml = await fetch(`${origin}/${lang}`).then(r => r.text());
+      assert.match(xml, /<login address="localhost" port="47112"/);
+      assert.match(xml, /<redemption address="localhost" port="47875"/);
+      assert.match(xml, /name="Blizzard"[^>]*port="47875"/);
+      assert.doesNotMatch(xml, /\{\{|9875/);
+    }
+  } finally {
+    await close(server);
+    await rm(base, { recursive: true, force: true });
+  }
+});
+
+test('the default world port still renders 9875 into servers.xml', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'club-penguin-web-default-'));
+  await mkdir(path.join(root), { recursive: true });
+  await writeFile(path.join(root, 'servers.xml'), await readFile(new URL('../../servers.xml', import.meta.url), 'utf8'));
+  const server = createLocalServer({ root });
+  const port = await listen(server);
+  try {
+    const xml = await fetch(`http://127.0.0.1:${port}/servers.xml`).then(r => r.text());
+    assert.match(xml, /<redemption address="localhost" port="9875"/);
+    assert.match(xml, /name="Blizzard"[^>]*port="9875"/);
+    assert.match(xml, /<login address="localhost" port="6112"/);
+  } finally {
+    await close(server);
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('AGENT_ORIGIN sets the home page puffle link outside agent mode', async () => {
+  const { createLocalServer } = await import('./server.mjs');
+  const fs = await import('node:fs');
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cp-agent-origin-'));
+  fs.mkdirSync(path.join(root, 'templates/vanilla-media/play'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'templates/vanilla-media/play/index.html.template'), '<a href="{{ .Env.WEB_AGENT_PLAY }}">x</a>');
+  const server = createLocalServer({ root, publicOrigin: 'http://127.0.0.1:8080', agentOrigin: 'http://localhost:47081' });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const body = await fetch(`http://127.0.0.1:${server.address().port}/`).then(r => r.text());
+    assert.match(body, /http:\/\/localhost:47081\/\?bridge=1&amp;agents=1#\/login|http:\/\/localhost:47081\/\?bridge=1&agents=1#\/login/);
+  } finally { server.close(); }
 });

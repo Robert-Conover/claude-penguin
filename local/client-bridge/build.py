@@ -104,6 +104,7 @@ def build_engine_overlay():
     temporary = destination.with_suffix('.tmp')
     temporary.write_bytes(changed)
     temporary.replace(destination)
+    decompressed = zlib.decompress(changed[8:])
     provenance = {
         'version': 1, 'kind': 'game-bridge-experiment',
         'source': 'vanilla-media/media/play/v2/client/engine.swf',
@@ -112,6 +113,7 @@ def build_engine_overlay():
                      'archiveSha256': ARCHIVE_SHA256, 'librarySha256': LIB_SHA256},
         'extensionSha256': digest((HERE / 'bridge.as').read_bytes()),
         'outputSha256': digest(changed), 'injectedTagOffset': offset, 'injectedTagBytes': size,
+        'outputDecompressedSha256': digest(decompressed), 'outputDecompressedLength': len(decompressed),
         'originalTagsUnchanged': True,
     }
     (OUT / 'build.json').write_text(json.dumps(provenance, indent=2) + '\n')
