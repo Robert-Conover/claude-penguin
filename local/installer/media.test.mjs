@@ -69,26 +69,34 @@ test('keepPrevious keeps the old version', async () => {
   } finally { await a.srv.close(); }
 });
 
-test('the current switch is atomic: readers never see it missing', async () => {
+// rename(2) swaps the link in one step, so a successful read always sees a whole
+// target, never a partial or temporary one. APFS can briefly answer a concurrent
+// lookup with ENOENT during the rename (seen on GitHub's macOS runners), so this
+// does not promise the link is never missing; the controller switches media
+// only during setup, before any server reads it.
+test('the current switch replaces the link in one step: readers see only whole targets', async () => {
   const root = tmp();
   const media = path.join(root, 'media');
   fs.mkdirSync(path.join(media, 'a'), { recursive: true });
   fs.mkdirSync(path.join(media, 'b'));
   await switchCurrent(media, 'a');
   let stop = false;
-  let misses = 0;
   let reads = 0;
+  const seen = new Set();
+  const errors = new Set();
   const reader = (async () => {
     while (!stop) {
-      try { fs.readlinkSync(path.join(media, 'current')); reads++; } catch { misses++; }
+      try { seen.add(fs.readlinkSync(path.join(media, 'current'))); reads++; } catch (e) { errors.add(e.code); }
       await new Promise((r) => setImmediate(r));
     }
   })();
   for (let i = 0; i < 300; i++) await switchCurrent(media, i % 2 ? 'a' : 'b');
   stop = true;
   await reader;
-  assert.equal(misses, 0);
   assert.ok(reads > 0);
+  assert.deepEqual([...seen].filter((target) => target !== 'a' && target !== 'b'), []);
+  assert.deepEqual([...errors].filter((code) => code !== 'ENOENT'), []);
+  assert.equal(fs.readlinkSync(path.join(media, 'current')), 'a'); // the last switch (i = 299) picks 'a'
   assert.deepEqual(fs.readdirSync(media).filter((f) => f.startsWith('.current.tmp')), []);
 });
 
