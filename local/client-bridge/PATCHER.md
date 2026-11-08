@@ -37,7 +37,7 @@ Everything is built in `<out>/.staging-*` first; if any step fails the staging d
 
 ## Serving
 
-The web server serves `engine.swf` and `puffle_adoption.swf` straight out of its bridge directory (`serveFile` resolves symlinks and checks containment against the real path of the directory, so a `current` symlink works). Start it with `CLIENT_BRIDGE_ROOT=<out>/current`, not `<out>`, and note the browser sees no change until the next request (`cache-control: no-cache`). Running servers pick up a new set on the next request after the switch.
+The web server serves `engine.swf` and `puffle_adoption.swf` straight out of its bridge directory (`serveFile` resolves symlinks and checks containment against the real path of the directory, so a `current` symlink works). Start it with `CLIENT_BRIDGE_ROOT=<out>/current`, not `<out>`, and note the browser sees no change until the next request (`cache-control: no-cache`). Running servers pick up a new set on the next request after the switch. A request that arrives during the rename itself can fail once on APFS (the lookup briefly returns ENOENT or EINVAL); it never sees a partly built set. The app patches only during setup, which the controller refuses while the game is running.
 
 ## Tests
 

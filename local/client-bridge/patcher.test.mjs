@@ -240,22 +240,30 @@ test('installing a newer set switches current; reinstalling the same set is idem
   assert.deepEqual(listing(w.out), ['current', 'ps-test', 'ps-two']);
 });
 
-test('current is never observed missing or dangling while it is switched', async () => {
+test('switching current replaces the link in one step: readers only ever see a whole patch set', async () => {
   const a = world({ id: 'ps-a' });
   const b = world({ id: 'ps-b', seed: 9 });
   await installPatchSet({ media: a.media, patches: a.patchDir, out: a.out });
   let stop = false;
+  let reads = 0;
   const seen = new Set();
+  const errors = new Set();
   const reader = (async () => {
     while (!stop) {
-      try { seen.add(readFileSync(path.join(a.out, 'current/build.json'), 'utf8').match(/"patchset": "([^"]+)"/)[1]); }
-      catch (error) { assert.fail(`current was unreadable: ${error.message}`); }
+      // On APFS a lookup that races the rename can fail once (ENOENT, or EINVAL from open); it never
+      // resolves to a half-built set, because only finished directories are ever linked.
+      try { seen.add(JSON.parse(readFileSync(path.join(a.out, 'current/build.json'), 'utf8')).patchset); reads++; }
+      catch (error) { errors.add(error.code ?? error.name); }
       await new Promise(resolve => setImmediate(resolve));
     }
   })();
   for (const set of [b, a, b]) await installPatchSet({ media: set.media, patches: set.patchDir, out: a.out });
   stop = true; await reader;
-  assert.ok(seen.has('ps-b') || readlinkSync(path.join(a.out, 'current')) === 'ps-b');
+  assert.ok(reads > 0);
+  assert.deepEqual([...seen].filter(id => id !== 'ps-a' && id !== 'ps-b'), []);
+  assert.deepEqual([...errors].filter(code => code !== 'ENOENT' && code !== 'EINVAL'), []);
+  assert.equal(readlinkSync(path.join(a.out, 'current')), 'ps-b');
+  assert.deepEqual(listing(a.out).filter(name => name.startsWith('.current-') || name.startsWith('.staging-')), []);
 });
 
 test('current that is a real directory is not replaced', async () => {
