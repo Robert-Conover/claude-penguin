@@ -1078,5 +1078,36 @@
       "agent page in a browser after the on-demand build",
       "Claude sign-in"
     ]
+  },
+  "claude_penguin_homepage_2026_11_08": {
+    "date": "2026-11-08",
+    "scope": "English homepage assets, responsive layout, and transition to the original login screen; no account mutation or live Claude execution",
+    "web_tests": {
+      "passed": 60,
+      "failed": 0,
+      "environment_note": "Initial sandbox run could not bind loopback; loopback-enabled run passed"
+    },
+    "live_http": {
+      "checks": 96,
+      "failures": 0,
+      "socket_checks": 4,
+      "socket_failures": 0
+    },
+    "browser": {
+      "viewports": [
+        "desktop default",
+        "909x1127",
+        "390x844"
+      ],
+      "artwork_loaded": true,
+      "narrow_landing_horizontal_overflow": false,
+      "original_login_form_rendered": true,
+      "signed_in": false
+    },
+    "limitations": [
+      "Live engine session not exercised",
+      "Non-English templates retain archived homepage and were not visually checked"
+    ],
+    "document": "local/VALIDATION.md#claude-penguin-homepage--november-8-2026"
   }
 }

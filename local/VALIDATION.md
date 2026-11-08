@@ -1150,3 +1150,33 @@ unchanged, 36 tests; launcher syntax (now including `local/doctor`) and
 compiler was already cached), the doctor on an Intel Mac or a Mac without
 Homebrew, a real port conflict (covered only by the fake host), and the agent page
 in a browser after the on-demand build. Doctor does not check Claude sign-in.
+
+## Claude Penguin homepage — November 8, 2026
+
+The English landing page now uses project-owned generated igloo artwork,
+Claude Penguin branding, project navigation, and separate links for ordinary
+play and the opt-in coding engine. The archived client scripts and callbacks
+are byte-for-byte unchanged. The media submodule was not edited. Other locale
+landing pages retain their archived presentation.
+
+Validation on the local macOS checkout, with only the web container rebuilt:
+
+- `npm test --prefix local/web`: all 60 tests passed. The first sandboxed attempt
+  could not bind the test HTTP server (`listen EPERM`); the loopback-enabled run
+  passed.
+- `npm run verify:http --prefix local/web`: 96 HTTP checks and four socket
+  checks passed, with no required or inventory HTTP failures.
+- Temporary local servers confirmed that both new assets return HTTP 200 with
+  the correct MIME types, ordinary play links to the engine on port 8081, and
+  engine mode retains a custom configured origin. The login hash retains the
+  current query string.
+- In-app browser: inspected desktop, 909 × 1127, and 390 × 844 landing layouts.
+  The artwork loaded and the narrow landing page had no horizontal overflow.
+  Clicking **Play the island** removed the landing sections and rendered the
+  original Ruffle login form. No account was signed in or modified.
+- `git diff --check` passed.
+
+This checks the homepage and login transition, not a new gameplay or Claude
+acceptance run. **Code with puffles** still requires the separately started host
+engine; a live engine session and non-English layouts were not exercised here.
+The image generation prompt and asset provenance are in `web/home/README.md`.
