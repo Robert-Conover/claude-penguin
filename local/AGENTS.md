@@ -42,10 +42,10 @@ npm ci --ignore-scripts --prefix local/web
 | Project adoption purchase or settlement (`project_adoption.py`) | Python host suites above; `./local/adoption-db-check` (real PostgreSQL lock ordering in a throwaway container; needs the Houdini image) |
 | Client/config serving, Ruffle version, game socket endpoints | `npm run verify:http --prefix local/web` against the running stack; browser checks for affected rendering/interaction |
 | Database seeding, game protocol, persistence | `./local/verify`; confirm existing player progress survives the affected lifecycle operation |
-| App controller, supervisor or `./launch` | `node --test local/controller/` (macOS; fake services); `./launch setup` and `./launch start` with built runtimes, then the force-kill checks in `local/controller/README.md` |
-| Native runtimes, service definitions or adapters | `node --test local/native/`; `python3 -m unittest local/test_native_adapters.py`; `node local/native/relocation-test.mjs` after `node local/native/build-runtimes.mjs`; listeners must all be 127.0.0.1 |
-| Installer or Claude Code release pin | `node --test local/installer/`; a real install into `.local/installer-test/` with a scratch `CLAUDE_CONFIG_DIR` (never sign in) |
-| Extension patches | `node --test local/client-bridge/`; `python3 local/client-bridge/patch_audit.py --strict ...` (see `PATCHER.md`) |
+| App controller, supervisor or `./launch` | `node --test local/controller/*.test.mjs` (macOS; fake services); `./launch setup` and `./launch start` with built runtimes, then the force-kill checks in `local/controller/README.md` |
+| Native runtimes, service definitions or adapters | `node --test local/native/*.test.mjs`; `python3 -m unittest local/test_native_adapters.py`; `node local/native/relocation-test.mjs` after `node local/native/build-runtimes.mjs`; listeners must all be 127.0.0.1 |
+| Installer or Claude Code release pin | `node --test local/installer/*.test.mjs`; a real install into `.local/installer-test/` with a scratch `CLAUDE_CONFIG_DIR` (never sign in) |
+| Extension patches | `node --test local/client-bridge/*.test.mjs`; `python3 local/client-bridge/patch_audit.py --strict ...` (see `PATCHER.md`) |
 | macOS app (`macos/`) | `swift build && swift test` in `macos/`; `macos/scripts/build-app.sh`; launch it against a scratch `CP_APP_DEV_DATA` |
 | Documentation or SVG only | Link/claim review, render preview, and `git diff --check` |
 

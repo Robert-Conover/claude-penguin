@@ -82,7 +82,7 @@ Every service gets only the `env` its definition lists; the controller adds noth
 ## Tests
 
 ```sh
-node --test local/controller/
+node --test local/controller/*.test.mjs
 ```
 
 Takes about 20 seconds. Tests build the shim into a scratch directory, use ephemeral ports and fake services (`fake-service.mjs`, `fake-deps.mjs`), and kill anything they started. `./launch` test hooks (used by `launch.test.mjs`): `CP_RESOURCES`, `CP_RUNTIMES`, `CP_PORTS_JSON`, `CP_CONTROLLER_DEPS` (a `--deps-module` for the controller). `--deps-module` is a test hook; production never sets it.

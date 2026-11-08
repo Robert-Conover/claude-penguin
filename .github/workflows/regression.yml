@@ -128,12 +128,12 @@ jobs:
           python3 -m unittest -v local/test_native_adapters.py
 
       - name: Test verified downloads and Claude Code release verification (offline fixtures)
-        run: node --test local/installer/
+        run: node --test local/installer/*.test.mjs
 
       - name: Test the app controller and supervisor with fake services
         # The supervisor shim uses kqueue and libproc, so it builds only on macOS.
         if: runner.os == 'macOS'
-        run: node --test local/controller/
+        run: node --test local/controller/*.test.mjs
 
       - name: Check whitespace
         # On pull requests HEAD is GitHub's merge commit; compare against its base parent.

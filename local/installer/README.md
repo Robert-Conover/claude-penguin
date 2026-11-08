@@ -92,7 +92,7 @@ stdout is JSON lines: `{"event":"progress","task":"claude"|"media","label","done
 
 ## Tests
 
-`node --test local/installer/` (42 tests, about 0.5 s, loopback servers on ephemeral ports, no network, no `gpg`). Test OpenPGP keys are generated at test time by `testlib.mjs`. One test uses the real Anthropic key with a committed real signed manifest for 2.1.311.
+`node --test local/installer/*.test.mjs` (42 tests, about 0.5 s, loopback servers on ephemeral ports, no network, no `gpg`). Test OpenPGP keys are generated at test time by `testlib.mjs`. One test uses the real Anthropic key with a committed real signed manifest for 2.1.311.
 
 ## Sources (all fetched 2026-11-08)
 
