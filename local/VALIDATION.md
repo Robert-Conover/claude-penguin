@@ -1316,3 +1316,35 @@ The record above gave the native suite as 10 tests. It had 9; this run added one
 - a signed-in Claude in the middle of a task when the engine dies, and processes that Claude's tools move into other sessions;
 - the rebuilt app bundle, which would now include the shim built for macOS 26;
 - everything listed as not verified in the record above.
+
+## macOS app prototype: rebuilt bundle — November 8, 2026
+
+This entry covers the bundle rebuilt after the fixes above, at `b9ec7fb`. CI passed on that commit: Regression on ubuntu-24.04 and macos-15, and Adoption concurrency.
+
+**Build.** `CP_HARDENED=1 macos/scripts/build-app.sh` produced a 515 MiB bundle:
+
+- The signature is still ad-hoc, now with the hardened runtime and its entitlements. This is the closest local stand-in for the Developer ID build.
+- `check-min-os.sh` passed during the build, and again when run on its own: all 156 Mach-O files run on macOS 26.0.
+- The packaged `cp-supervise` targets 26.0 and has `guard`.
+- `codesign --verify --deep --strict` passed, and all 156 Mach-O files carry the hardened-runtime flag.
+- Entitlements:
+  - node has `allow-jit` and `disable-library-validation`, the local-test set;
+  - the app has none.
+- Gatekeeper (`spctl`) rejects the bundle, as expected for an ad-hoc signature.
+- The bundle contains no media from the submodule. `templates/vanilla-media/` holds only the project's five tracked page templates.
+
+**Running it.** The app was opened in code mode on a fresh scratch data folder (path with a space) with `CP_MEDIA_DIR`:
+
+- Setup completed in about 20 s:
+  - the database was created;
+  - the extensions were built from the patches (`ps-ae39499484a07eb8`);
+  - Claude 2.1.311 was installed and verified.
+- All 18 processes ran from the bundle under the hardened runtime: the app, three node, four python3, postgres, valkey-server and eight cp-supervise.
+- All eight ports listened on 127.0.0.1 only.
+- In the web view, Ruffle 0.8.0-nightly.2026.11.3 started (wgpu-webgl) and loaded `club_penguin.swf`. The puffle page returned 200.
+- Against the app's own servers, using the scratch database's disposable accounts:
+  - `verify_game.py --login-port 47112 --world-port 47875` passed all 12 protocol checks: login, Town Center to Pet Shop, movement, purchase, adoption, igloo, puffle care and walking, furniture, and persistence after a fresh login;
+  - `verify-http.mjs` with `PUBLIC_ORIGIN=http://localhost:47080` ran 96 HTTP checks and 4 socket checks with no failures.
+- Quitting through a standard quit event stopped every service and left no ownership records or listeners.
+
+**Not verified.** The screen was locked and the owner was away. In the visible window, rendering, audio, login, room travel, adoption and terminal input are still untested. Protocol and HTTP checks do not establish interactive gameplay. The Developer ID signing, notarization, clean-Mac and signed-in Claude gates are unchanged.

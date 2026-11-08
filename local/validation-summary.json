@@ -1227,5 +1227,48 @@
       "swift test (Swift sources unchanged)"
     ],
     "document": "local/VALIDATION.md#macos-app-prototype-lifecycle-and-packaging-fixes--november-8-2026"
+  },
+  "macos_app_rebuilt_bundle_2026_11_08": {
+    "date": "2026-11-08",
+    "commit": "b9ec7fb",
+    "ci": {
+      "regression_ubuntu_24_04": "pass",
+      "regression_macos_15": "pass",
+      "adoption_concurrency": "pass"
+    },
+    "build": {
+      "signature": "ad-hoc",
+      "hardened_runtime": true,
+      "size_mib": 515,
+      "macho_files": 156,
+      "macho_hardened": 156,
+      "min_os_all": "26.0",
+      "supervisor_has_guard": true,
+      "codesign_verify_deep_strict": true,
+      "gatekeeper": "rejected (expected for ad-hoc)",
+      "media_in_bundle": false
+    },
+    "run": {
+      "mode": "code",
+      "scratch_data": true,
+      "setup_seconds": 20,
+      "processes_from_bundle": 18,
+      "listeners_loopback_only": true,
+      "ruffle_loaded_client": true,
+      "verify_game_protocol_checks": 12,
+      "verify_game_status": "passed",
+      "http_checks": 96,
+      "http_failures": 0,
+      "socket_checks": 4,
+      "socket_failures": 0,
+      "quit_cleanup": true
+    },
+    "not_checked": [
+      "visible window: rendering, audio, login, room travel, adoption, terminal input (screen locked, owner away)",
+      "Developer ID signing and notarization",
+      "clean macOS 26 install",
+      "signed-in Claude task"
+    ],
+    "document": "local/VALIDATION.md#macos-app-prototype-rebuilt-bundle--november-8-2026"
   }
 }
