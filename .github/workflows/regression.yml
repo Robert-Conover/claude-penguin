@@ -97,10 +97,10 @@ jobs:
 
       - name: Check launcher syntax
         run: |
-          for file in local/start local/stop local/compose local/verify local/agent-start local/bridge-fixtures local/adoption-db-check local/doctor; do
+          for file in local/start local/stop local/compose local/verify local/agent-start local/bridge-fixtures local/adoption-db-check local/doctor launch local/controller/build-supervise.sh; do
             sh -n "$file"
           done
-          bash -n local/web/setup-ruffle.sh
+          bash -n local/web/setup-ruffle.sh macos/scripts/build-app.sh macos/scripts/make-dmg.sh macos/scripts/notarize.sh macos/scripts/lib/check-min-os.sh
 
       - name: Test agent engine with disposable repositories and fake PTYs
         run: npm test --prefix local/engine
@@ -122,6 +122,19 @@ jobs:
       - name: Test the read-only setup doctor against a fake host
         run: python3 -m unittest -v local/test_doctor.py
 
+      - name: Test native service definitions and their adapters (no runtimes built)
+        run: |
+          node --test local/native/*.test.mjs
+          python3 -m unittest -v local/test_native_adapters.py
+
+      - name: Test verified downloads and Claude Code release verification (offline fixtures)
+        run: node --test local/installer/*.test.mjs
+
+      - name: Test the app controller and supervisor with fake services
+        # The supervisor shim uses kqueue and libproc, so it builds only on macOS.
+        if: runner.os == 'macOS'
+        run: node --test local/controller/*.test.mjs
+
       - name: Check whitespace
         # On pull requests HEAD is GitHub's merge commit; compare against its base parent.
         run: git diff --check HEAD^ HEAD
@@ -132,7 +145,10 @@ jobs:
           cat >> "$GITHUB_STEP_SUMMARY" <<'EOF'
           These checks use fake Claude PTYs, temporary repositories and worktrees, local HTTP/socket
           fixtures, client contract doubles, synthetic SWF preservation and stale-overlay rejection, and host tests
-          for game provisioning, the native igloo adapter and the setup doctor (against a fake host). The separate Linux job runs the
+          for game provisioning, the native igloo adapter and the setup doctor (against a fake host). The macOS app's
+          native-service definitions, extension patcher, installer (offline fixtures) and, on macOS, the controller
+          and supervisor (fake services) are tested; the Swift app, the built runtimes, real Claude downloads and the
+          native game servers are not exercised here. The separate Linux job runs the
           adoption purchase/settlement transactions against a PostgreSQL 16 service with the
           vendored schema, not against the running game server.
           The generated-overlay preservation test skips because this job does not

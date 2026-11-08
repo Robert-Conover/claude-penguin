@@ -9,6 +9,7 @@ import { readState, writeState, writePrivateJson } from './state.mjs';
 import { ProvisionError, VISITOR_USERNAME, VISITOR_USERNAMES } from './game.mjs';
 import { generateUsername, newOwnerCredentials, readSecrets, writeSecrets } from './game-secrets.mjs';
 import { publicationFor } from './publication.mjs';
+import { claudeEnvironment, resumeCommandFor } from './app-mode.mjs';
 import { assertGitVersion, assertReadPolicy, createGit, ensureEmptyHooksDir } from './git-policy.mjs';
 import {
   MAX_PROJECTS, createWorktree, defaultProjectName, identifyRepository, inside, inspectWorkspace, prepareWorktreeRoot,
@@ -41,16 +42,6 @@ function pidAlive(pid) {
   if (!Number.isSafeInteger(pid) || pid <= 0) return false;
   try { process.kill(pid, 0); return true; }
   catch (error) { return error.code !== 'ESRCH'; }
-}
-
-function childEnvironment() {
-  const env = { ...process.env };
-  const remove = new Set(['CLAUDECODE', 'CLAUDE_CODE_ENTRYPOINT', 'CLAUDE_CODE_SSE_PORT', 'CLAUDE_CODE_EXECPATH',
-    'CLAUDE_PID', 'CLAUDE_EFFORT', 'NO_COLOR', 'FORCE_COLOR', 'VSCODE_INJECTION', 'TERM_PROGRAM', 'TERM_PROGRAM_VERSION']);
-  for (const key of Object.keys(env)) {
-    if (remove.has(key) || /^(CLAUDE_CODE_SESSION|CLAUDE_CODE_CHILD|CLAUDE_CODE_MESSAGING|NEBULA_|AGENT_OFFICE_|CLAUDE_PENGUIN_|CP_ENGINE_)/.test(key)) delete env[key];
-  }
-  return { ...env, TERM: 'xterm-256color', COLORTERM: 'truecolor' };
 }
 
 function secretMatches(expected, supplied) {
@@ -208,7 +199,7 @@ function validateSaved(state, visitorUsername) {
  * cap queue visibly and run when a slot frees.
  */
 export async function createManager({ stateDir, onEvent = () => {}, claudePath = 'claude', ptySpawn = nodePty.spawn, hookBaseUrl,
-  startupTimeoutMs = 12000, worktreeRoot = resolveWorktreeRoot(), gitEnv = {}, gitVersionText,
+  startupTimeoutMs = 12000, worktreeRoot = resolveWorktreeRoot(), gitEnv = {}, gitBinary = 'git', gitVersionText, claudeRuntime = null,
   game = null, publisher = null, onWarning = () => {}, caps = { perIgloo: 3, total: 6 }, clock = () => Date.now() } = {}) {
   // `game` is the injectable provisioner (createGameProvisioner in game.mjs, or a
   // test fake). Without it, setup stops at game-pending. `publisher` is the
@@ -221,7 +212,7 @@ export async function createManager({ stateDir, onEvent = () => {}, claudePath =
   const visitorUsername = game?.visitorUsername ?? VISITOR_USERNAME;
   const state = readState(stateDir);
   const hooksDir = ensureEmptyHooksDir(path.join(stateDir, 'git-empty-hooks'));
-  const git = createGit({ hooksDir, env: gitEnv });
+  const git = createGit({ hooksDir, env: gitEnv, binary: gitBinary });
   assertGitVersion(gitVersionText ?? await git.text(stateDir, ['--version']));
   validateSaved(state, visitorUsername);
 
@@ -366,7 +357,7 @@ export async function createManager({ stateDir, onEvent = () => {}, claudePath =
     return { id: worker.id, projectId: worker.projectId, name: worker.name, sessionId: worker.sessionId, established: worker.established,
       createdAt: worker.createdAt, taskHistory: copy(worker.taskHistory), archived: copy(worker.archived),
       originalPath: worker.workspace.path, baseCommit: worker.workspace.baseCommit, workspaceKind: worker.workspace.kind,
-      resumeCommand: worker.established ? `cd ${shellQuote(worker.workspace.path)} && claude --resume ${worker.sessionId}` : null };
+      resumeCommand: worker.established ? resumeCommandFor({ workspacePath: worker.workspace.path, sessionId: worker.sessionId, claudePath, configDir: claudeRuntime?.configDir ?? null, disableUpdates: claudeRuntime?.disableUpdates === true }) : null };
   }
   function adoptionView(adoption) {
     return { ...Object.fromEntries(['id', 'projectId', 'workerId', 'ownerId', 'state', 'error', 'code', 'createdAt', 'updatedAt', 'expiresAt'].map(key => [key, adoption[key] ?? null])),
@@ -1061,8 +1052,13 @@ export async function createManager({ stateDir, onEvent = () => {}, claudePath =
       worker.exitCode = undefined;
       worker.outsideWorkspace = null;
       update(worker, 'starting', worker.established ? 'Resuming the saved Claude conversation.' : 'Starting Claude Code.');
-      const proc = ptySpawn(claudePath, args, { name: 'xterm-256color', cols: worker.cols, rows: worker.rows, cwd: worker.workspace.path,
-        env: { ...childEnvironment(), CLAUDE_PENGUIN_HOOK_URL: hookUrl.href,
+      // In the app, Claude runs through `cp-supervise guard` (exec in place: same PID and terminal), which
+      // stops its process group if this engine is killed and so cannot stop it itself.
+      const [file, argv] = claudeRuntime?.ptyGuard
+        ? [claudeRuntime.ptyGuard, ['guard', '--owner-pid', String(process.pid), '--grace-ms', '1500', '--', claudePath, ...args]]
+        : [claudePath, args];
+      const proc = ptySpawn(file, argv, { name: 'xterm-256color', cols: worker.cols, rows: worker.rows, cwd: worker.workspace.path,
+        env: { ...(claudeRuntime ? claudeRuntime.environment() : claudeEnvironment()), CLAUDE_PENGUIN_HOOK_URL: hookUrl.href,
           CLAUDE_PENGUIN_WORKER_ID: worker.id, CLAUDE_PENGUIN_HOOK_TOKEN: runtime.token } });
       if (!Number.isSafeInteger(proc.pid) || proc.pid <= 0) { proc.kill(); throw new Error('The terminal did not provide a valid process ID.'); }
       runtime.pty = proc;

@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- LOCAL TESTING ONLY. Used by build-app.sh when CP_HARDENED=1 and signing ad-hoc.
+         An ad-hoc signature has no Team ID, so library validation rejects every nested .node/.so/.dylib.
+         A Developer ID build signs everything with one Team ID and does not need this. -->
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+</dict>
+</plist>

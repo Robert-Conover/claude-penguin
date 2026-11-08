@@ -49,7 +49,14 @@ function dashPath(urlPath) {
 export function createLocalServer(options = {}) {
   const root = path.resolve(options.root ?? process.env.PROJECT_ROOT ?? path.join(here, '../..'));
   const ruffleRoot = path.resolve(options.ruffleRoot ?? process.env.RUFFLE_ROOT ?? path.join(root, '.local/ruffle'));
+  // Where the archived game media, the derived overlay SWFs and the bridge fixtures live.
+  // Defaults are today's paths under the project root; the native runtime points them at app data.
+  const mediaBase = path.resolve(options.mediaRoot ?? process.env.MEDIA_ROOT ?? path.join(root, 'vanilla-media'));
+  const clientBridgeRoot = path.resolve(options.clientBridgeRoot ?? process.env.CLIENT_BRIDGE_ROOT ?? path.join(root, '.local/client-bridge'));
+  const bridgePublicRoot = path.resolve(options.bridgePublicRoot ?? process.env.BRIDGE_PUBLIC_ROOT ?? path.join(root, '.local/bridge-public'));
   const publicOrigin = new URL(options.publicOrigin ?? process.env.PUBLIC_ORIGIN ?? 'http://localhost:8080').origin;
+  // Where the home page's "Code with puffles" button points (the agent engine's page).
+  const agentOrigin = new URL(options.agentOrigin ?? process.env.AGENT_ORIGIN ?? 'http://localhost:8081').origin;
   const publicUrl = new URL(publicOrigin);
   const gameAddress = publicUrl.hostname;
   const loginPort = Number(options.loginPort ?? process.env.LOGIN_PORT ?? 6112);
@@ -58,8 +65,8 @@ export function createLocalServer(options = {}) {
   const dashOrigin = options.dashOrigin ?? process.env.DASH_ORIGIN ?? 'http://dash:3000';
   const env = {
     WEB_VANILLA_PLAY: publicOrigin, WEB_VANILLA_MEDIA: `${publicOrigin}/media`,
-    WEB_AGENT_PLAY: `${options.agentMode ? publicOrigin : 'http://localhost:8081'}/?bridge=1&agents=1#/login`,
-    GAME_ADDRESS: gameAddress, GAME_LOGIN_PORT: String(loginPort),
+    WEB_AGENT_PLAY: `${options.agentMode ? publicOrigin : agentOrigin}/?bridge=1&agents=1#/login`,
+    GAME_ADDRESS: gameAddress, GAME_LOGIN_PORT: String(loginPort), GAME_WORLD_PORT: String(worldPort),
   };
   const socketTargets = new Map([
     ['/ws/login', { host: options.loginHost ?? process.env.LOGIN_HOST ?? 'login', port: loginPort }],
@@ -77,8 +84,8 @@ export function createLocalServer(options = {}) {
     ],
   };
   const injectRuffle = `<script>window.RufflePlayer=window.RufflePlayer||{};window.RufflePlayer.config=${JSON.stringify(ruffleConfig)};</script>\n<script src="/ruffle/ruffle.js"></script>`;
-  const playRoot = path.join(root, 'vanilla-media/play');
-  const mediaRoot = path.join(root, 'vanilla-media/media');
+  const playRoot = path.join(mediaBase, 'play');
+  const mediaRoot = path.join(mediaBase, 'media');
   const wsServer = new WebSocketServer({ noServer: true, maxPayload: 4 * 1024 * 1024, perMessageDeflate: false });
   const sockets = new Set();
 
@@ -165,7 +172,7 @@ export function createLocalServer(options = {}) {
       // The experiment is opt-in per page. Never replace archived assets globally.
       if (urlPath === '/bridge/fixtures.json') {
         try {
-          const manifest = await readFile(path.join(root, '.local/bridge-public/fixtures.json'), 'utf8');
+          const manifest = await readFile(path.join(bridgePublicRoot, 'fixtures.json'), 'utf8');
           return reply(res, 200, JSON.stringify(validateFixtures(JSON.parse(manifest))), types['.json'], req.method);
         } catch (error) {
           if (error.code !== 'ENOENT') throw error;
@@ -173,12 +180,12 @@ export function createLocalServer(options = {}) {
         }
       }
       if (urlPath === '/bridge/assets/engine.swf') {
-        return await serveFile(req, res, path.join(root, '.local/client-bridge'), '/' + path.basename(urlPath));
+        return await serveFile(req, res, clientBridgeRoot, '/' + path.basename(urlPath));
       }
       // The derived adoption module exists only for the agent page (8081). The
       // ordinary page keeps the archived module and native p#pn adoption.
       if (urlPath === '/bridge/assets/puffle_adoption.swf' && options.agentMode === true) {
-        return await serveFile(req, res, path.join(root, '.local/client-bridge'), '/' + path.basename(urlPath));
+        return await serveFile(req, res, clientBridgeRoot, '/' + path.basename(urlPath));
       }
       if (/^\/bridge\/(bootstrap\.js|panel\.mjs|model\.mjs|native-menu\.mjs|adoption\.mjs|panel\.css)$/.test(urlPath)) {
         return await serveFile(req, res, path.join(here, 'bridge'), '/' + path.basename(urlPath));

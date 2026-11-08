@@ -1,0 +1,11 @@
+asyncpg==0.32.0
+bcrypt==5.0.0
+cacheout==0.17.0
+defusedxml==0.7.1
+gino==1.0.1
+pytz==2026.6
+redis==7.4.1
+SQLAlchemy==1.3.24
+ujson==6.1.0
+uvloop==0.23.0
+setuptools==80.9.0

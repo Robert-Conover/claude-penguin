@@ -1,0 +1,69 @@
+{
+  "schema": 1,
+  "platform": "darwin-arm64",
+  "deploymentTarget": "26.0",
+  "recipeVersion": 1,
+  "installPrefix": "/opt/claude-penguin",
+  "node": {
+    "version": "24.22.2",
+    "url": "https://nodejs.org/dist/v24.22.2/node-v24.22.2-darwin-arm64.tar.gz",
+    "sha256": "aa9549349e47dffaa42dcf95d6e06ade8c4bdafc980979883b88767670df385a",
+    "checksumSource": "https://nodejs.org/dist/v24.22.2/SHASUMS256.txt",
+    "license": "MIT (plus bundled third-party notices in LICENSE)"
+  },
+  "pythons": [
+    {
+      "id": "python",
+      "version": "3.11.18",
+      "release": "20261026",
+      "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20261026/cpython-3.11.18%2B20261026-aarch64-apple-darwin-install_only.tar.gz",
+      "file": "cpython-3.11.18+20261026-aarch64-apple-darwin-install_only.tar.gz",
+      "sha256": "cba3455e18516fbe8668cff2820c9b6a53447c552d612443c2b2fb60d390a908",
+      "checksumSource": "https://github.com/astral-sh/python-build-standalone/releases/download/20261026/SHA256SUMS",
+      "license": "PSF-2.0 (CPython); python-build-standalone is MPL-2.0; bundled libraries carry their own licenses (see python/share/licenses or PYTHON.json)"
+    }
+  ],
+  "postgres": {
+    "version": "16.15",
+    "url": "https://ftp.postgresql.org/pub/source/v16.15/postgresql-16.15.tar.bz2",
+    "sha256": "c1575341fa7bd40f5274ea465b34390f4dc64cdd0770af327005caaeb9f6b7ed",
+    "checksumSource": "https://ftp.postgresql.org/pub/source/v16.15/postgresql-16.15.tar.bz2.sha256",
+    "license": "PostgreSQL License",
+    "configure": ["--without-readline", "--without-icu", "--without-zlib", "--without-openssl", "--disable-rpath", "--disable-nls"],
+    "keepBinaries": ["postgres", "initdb", "pg_ctl", "pg_isready", "psql", "pg_dump", "pg_dumpall", "pg_restore", "pg_controldata"]
+  },
+  "valkey": {
+    "version": "8.1.11",
+    "url": "https://github.com/valkey-io/valkey/archive/refs/tags/8.1.11.tar.gz",
+    "file": "valkey-8.1.11.tar.gz",
+    "sha256": "db3642dfc2fb24e42313b9e9c1557cf0160acce3bf2cd366ce654ce291133b50",
+    "checksumSource": "recorded when first fetched: GitHub tag archives carry no published checksum (the release has no assets)",
+    "license": "BSD-3-Clause",
+    "make": ["BUILD_TLS=no", "MALLOC=libc"]
+  },
+  "git": {
+    "version": "2.56.0",
+    "url": "https://www.kernel.org/pub/software/scm/git/git-2.56.0.tar.xz",
+    "sha256": "26c56c296b38c0695b26fa95f475f1d01704d2d38e73465ca30b0b2f5dc789d3",
+    "checksumSource": "https://www.kernel.org/pub/software/scm/git/sha256sums.asc",
+    "license": "GPL-2.0-only (offer the corresponding source: the URL above is the exact source)",
+    "make": ["RUNTIME_PREFIX=1", "NO_GETTEXT=1", "NO_TCLTK=1", "NO_PERL=1", "NO_PYTHON=1", "NO_RUST=1", "NO_EXPAT=1", "NO_INSTALL_HARDLINKS=1", "INSTALL_SYMLINKS=1"]
+  },
+  "envs": {
+    "houdini": {
+      "python": "python",
+      "requirements": "requirements/houdini.txt",
+      "sdist": ["SQLAlchemy"]
+    },
+    "dash": {
+      "python": "python",
+      "requirements": "requirements/dash.txt",
+      "sdist": ["multidict", "SQLAlchemy", "websockets"]
+    },
+    "snowflake": {
+      "python": "python",
+      "requirements": "requirements/snowflake.txt",
+      "sdist": []
+    }
+  }
+}

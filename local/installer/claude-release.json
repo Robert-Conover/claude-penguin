@@ -1,0 +1,13 @@
+{
+  "version": "2.1.311",
+  "channel": "stable",
+  "observedAt": "2026-11-08",
+  "platform": "darwin-arm64",
+  "sha256": "85d8c08707fcfd1e78ffa0204eefbc6ec9e4fe22f375fb2767ef85d957ed3161",
+  "size": 276185504,
+  "manifestSha256": "d456e7293d621e6e09dd73b1d2a112bef62dae08d1ee44c1065356e64da65c0d",
+  "teamId": "Q6L2SF6YDW",
+  "authority": "Developer ID Application: Anthropic PBC",
+  "releaseBase": "https://downloads.claude.ai/claude-code-releases",
+  "signingKeyFingerprint": "31DDDE24DDFAB679F42D7BD2BAA929FF1A7ECACE"
+}
