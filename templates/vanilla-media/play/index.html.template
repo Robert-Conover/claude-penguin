@@ -16,10 +16,11 @@
   xmlns:video="http://ogp.me/ns/video#">
 <head profile="http://www.w3.org/1999/xhtml/vocab">
   <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
-<meta name="google-site-verification" content="7SDU81jjttuSoN8lxj9rUV265par6NaICtumeryTRYQ" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="description" content="Your repo gets an igloo. Your coding agent is a puffle. Build something with Claude Penguin, a local Club Penguin playground." />
 <link rel="shortcut icon" href="/assets/sites/play.clubpenguin.com/themes/snowball/favicon.ico" type="image/vnd.microsoft.icon" />
-  <title>Play Now! | Club Penguin</title>
-  <link rel="alternate" type="application/rss+xml" title="Club Penguin - What's New" href="http://www.clubpenguin.com/whats-new/feed/all" /> 
+  <title>Claude Penguin | Your code. Your island.</title>
+
   <link type="text/css" rel="stylesheet" href="/sites/default/files/css/css_cawUUwTb6FTEpTC7UYZQwdcaTVHlWORZjZlFNt1mXNc.css" media="all" />
 <link type="text/css" rel="stylesheet" href="/sites/default/files/css/css_5FxwTVZs9EtbjcExytQ5ndQqt-X7PFwK3mD2o7QXYH0.css" media="all" />
 <link type="text/css" rel="stylesheet" href="/sites/default/files/css/css_Ithmjuj4ePlnkLrL_GIuS3TsGEoCIelrKOCUPBOfhJ8.css" media="all" />
@@ -40,76 +41,61 @@
 <!--<![endif]-->
  
   <!--[if lt IE 9]><script src="http://html5shiv.googlecode.com/svn/trunk/html5.js"></script><![endif]-->
+<link rel="stylesheet" href="/home/home.css" />
 </head>
-<body class="html not-front not-logged-in page-play full-page-flow i18n-en context-play snowball">
+<body class="html not-front not-logged-in page-play full-page-flow i18n-en context-play snowball claude-penguin">
   <div class="region region-page-top" id="region-page-top">
   <div class="region-inner region-page-top-inner">
       </div>
 </div>  <div class="page clearfix" id="page">
 
             <header id="section-header" class="section section-header">
-  <div id="affiliate-header" style="display: none;">
-    <a id="affiliate-header-link" href="http://www.clubpenguin.com/?home=return"><img src="/sites/play.clubpenguin.com/themes/snowball/img/affiliate-cp-logo.png"></a>
-</div>
-<nav>
-    <a id="home-link" href="http://www.clubpenguin.com/?home=return">Home</a>
-    <ul class="mainnav" itemscope="itemscope" itemtype="http://www.schema.org/SiteNavigationElement">
-        <li itemprop="name"><a itemprop="url" href="https://secured.clubpenguin.com/membership" class="cpmenu">Membership</a></li>
-        <li itemprop="name"><a itemprop="url" href="http://www.clubpenguin.com/whats-new" class="cpmenu">What's New</a></li>
-        <li itemprop="name"><a itemprop="url" href="http://www.clubpenguin.com/safety" class="cpmenu">Safety</a></li>
-        <li itemprop="name"><a itemprop="url" href="http://www.clubpenguin.com/parents" class="cpmenu">Parents</a></li>
-        <li itemprop="name"><a itemprop="url" href="http://www.clubpenguin.com/fun-stuff" class="cpmenu">Fun Stuff</a></li>
-        <li itemprop="name"><a itemprop="url" href="https://www.clubpenguinisland.com/" class="cpmenu">Apps</a></li>
-        <li itemprop="name"><a itemprop="url" href="http://help.disney.com/clubpenguin" class="cpmenu">Help</a></li>
+<nav aria-label="Main navigation">
+    <a id="home-link" href="/" aria-label="Claude Penguin home">Home</a>
+    <ul class="mainnav">
+        <li><a href="https://github.com/Robert-Conover/claude-penguin/blob/dev/docs/first-task.md">Your first puffle</a></li>
+        <li><a href="https://github.com/Robert-Conover/claude-penguin#product-roadmap">What's new</a></li>
+        <li><a href="https://github.com/Robert-Conover/claude-penguin">GitHub</a></li>
+        <li><a href="https://github.com/Robert-Conover/claude-penguin/blob/dev/LOCAL_SETUP.md">Help</a></li>
     </ul>
-    <div id="language-select">
-        <div>
-            <a id="language-select-link" class="top-level" href="#" tabindex="1">Language Select<span class="indicator"></span></a>
-            <div id="bottom-languages">
-                <a class="first" href="/">ENGLISH</a>
-                <a href="/es/">ESPA&Ntilde;OL</a>
-                <a href="/fr/">FRAN&Ccedil;AIS</a>
-                <a class="last" href="/pt/">PORTUGU&Ecirc;S</a>
-            </div>
-        </div>
-    </div>
+    <span class="home-nav-note">A little code. A lot of chill.</span>
     <ul class="navbar navbar-right">
-        <li><a id="logout-link" class="logout" href="/penguin/logout"><img src="/sites/play.clubpenguin.com/themes/snowball/img/icon-logout.png"> Log off</a></li>
+        <li><a id="logout-link" class="logout" href="/penguin/logout"><img src="/sites/play.clubpenguin.com/themes/snowball/img/icon-logout.png" alt=""> Log off</a></li>
     </ul>
 </nav>
 <div id="banner"></div></header>    
     <main id="content">
-        <section id="billboards">
-            <div id="membership-buttons">
-                <a class="membership-button" href="https://secured.clubpenguin.com/membership">About Membership</a>
+        <section id="billboards" aria-labelledby="home-title">
+            <img class="home-art" src="/home/igloo-workshop.png" width="1672" height="941" fetchpriority="high" alt="A blue penguin and two cheerful puffles coding together in a cozy, snow-covered igloo." />
+            <div class="home-copy">
+                <p class="home-eyebrow">Welcome to your own little island</p>
+                <h1 id="home-title"><span>CLAUDE</span><span>PENGUIN</span></h1>
+                <h2>Big ideas. Little puffles.</h2>
+                <p class="home-description">Your repo gets an igloo.<br />Your coding agent is a puffle.</p>
             </div>
-            <img src="/assets/December-CPI-Announcement-Billboard.jpg">
         </section>
-        <section id="actions">
-            <img class="cp-logo" src="/assets/sites/default/themes/snowball/img/club-penguin-logo.png" />
-            <div id="create">
-                <a id="penguin-create" class="action-button cp-button-blue" href="/penguin/create">Create a Penguin</a>
+        <section id="actions" aria-label="Join the island">
+            <div class="home-buttons">
+                <a class="home-button home-button-gold" href="{{ .Env.WEB_AGENT_PLAY }}">Code with puffles <span aria-hidden="true">&#8250;</span></a>
+                <a id="penguin-login" class="home-button" href="#/login">Play the island <span aria-hidden="true">&#8250;</span></a>
             </div>
-            <div id="login">
-                <a id="penguin-login" class="action-button cp-button-blue cp-mobile-pop" href="/#/login">Login</a>
-            </div>
+            <p class="home-start"><a id="penguin-create" href="/penguin/create">Create a Penguin</a><span aria-hidden="true"> &middot; </span><a href="https://github.com/Robert-Conover/claude-penguin#play-locally">Set up your coding puffles</a></p>
+            <ol class="home-steps" aria-label="How Claude Penguin works">
+                <li><span class="step-number">1</span><span><strong>Pick a project</strong>Give your repo an igloo.</span></li>
+                <li><span class="step-number">2</span><span><strong>Meet your puffle</strong>A little buddy for your big ideas.</span></li>
+                <li><span class="step-number">3</span><span><strong>Build &amp; waddle</strong>Give it a task. Explore the island.</span></li>
+            </ol>
         </section>
     </main>
 
             <footer id="section-footer" class="section section-footer">
-  <p id="name">&copy; Disney. Club Penguin&trade;</p>
-<p id="footer-updated">
-	<a  target="_blank" href="http://www.clubpenguin.com/terms-of-use/">Terms of Use</a> 
-	&nbsp;| &nbsp; <a  target="_blank" href="http://www.clubpenguin.com/privacy-policy/">Privacy Policy</a>
-	&nbsp;| &nbsp; <a  target="_blank" href="https://disneyprivacycenter.com/kids-privacy-policy/english/">Children's Online Privacy Policy</a>
-	&nbsp;| &nbsp; <a  target="_blank" href="https://disneyprivacycenter.com/notice-to-california-residents/">Your California Privacy Rights</a>
-	&nbsp;| &nbsp; <a  target="_blank" href="http://help.disney.com/clubpenguin/Contact?productCode=Club-Penguin">support@clubpenguin.com</a> 
-</p>
-<p id="footer-legal">The service provider for this site is Disney Canada Inc., located at 500-1628 Dickson Avenue, Kelowna, British Columbia, Canada V1Y 9X1. Company Registration #1879215 VAT#EU826012025</p>
+  <p id="name">Made for the joy of building. And waddling.</p>
+  <p id="footer-updated"><a href="https://github.com/Robert-Conover/claude-penguin">About the project</a> &middot; <a href="https://github.com/Robert-Conover/claude-penguin/blob/dev/README.md#credits--contributing">Credits &amp; contributing</a></p>
+  <p id="footer-legal">Claude Penguin is an unofficial fan project, unaffiliated with Disney or Anthropic.<br />Club Penguin and its original game artwork belong to Disney.</p>
 </footer>        
 </div>
 <script type="application/ld+json">
-    { "@context": "http://schema.org", "@type": "WebSite", "name": "Club Penguin", "url": "/" }
+    { "@context": "http://schema.org", "@type": "WebSite", "name": "Claude Penguin", "url": "/" }
 </script>
   <div class="region region-page-bottom" id="region-page-bottom">
   <div class="region-inner region-page-bottom-inner">

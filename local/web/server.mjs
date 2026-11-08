@@ -58,6 +58,7 @@ export function createLocalServer(options = {}) {
   const dashOrigin = options.dashOrigin ?? process.env.DASH_ORIGIN ?? 'http://dash:3000';
   const env = {
     WEB_VANILLA_PLAY: publicOrigin, WEB_VANILLA_MEDIA: `${publicOrigin}/media`,
+    WEB_AGENT_PLAY: `${options.agentMode ? publicOrigin : 'http://localhost:8081'}/?bridge=1&agents=1#/login`,
     GAME_ADDRESS: gameAddress, GAME_LOGIN_PORT: String(loginPort),
   };
   const socketTargets = new Map([
@@ -181,6 +182,9 @@ export function createLocalServer(options = {}) {
       }
       if (/^\/bridge\/(bootstrap\.js|panel\.mjs|model\.mjs|native-menu\.mjs|adoption\.mjs|panel\.css)$/.test(urlPath)) {
         return await serveFile(req, res, path.join(here, 'bridge'), '/' + path.basename(urlPath));
+      }
+      if (['/home/home.css', '/home/igloo-workshop.png'].includes(urlPath)) {
+        return await serveFile(req, res, path.join(here, 'home'), '/' + path.basename(urlPath));
       }
       if (['/', '/index.html', '/en/', '/en/index.html', '/es/', '/fr/', '/pt/'].includes(urlPath)) {
         const lang = /^\/(es|fr|pt)\//.exec(urlPath)?.[1];
