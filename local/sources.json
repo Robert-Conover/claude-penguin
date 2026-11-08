@@ -7,7 +7,16 @@
       "name": "wand",
       "url": "https://github.com/solero/wand.git",
       "commit": "030c2a59c668adee94b12f5b9952a96b56e26447",
-      "commit_date": "2026-10-30T04:43:24Z"
+      "commit_date": "2026-10-30T04:43:24Z",
+      "excluded_paths": [
+        ".env",
+        "docker-compose.yml",
+        "icons/",
+        "install.sh",
+        "wait-for-postgres.sh",
+        "web/Dockerfile"
+      ],
+      "excluded_reason": "Wand's own installer and Compose stack, removed on 2026-11-08. The local stack never used them (it builds from local/compose.yml and local/web/), and Wand's Compose file publishes PostgreSQL on every network interface. templates/ and servers.xml are still used and remain."
     },
     {
       "name": "houdini",

@@ -45,19 +45,21 @@ The supported setup is **macOS with Colima**, validated on Apple Silicon. The la
 brew install colima docker docker-compose
 git clone https://github.com/Robert-Conover/claude-penguin.git
 cd claude-penguin
+./local/doctor
 ./local/start
 ```
 
+`./local/doctor` only looks: it lists anything missing on your Mac, with the command that fixes it, and changes nothing.
+
 First launch fetches about **4.1 GB of archived game media** plus Ruffle and builds the services. For ordinary play, open [localhost:8080](http://localhost:8080/) and sign in as `player` with the disposable local password `PenguinLocal2026!`.
 
-**2. Turn on the puffles.** You’ll need **Git 2.48+, Python 3.9+, Node.js 22+, npm, a JDK**, and [Claude Code](https://code.claude.com/docs/en/setup) signed in on your Mac. From the same repository, with the game running:
+**2. Turn on the puffles.** You’ll need **Git 2.48+, Python 3.9+, Node.js 22+, npm, a JDK**, and [Claude Code](https://code.claude.com/docs/en/setup) signed in on your Mac; `./local/doctor --agents` checks all of them. From the same repository, with the game running:
 
 ```sh
-python3 local/client-bridge/build.py
 ./local/agent-start
 ```
 
-Keep that terminal open. Open [the agent island on localhost:8081](http://localhost:8081/?bridge=1&agents=1#/login), sign in as **`bridgecheck`** with the same disposable password, and choose **Blizzard**. On a new account, finish the game's introductory tour if its dialogs cover the controls. Open **Igloos → Add project** and enter the path of a local repo with at least one commit, then adopt a puffle for it at the Pet Shop. For a first visit, try **[Puffle Postcards](docs/first-task.md)**: one small bug, one failing test, and a diff you can check yourself.
+The first run builds the in-game puffle menu from the archived client (it downloads a checksum-pinned compiler and needs the JDK), and later runs rebuild it only when its source changes. Keep that terminal open. Open [the agent island on localhost:8081](http://localhost:8081/?bridge=1&agents=1#/login), sign in as **`bridgecheck`** with the same disposable password, and choose **Blizzard**. On a new account, finish the game's introductory tour if its dialogs cover the controls. Open **Igloos → Add project** and enter the path of a local repo with at least one commit, then adopt a puffle for it at the Pet Shop. For a first visit, try **[Puffle Postcards](docs/first-task.md)**: one small bug, one failing test, and a diff you can check yourself.
 
 **Done for the day?** Press Ctrl+C in the engine terminal, then run `./local/stop` to stop the island and keep your progress. [Game setup & troubleshooting](LOCAL_SETUP.md) · [Agent setup & permissions](local/AGENT_ENGINE.md)
 
