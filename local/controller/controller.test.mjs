@@ -172,7 +172,12 @@ describe('controller lifecycle', () => {
     await waitFor(() => c.eventsOf('service', e => e.name === 'valkey' && e.state === 'exited').length, { what: 'valkey exited event' });
     const exited = c.eventsOf('service', e => e.name === 'valkey' && e.state === 'exited')[0];
     assert.equal(exited.code, 3);
-    assert.ok(c.eventsOf('problem', e => e.code === 'SERVICE_FAILED' && e.detail.name === 'valkey').length === 1);
+    // Emitted in the same tick as the exited event, but stdout to a pipe is asynchronous on macOS,
+    // so the line can arrive in a later chunk.
+    const failed = () => c.eventsOf('problem', e => e.code === 'SERVICE_FAILED' && e.detail.name === 'valkey');
+    await waitFor(() => failed().length, { what: 'SERVICE_FAILED problem for valkey' });
+    await sleep(200);
+    assert.equal(failed().length, 1, 'reported once');
     assert.equal((await c.ok('status')).state, 'error');
     await sleep(700);
     assert.equal(orderLog(env).filter(e => e.kind === 'start' && e.name === 'valkey').length, 1, 'not restarted');
