@@ -1264,11 +1264,35 @@
       "quit_cleanup": true
     },
     "not_checked": [
-      "visible window: rendering, audio, login, room travel, adoption, terminal input (screen locked, owner away)",
+      "audio by ear",
       "Developer ID signing and notarization",
       "clean macOS 26 install",
       "signed-in Claude task"
     ],
-    "document": "local/VALIDATION.md#macos-app-prototype-rebuilt-bundle--november-8-2026"
+    "document": "local/VALIDATION.md#macos-app-prototype-rebuilt-bundle--november-8-2026",
+    "window_checks": {
+      "owner_present": true,
+      "input": "full-screen control (real keystrokes)",
+      "rendering": true,
+      "login": [
+        "localcheck",
+        "bridgecheck"
+      ],
+      "room_travel": [
+        "Dock",
+        "Plaza",
+        "Puffle Park",
+        "Town",
+        "Pet Shop",
+        "project igloo"
+      ],
+      "project_added_from_ui": true,
+      "adoption": "blue puffle for project igloo via patched adoption module (scratch coins)",
+      "terminal_input": "Claude 2.1.311 first-run picker responded to a real key; stopped before sign-in",
+      "session_stop_clean": true,
+      "quit_cleanup": true,
+      "audio": "music unmuted, no unmute overlay; not checked by ear",
+      "background_input_note": "background keystrokes dropped characters; real keystrokes did not"
+    }
   }
 }

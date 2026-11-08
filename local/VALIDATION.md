@@ -1348,3 +1348,25 @@ This entry covers the bundle rebuilt after the fixes above, at `b9ec7fb`. CI pas
 - Quitting through a standard quit event stopped every service and left no ownership records or listeners.
 
 **Not verified.** The screen was locked and the owner was away. In the visible window, rendering, audio, login, room travel, adoption and terminal input are still untested. Protocol and HTTP checks do not establish interactive gameplay. The Developer ID signing, notarization, clean-Mac and signed-in Claude gates are unchanged.
+
+**In the app window**, later the same evening. The owner was at the Mac. The same bundle was reopened on the same scratch data, and full-screen control sent real keystrokes. Each step below was seen in the window:
+
+- **Rendering.** Ruffle drew the game inside the puffle page: the login screen, the loading animation, the server list, then the Dock, Plaza, Puffle Park and Town rooms. The page overlay ("Your Igloos", "Work") and the extension's in-game "Work" and "Igloos" buttons from the patched `engine.swf` drew over it.
+- **Login.** `localcheck` and then `bridgecheck` (the scratch database's visitor) logged in and joined Blizzard. A new account gets the intro tour, which was clicked through.
+- **Room travel.** The map and the doors moved the penguin through the rooms above and into the Pet Shop.
+- **Adoption.** The project was added from "Your Igloos" with a disposable repository whose path contains a space; its igloo appeared as "Ready". In the Pet Shop, the patched adoption module asked which igloo the puffle would join. A blue puffle named Waddle was adopted for 400 of the scratch account's coins. The game then showed "Waddle is waiting for you in Puffle Check" and entered the project igloo.
+- **Terminal.**
+  - Start / Resume launched Claude Code v2.1.311 through `cp-supervise guard`, in the app's scratch configuration.
+  - "Open Claude" showed its first-run theme picker in the game's terminal.
+  - A real Down key moved the selection. The panel then reported that Claude needed a response.
+  - Testing stopped there, before any sign-in.
+  - Stop session ended the process, and no Claude or guard process remained.
+- Quitting stopped every service and left no ownership records or listeners.
+
+Notes:
+
+- The game's Settings showed music unmuted, and Ruffle never showed its unmute overlay. Whether sound actually played was not checked by ear.
+- Keystrokes sent to the window while it was in the background lost characters, both in the HTML form and in the game. Real keystrokes with the app in front lost none. The losses are attributed to the background input method, not the app.
+- The browser console showed only the archived client's known messages: a 405 for its `/datatech/serverlog` telemetry, and a missing `AS2loadingScreen` symbol.
+
+Still open: audio by ear, Developer ID signing and notarization, a clean macOS 26 install, and a signed-in Claude task.
