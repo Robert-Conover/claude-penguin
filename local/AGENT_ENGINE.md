@@ -187,6 +187,31 @@ session readiness before pasting and submitting. Raw terminal `input` accepts
 WebSocket control also requires attachment to that exact worker. Browser and
 Flash text fields have their own smaller limits.
 
+## macOS app mode
+
+The macOS app's controller (`local/controller/`) runs the engine natively. Each variable below is unset by default, which keeps the behavior described above.
+
+| Variable | Effect |
+| --- | --- |
+| `CP_WEB_ORIGIN` | Web server origin that Dash is proxied through (default `http://localhost:8080`). |
+| `CP_GAME_HOST`, `CP_LOGIN_PORT`, `CP_WORLD_PORT`, `CP_SNOW_PORT` | Game server host and ports for the shared web server and the provisioner's game sessions. |
+| `CP_PROVISION_COMMAND`, `CP_PROVISION_ENV_FILE` | Run provisioning as this absolute argv (JSON) instead of `./local/compose run provision`. The request still goes on stdin. The env file must be a 0600 regular file owned by the user. It is read only when spawning, and only that child gets its values, together with a basic environment and `CLUB_PENGUIN_*`. |
+| `CP_CLAUDE_CONFIG_DIR` | `CLAUDE_CONFIG_DIR` for Claude, so the app's sign-in, settings and conversations stay separate from the user's own Claude Code. |
+| `CP_CLAUDE_DISABLE_UPDATES=1` | `DISABLE_UPDATES=1` for Claude; the app ships a verified, pinned version. |
+| `CP_LOGIN_SHELL_ENV=1` | Capture the user's login-shell environment once at startup (`$SHELL -i -l -c` with markers around `env -0`, 10 s timeout) as Claude's base environment. The engine's own variables are removed before the shell runs. |
+| `CP_BUNDLED_GIT_DIR`, `CP_ENGINE_GIT` | Git fallback for Claude, and the absolute git the engine itself runs. |
+| `CP_ENGINE_CONTROL_TOKEN` | Enables `GET /engine/control/status` for the controller. |
+
+- **Claude's environment.** Claude never receives `CP_*`, `POSTGRES_*` or `CLAUDE_PENGUIN_*` variables, apart from the three hook variables.
+- **Sign-in variables.** Variables that sign Claude in pass through unchanged, because the Claude Code rules forbid restricting built-in sign-in methods. These are the `CLAUDE_CODE_USE_*` provider flags, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN` and the profile variables. In app mode the session card says which method Claude will use (names only, never values), and warns when a shell variable overrides the app's `/login`. Sign-in through `apiKeyHelper` or managed settings is not visible to this check.
+- **Git for Claude:**
+  - The user's Git is used when Claude's `PATH` reaches it.
+  - When `PATH` reaches only Apple's `/usr/bin/git` stub, the engine runs `xcode-select -p` and checks for `<dir>/usr/bin/git`. It never runs the stub. If that file exists, the user's Git is used.
+  - Otherwise the bundled `git-only/` directory goes just before `/usr/bin`.
+- **Controller endpoint.** `/engine/control/status` requires the controller's bearer token, a loopback peer and no `Origin` header. It reports sessions, sign-in method, Git and Claude version. The UI token never works on it.
+- **Resume.** **Copy resume command** names the managed executable, and the config directory when set: `cd '<worktree>' && CLAUDE_CONFIG_DIR='<dir>' '<claude>' --resume <id>`.
+- **Locks after a crash.** The engine still never removes a stale `runtime.lock` or publication `owner.lock` itself. The controller removes them only when they name the engine PID it launched (`data/journal/engine.json`), that process is gone, and its process group is empty.
+
 ## Verify and extend
 
 ```sh

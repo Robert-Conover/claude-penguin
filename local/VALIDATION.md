@@ -1180,3 +1180,81 @@ This checks the homepage and login transition, not a new gameplay or Claude
 acceptance run. **Code with puffles** still requires the separately started host
 engine; a live engine session and non-English layouts were not exercised here.
 The image generation prompt and asset provenance are in `web/home/README.md`.
+
+## macOS app prototype — November 8, 2026
+
+This records an internal build on branch `macos-app`, made on this Mac: macOS 27.2, Apple Silicon, Xcode 27.2. The build covers four parts:
+
+- the shared controller and `./launch`;
+- the native runtimes and servers;
+- the verified-download installer;
+- the extension patcher, engine app mode, and the SwiftUI/WKWebView app.
+
+Nothing was signed with a Developer ID or notarized, and no clean Mac was used. Gate 0 decisions, covering media hosting, Claude Code terms, the name and updates, remain the owner's.
+
+**Offline suites**
+
+| Suite | Result |
+| --- | --- |
+| engine | 133 passed |
+| web | 68 passed |
+| client-bridge (Node) | 41 passed |
+| client-bridge (Python) | 29 passed |
+| controller | 43 passed |
+| native | 10 passed |
+| installer | 42 passed |
+| Python host suites | 62 passed |
+| `swift test` | 28 passed |
+
+Launcher and script syntax checks and `git diff --check` passed. One controller test, "a service that dies while running", failed once under load in seven full runs and passed when rerun alone.
+
+**Compose regression.** `./local/start` succeeded, then `./local/verify` passed. `npm run verify:http` ran 96 HTTP checks and 4 socket checks with no failures. The Houdini container regression ran 13 tests, all OK. `servers.xml` still renders the world port as 9875. The stack was stopped afterwards.
+
+**Native runtime with `./launch`** (data in `.local/launch/`)
+
+- `setup --mode explore` then `start`: all seven servers came up. Every listening socket, and every connection between them, was on 127.0.0.1.
+- `setup --mode code`: installed and verified Claude 2.1.311, with the app's own empty `CLAUDE_CONFIG_DIR`. Claude never signed in. The engine then started in app mode:
+  - it captured the login-shell environment with no warnings;
+  - it found Git at `/Applications/Xcode.app/Contents/Developer/usr/bin/git` (`user`);
+  - it reported the sign-in method as `login`.
+- Registering a disposable repository, whose path contained a space, provisioned a managed owner (penguin 105) through the native provisioning runner, and verified the world session.
+- Startup took about 4 s after setup. The resident memory of the 17 runtime processes totaled about 815 MiB. `.local/runtimes` is 462 MiB.
+
+**Crash checks**, all on `./launch` and the real services:
+
+| Action | Result |
+| --- | --- |
+| SIGKILL of the controller | All 16 managed processes exited in about 1.5 s. |
+| SIGKILL of Valkey's shim, then of the controller | Valkey survived. The next launch identified it by record (PID, start time, executable) and stopped it before starting. |
+| SIGKILL of the engine | Reported as `SERVICE_FAILED`. The next start removed the engine's `runtime.lock` and the publication `owner.lock` only after confirming that this app had launched that engine PID and that its process group was empty. |
+| A clean stop | No ownership records left. |
+
+Accounts, the managed owner and engine state persisted across every restart.
+
+These checks found five defects, all fixed before this record:
+
+- Valkey rewrites its process title, so its identity is now read with `proc_pidpath`.
+- One stale record could remain after a clean stop.
+- Stale engine locks blocked restart.
+- `verifyClaude` was missing the app's config directory.
+- The home page's puffle link was hardcoded to port 8081.
+
+**The app bundle** (`macos/scripts/build-app.sh`, ad-hoc signed, 515 MiB)
+
+- 155 nested Mach-O files were signed, and `codesign --verify --deep --strict` passed.
+- It was launched against a scratch data folder whose path contains a space, with `CP_MEDIA_DIR` set to the checkout's media.
+- **Explore:** welcome, preflight, setup, starting and the game page.
+- **Code:** the puffle page loaded at `http://localhost:47081/?bridge=1&agents=1#/login`, app mode reported, and the host bridge was present.
+- **Shutdown:** Quit stopped every service. Force-killing the app made the controller see stdin close and stop all 15 managed processes within about 1.5 s.
+
+**Not verified**
+
+- The screen was locked, so WebKit reported the page hidden. Ruffle loaded `club_penguin.swf` and then waited, with its unmute overlay showing. Whether the client renders and plays audio in the visible app window without a click, as well as login, room travel, Pet Shop adoption and the terminal, is untested.
+- `takeSnapshot` cannot capture Ruffle's WebGL canvas.
+- A real Claude session in app mode needs the owner's `/login`.
+- Not done:
+  - Developer ID signing under the hardened runtime, and notarization;
+  - a clean Mac, or a downloaded, quarantined DMG;
+  - sleep and wake;
+  - an interrupted media download, since no media host exists;
+  - an Explore-to-Code switch in the app UI, which is not implemented.

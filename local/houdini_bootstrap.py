@@ -385,7 +385,8 @@ def install_project_adoption(publication):
 
 
 if __name__ == '__main__':
-    source_root = Path('/usr/src/houdini')
+    # CP_HOUDINI_ROOT lets the native macOS runtime run the same code from its resources.
+    source_root = Path(os.environ.get('CP_HOUDINI_ROOT', '/usr/src/houdini'))
     sys.path.insert(0, str(source_root))
     # Match the normal startup import order before loading the handler module.
     from houdini.houdini import Houdini  # noqa: F401

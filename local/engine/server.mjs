@@ -3,8 +3,10 @@ import { randomBytes, timingSafeEqual } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readFile } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
 import { WebSocketServer, WebSocket } from 'ws';
 import { createLocalServer } from '../web/server.mjs';
+import { prepareClaudeRuntime, readNetworkConfig, serverNetworkOptions, parseProvisionCommand } from './app-mode.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(here, '../..');
@@ -43,7 +45,16 @@ async function jsonBody(req, limit = MAX_BODY) {
 }
 
 /** Host-only server: the game container never obtains a terminal or provider credential. */
-export function createEngineServer({ manager, publicOrigin = 'http://localhost:8081', root = projectRoot, uiToken = randomBytes(32).toString('base64url'), ...options }) {
+const LOOPBACK_PEERS = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
+
+/**
+ * `controlToken` enables GET /engine/control/status for the app's controller.
+ * `environment` () => { signIn, git, claude, warnings } (names only) feeds both
+ * that endpoint and the token-protected UI endpoint /engine/environment; it is
+ * set only in app mode.
+ */
+export function createEngineServer({ manager, publicOrigin = 'http://localhost:8081', root = projectRoot, uiToken = randomBytes(32).toString('base64url'),
+  controlToken = null, environment = null, showEnvironment = Boolean(environment), ...options }) {
   const origin = new URL(publicOrigin);
   if (origin.protocol !== 'http:' || !['localhost', '127.0.0.1'].includes(origin.hostname)) throw error('The agent engine must use a loopback HTTP origin.');
   const clients = new Set();
@@ -67,7 +78,9 @@ export function createEngineServer({ manager, publicOrigin = 'http://localhost:8
     ['/engine/vendor/xterm.css', [path.join(here, 'node_modules/@xterm/xterm/css/xterm.css'), 'text/css; charset=utf-8']],
     ['/engine/vendor/addon-fit.js', [path.join(here, 'node_modules/@xterm/addon-fit/lib/addon-fit.js'), 'text/javascript; charset=utf-8']],
   ]);
-  const validHost = req => req.headers.host === origin.host && req.url.startsWith('/') && !req.url.startsWith('//');
+  // The controller reaches the control endpoint by IP; every other path needs the exact origin host.
+  const validHost = req => req.url.startsWith('/') && !req.url.startsWith('//') && (req.headers.host === origin.host ||
+    (controlToken && req.url.split('?')[0].startsWith('/engine/control/') && req.headers.host === `127.0.0.1:${origin.port}`));
   const sameSite = req => (!req.headers.origin || req.headers.origin === origin.origin) &&
     (!req.headers['sec-fetch-site'] || ['same-origin', 'none'].includes(req.headers['sec-fetch-site']));
   const authenticated = req => sameSite(req) && equalSecret(bearer(req), uiToken);
@@ -98,6 +111,16 @@ export function createEngineServer({ manager, publicOrigin = 'http://localhost:8
     async onRequest(req, res, url) {
       if (!url.pathname.startsWith('/engine/')) return false;
       try {
+        if (controlToken && url.pathname.startsWith('/engine/control/')) {
+          // Only the controller: loopback peer, no browser Origin, its own bearer token (never the UI token).
+          if (req.headers.origin !== undefined || !LOOPBACK_PEERS.has(req.socket.remoteAddress) || !equalSecret(bearer(req), controlToken)) throw error('Controller authentication required.', 403);
+          if (url.pathname !== '/engine/control/status') throw error('Unknown engine endpoint.', 404);
+          if (!['GET', 'HEAD'].includes(req.method)) throw error('Method not allowed.', 405);
+          const workers = manager.snapshot().workers ?? [];
+          reply(res, 200, { sessions: { running: workers.filter(worker => worker.running).length, total: workers.length },
+            ...(environment ? environment() : {}) }, req.method);
+          return true;
+        }
         if (!sameSite(req)) throw error('Origin not allowed.', 403);
         if (staticFiles.has(url.pathname)) {
           if (!['GET', 'HEAD'].includes(req.method)) throw error('Method not allowed.', 405);
@@ -107,7 +130,7 @@ export function createEngineServer({ manager, publicOrigin = 'http://localhost:8
           res.end(req.method === 'HEAD' ? undefined : bytes);
         } else if (url.pathname === '/engine/bootstrap') {
           if (req.method !== 'GET') throw error('Method not allowed.', 405);
-          reply(res, 200, { token: uiToken, snapshot: manager.snapshot() });
+          reply(res, 200, { token: uiToken, snapshot: manager.snapshot(), ...(environment && showEnvironment ? { appMode: true } : {}) });
         } else if (url.pathname === '/engine/hooks') {
           // Hook credentials are per Claude process. Never accept a browser origin here.
           if (req.method !== 'POST') throw error('Method not allowed.', 405);
@@ -118,6 +141,7 @@ export function createEngineServer({ manager, publicOrigin = 'http://localhost:8
         } else {
           if (!authenticated(req)) throw error('Engine authentication required.', 403);
           if (url.pathname === '/engine/snapshot' && req.method === 'GET') reply(res, 200, { snapshot: manager.snapshot() });
+          else if (url.pathname === '/engine/environment' && req.method === 'GET' && environment && showEnvironment) reply(res, 200, environment());
           else if (url.pathname === '/engine/action' && req.method === 'POST') {
             if (req.headers.origin !== origin.origin) throw error('A same-origin request is required.', 403);
             const body = await jsonBody(req);
@@ -211,11 +235,29 @@ export function publicationDir(env = process.env, root = projectRoot) {
   return path.resolve(root, env.CP_NATIVE_IGLOOS_DIR || '.local/native-igloos');
 }
 
+// Only for a managed absolute path with no version in it; short and bounded.
+function claudeVersion(file, env) {
+  return new Promise(resolve => {
+    execFile(file, ['--version'], { env, timeout: 5000, encoding: 'utf8' }, (failure, stdout) => resolve(failure ? null : /\d+\.\d+\.\d+\S*/.exec(stdout)?.[0] ?? null));
+  });
+}
+
 async function main() {
   if (process.platform !== 'darwin' && process.platform !== 'linux') throw error('This engine supports macOS and Linux hosts.');
   const port = Number(process.env.CP_ENGINE_PORT ?? 8081);
   if (!Number.isInteger(port) || port < 1024 || port > 65535) throw error('Invalid CP_ENGINE_PORT.');
   const publicOrigin = `http://localhost:${port}`;
+  const network = readNetworkConfig();
+  const provisionCommand = parseProvisionCommand(process.env.CP_PROVISION_COMMAND);
+  const provisionEnvFile = process.env.CP_PROVISION_ENV_FILE || null;
+  if (provisionEnvFile && !path.isAbsolute(provisionEnvFile)) throw error('CP_PROVISION_ENV_FILE must be an absolute path.');
+  const gitBinary = process.env.CP_ENGINE_GIT || 'git';
+  if (gitBinary !== 'git' && !path.isAbsolute(gitBinary)) throw error('CP_ENGINE_GIT must be an absolute path.');
+  const controlToken = process.env.CP_ENGINE_CONTROL_TOKEN || null;
+  if (controlToken && !/^[A-Za-z0-9_-]{16,}$/.test(controlToken)) throw error('CP_ENGINE_CONTROL_TOKEN must be at least 16 characters of A-Z, a-z, 0-9, - or _.');
+  const claudePath = process.env.CP_CLAUDE_PATH ?? 'claude';
+  const claudeRuntime = await prepareClaudeRuntime({ claudePath, versionOf: claudePath.includes('/') ? claudeVersion : null });
+  for (const warning of claudeRuntime.warnings) console.error(warning);
   const stateDir = engineStateDir();
   const problem = stateDirProblem(stateDir);
   if (problem) throw error(problem);
@@ -228,11 +270,13 @@ async function main() {
     if (!VISITOR_USERNAMES.includes(visitorUsername)) throw error(`CP_ENGINE_VISITOR must be one of ${VISITOR_USERNAMES.join(', ')}.`);
     const { createManager, sessionCaps } = await import('./manager.mjs');
     const caps = sessionCaps();
-    provisioner = process.env.CP_ENGINE_GAME_PROVISIONING === 'off' ? null : createGameProvisioner({ root: projectRoot, visitorUsername });
+    provisioner = process.env.CP_ENGINE_GAME_PROVISIONING === 'off' ? null : createGameProvisioner({ root: projectRoot, visitorUsername, provisionCommand, provisionEnvFile, gameHost: network.gameHost,
+      ...(network.loginPort ? { loginPort: network.loginPort } : {}), ...(network.worldPort ? { worldPort: network.worldPort } : {}) });
     let publish = () => {};
-    manager = await createManager({ stateDir, onEvent: event => publish(event), claudePath: process.env.CP_CLAUDE_PATH ?? 'claude', hookBaseUrl: `${publicOrigin}/engine/hooks`,
+    manager = await createManager({ stateDir, onEvent: event => publish(event), claudePath, gitBinary, claudeRuntime, hookBaseUrl: `${publicOrigin}/engine/hooks`,
       game: provisioner, publisher, caps, onWarning: message => console.error(message) });
-    const host = createEngineServer({ manager, publicOrigin });
+    const host = createEngineServer({ manager, publicOrigin, controlToken, ...serverNetworkOptions(network),
+      environment: claudeRuntime.appMode || controlToken ? () => claudeRuntime.report() : null, showEnvironment: claudeRuntime.appMode });
     publish = host.publish;
     const server = host.server;
     await new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, '127.0.0.1', resolve); });

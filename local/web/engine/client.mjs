@@ -1,5 +1,5 @@
 import { setupChooser, copyButton } from './chooser.mjs';
-import { statusLabels, targetKey, resolveTarget, targetForProject, controlsForWorker, nextSnapshotRevision, terminalDimensions } from './ui-model.mjs';
+import { statusLabels, targetKey, resolveTarget, targetForProject, controlsForWorker, nextSnapshotRevision, terminalDimensions, describeSignIn, describeGit, hostHandler, hostMessage } from './ui-model.mjs';
 
 const panel = document.createElement('section');
 panel.id = 'cp-agent-panel';
@@ -32,6 +32,7 @@ panel.innerHTML = `<header class="cp-agent-header"><button id="cp-agent-back" ar
       <button id="cp-tab-terminal" aria-controls="cp-view-terminal">Open Claude</button>
     </aside>
     <div class="cp-card-main">
+      <div id="cp-environment" hidden><p id="cp-env-signin"></p><p id="cp-env-help" hidden></p><p id="cp-env-git"></p><p id="cp-env-warning" hidden></p></div>
       <nav class="cp-agent-tabs" role="tablist" aria-label="Puffle notebook">
         <button role="tab" id="cp-tab-task" aria-controls="cp-view-task" aria-selected="true">Task</button>
         <button role="tab" id="cp-tab-changes" aria-controls="cp-view-changes" aria-selected="false">Changes</button>
@@ -57,7 +58,7 @@ const el = id => document.getElementById(id);
 let snapshot = { projects: [], workers: [] }, selected = null, choosing = true, destinations = [];
 let connected = false, token = '', socket, epoch = 0, retryDelay = 500, retryTimer;
 let busy = false, currentView = 'task', term, fit, terminalObserver, terminalReady = false, attachedKey = '', lastSize = '';
-let selectionRevision = 0, diffRequest = 0;
+let selectionRevision = 0, diffRequest = 0, appEnvironment = null;
 const drafts = new Map();
 let diffFor = '', initialTerminalError = '';
 let lastRevision = -1, errorKind = '', nativeReturn = null;
@@ -265,6 +266,7 @@ function render() {
     renderHistory(el('cp-archive-history'), archived.taskHistory);
   }
   el('cp-session').hidden = choosing || !resolved;
+  renderEnvironment();
   el('cp-agent-start').disabled = !controls.start || busy;
   el('cp-agent-start').hidden = Boolean(worker?.running);
   el('cp-tab-terminal').disabled = !resolved;
@@ -347,6 +349,41 @@ el('cp-task-form').onsubmit = async event => {
   } catch (problem) { if (targetKey(target) === targetKey(selected)) error(problem.message); }
 };
 
+// Finder and editor actions exist only inside the macOS app's web view.
+function hostButtons(worktreePath) {
+  const handler = hostHandler();
+  if (!handler || !worktreePath) return [];
+  return [['reveal', 'Open in Finder'], ['openInEditor', 'Open in editor']].map(([type, label]) => {
+    const button = document.createElement('button');
+    button.textContent = label;
+    button.onclick = () => {
+      const message = hostMessage(type, worktreePath);
+      if (message) try { handler.postMessage(message); } catch { error('The app could not open that folder.'); }
+    };
+    return button;
+  });
+}
+function renderEnvironment() {
+  const box = el('cp-environment');
+  const signIn = appEnvironment && describeSignIn(appEnvironment.signIn);
+  box.hidden = !signIn;
+  if (!signIn) return;
+  el('cp-env-signin').textContent = signIn.text;
+  el('cp-env-help').hidden = !signIn.help;
+  el('cp-env-help').textContent = signIn.help ?? '';
+  el('cp-env-git').textContent = describeGit(appEnvironment.git) ?? '';
+  const warning = (appEnvironment.warnings ?? []).join(' ');
+  el('cp-env-warning').hidden = !warning;
+  el('cp-env-warning').textContent = warning;
+}
+async function loadEnvironment(generation) {
+  try {
+    const response = await fetch('/engine/environment', { cache: 'no-store', headers: { authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(10000) });
+    if (!response.ok || generation !== epoch) return;
+    appEnvironment = await response.json();
+    render();
+  } catch { /* The note is informational; the session works without it. */ }
+}
 async function refreshDiff() {
   const target = selected && { ...selected };
   if (!resolveTarget(snapshot, target)) return;
@@ -367,7 +404,7 @@ async function refreshDiff() {
       'Untracked paths listed  ' + result.untrackedListed + (result.untrackedListTruncated ? ' or more (listing truncated)' : ''),
       ...(result.warnings ?? []).map(item => item.message), result.truncated && 'Large changes or previews have been shortened.',
     ].filter(Boolean).join('\n');
-    el('cp-copy').replaceChildren(copyButton('Copy path', result.worktreePath, error), copyButton('Copy branch', result.branch, error));
+    el('cp-copy').replaceChildren(copyButton('Copy path', result.worktreePath, error), copyButton('Copy branch', result.branch, error), ...hostButtons(result.worktreePath));
     el('cp-diff').textContent = [result.status, result.diff].filter(Boolean).join('\n\n') || 'No tracked changes.';
     el('cp-untracked').replaceChildren();
     for (const file of result.untracked ?? []) {
@@ -433,6 +470,7 @@ async function connect() {
     if (typeof bootstrap.token !== 'string' || !bootstrap.token) throw new Error('The runtime did not provide a browser session.');
     token = bootstrap.token;
     applySnapshot(bootstrap.snapshot);
+    if (bootstrap.appMode === true) loadEnvironment(generation);
     const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/engine/ws`);
     socket = ws;
     ws.onopen = () => { if (generation === epoch) ws.send(JSON.stringify({ type: 'auth', token })); };

@@ -133,12 +133,12 @@ let pages = 0;
 
 // `transform` rewrites each overlay result, standing in for an older overlay
 // build; `prepare` runs inside the overlay before the panel loads.
-async function openPage({ agentMode = true, snapshot = engineSnapshot(), transform = result => result, prepare = '', respond = () => ({}) } = {}) {
+async function openPage({ agentMode = true, snapshot = engineSnapshot(), transform = result => result, prepare = '', respond = () => ({}), appEnvironment = null, host = null } = {}) {
   const page = ++pages;
   const document = createDocument();
   const window = new EventTarget();
   const location = { origin: 'http://localhost:8081', protocol: 'http:', host: 'localhost:8081' };
-  Object.assign(window, { RufflePlayer: { config: {} }, location }, agentMode ? { CP_AGENT_MODE: true } : {});
+  Object.assign(window, { RufflePlayer: { config: {} }, location }, agentMode ? { CP_AGENT_MODE: true } : {}, host ? { webkit: { messageHandlers: { claudePenguinHost: host } } } : {});
   Object.assign(globalThis, { window, document, location });
   // The real opt-in bootstrap delivers overlay events to the panel.
   new Function('window', readFileSync(new URL('./bootstrap.js', import.meta.url), 'utf8'))(window);
@@ -154,7 +154,11 @@ async function openPage({ agentMode = true, snapshot = engineSnapshot(), transfo
 
   const actions = [], sockets = [];
   globalThis.fetch = async (url, options = {}) => {
-    if (url === '/engine/bootstrap') return reply({ token: 'private-browser-token', snapshot });
+    if (url === '/engine/bootstrap') return reply({ token: 'private-browser-token', snapshot, ...(appEnvironment ? { appMode: true } : {}) });
+    if (url === '/engine/environment' && appEnvironment) {
+      if (options.headers?.authorization !== 'Bearer private-browser-token') throw new Error('The environment request is not authenticated.');
+      return reply(appEnvironment);
+    }
     if (url === '/engine/action') {
       const action = JSON.parse(options.body);
       actions.push(action);
@@ -571,4 +575,55 @@ test('native card displays setup, repair and source availability without leaking
     assert.doesNotMatch(JSON.stringify(page.calls), PRIVATE);
     await page.flush();
   }
+});
+
+// ------------------------------------------------------------ app mode: sign-in, Git and host actions
+const APP_ENV = { signIn: { method: 'api-key', overriddenBy: ['ANTHROPIC_API_KEY'], variable: 'ANTHROPIC_API_KEY' }, git: { source: 'bundled', path: '/b/git' },
+  claude: { path: '/c/claude', version: '2.1.5' }, warnings: [] };
+
+test('app mode states the sign-in Claude will use, says when the shell overrides /login, and names the Git', async () => {
+  const page = await openPage({ appEnvironment: APP_ENV });
+  await page.flush();
+  page.window.ClaudePenguinEngine.openForProject(PROJECT_A, 'worker-a');
+  assert.equal(page.el('cp-environment').hidden, false);
+  assert.match(page.el('cp-env-signin').textContent, /API key from your shell environment.*overrides the app's \/login/);
+  assert.equal(page.el('cp-env-help').hidden, false);
+  assert.match(page.el('cp-env-help').textContent, /remove ANTHROPIC_API_KEY from your shell profile.*unset/);
+  assert.match(page.el('cp-env-git').textContent, /bundled with the app/);
+  assert.equal(JSON.stringify(page.el('cp-environment').textContent).includes('sk-'), false);
+  const login = await openPage({ appEnvironment: { ...APP_ENV, signIn: { method: 'login', overriddenBy: [], variable: null }, git: { source: 'user', path: '/opt/homebrew/bin/git' }, warnings: ['Shell capture failed.'] } });
+  await login.flush();
+  login.window.ClaudePenguinEngine.openForProject(PROJECT_A, 'worker-a');
+  assert.match(login.el('cp-env-signin').textContent, /sign-in you make with \/login/);
+  assert.equal(login.el('cp-env-help').hidden, true);
+  assert.match(login.el('cp-env-git').textContent, /your Git \(\/opt\/homebrew\/bin\/git\)/);
+  assert.equal(login.el('cp-env-warning').textContent, 'Shell capture failed.');
+});
+
+test('dev mode shows no sign-in note and makes no environment request', async () => {
+  const page = await openPage();
+  await page.flush();
+  page.window.ClaudePenguinEngine.openForProject(PROJECT_A, 'worker-a');
+  assert.equal(page.el('cp-environment').hidden, true);
+});
+
+test('Open in Finder and Open in editor appear only when the app host handler exists', async () => {
+  const diff = { sourcePath: '/s', worktreePath: '/Users/me/Library/Application Support/Claude Penguin/worktrees/a b', branch: 'b', expectedBranch: 'b', baseCommit: 'c', head: 'h', mergeBase: 'm', status: '', diff: '', untracked: [] };
+  const posted = [];
+  const app = await openPage({ host: { postMessage: message => posted.push(message) }, respond: action => (action.action === 'diff' ? diff : {}) });
+  await app.flush();
+  app.window.ClaudePenguinEngine.openForProject(PROJECT_A, 'worker-a');
+  app.el('cp-tab-changes').onclick();
+  await app.flush();
+  const buttons = app.el('cp-copy').children.map(button => button.textContent);
+  assert.deepEqual(buttons, ['Copy path', 'Copy branch', 'Open in Finder', 'Open in editor']);
+  app.el('cp-copy').children[2].onclick();
+  app.el('cp-copy').children[3].onclick();
+  assert.deepEqual(posted, [{ type: 'reveal', path: diff.worktreePath }, { type: 'openInEditor', path: diff.worktreePath }]);
+  const browser = await openPage({ respond: action => (action.action === 'diff' ? diff : {}) });
+  await browser.flush();
+  browser.window.ClaudePenguinEngine.openForProject(PROJECT_A, 'worker-a');
+  browser.el('cp-tab-changes').onclick();
+  await browser.flush();
+  assert.deepEqual(browser.el('cp-copy').children.map(button => button.textContent), ['Copy path', 'Copy branch']);
 });
