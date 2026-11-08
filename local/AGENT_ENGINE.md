@@ -13,28 +13,32 @@ Install Git 2.48+, Python 3.9+, Node 22+, npm, a JDK, and
 authentication through its normal host setup before asking the puffle to work.
 The launcher does not log you in or request authentication.
 
-Start the local game, build the overlay with a JDK, and launch the host engine.
+Start the local game and launch the host engine. `./local/doctor --agents` lists
+anything missing first.
 
 ```sh
 ./local/start
-python3 local/client-bridge/build.py
 ./local/agent-start
 ```
 
-The overlay build needs a JDK; see the [build instructions](client-bridge/README.md).
+On first run, and whenever `bridge.as` or `ProjectAdoption.as` changed, `agent-start`
+builds the overlay with `python3 local/client-bridge/build.py`, which needs a JDK; see
+the [build instructions](client-bridge/README.md).
 The engine provisions or verifies the marked visitor without logging in as it.
 Use the visitor in one browser game tab at a time. Scripted verification uses
 dedicated owners or `localcheck`.
 
-`agent-start` checks the game configuration, generated overlay, Ruffle files, and
-the baseline game's HTTP readiness. It installs locked dependencies with
+`agent-start` checks the game configuration and Ruffle files, builds the overlay
+when it is missing or stale (and stops if the build fails or its output does not
+match its sources), then checks the baseline game's HTTP readiness. It installs locked dependencies with
 `npm ci --ignore-scripts` if the engine or shared web dependencies are missing,
 then runs the host server in the foreground. Keep that terminal open while
 agents work. The launcher does not start a Claude session automatically.
 
-After updating the client bridge source, rebuild with
+After updating the client bridge source while the engine runs, rebuild with
 `python3 local/client-bridge/build.py` and reload the game. The launcher checks
-the overlay's source and output hashes so an older menu cannot be loaded silently.
+the overlay's source and output hashes at startup and rebuilds a stale one, so an
+older menu cannot be loaded silently.
 
 Open [the agent page](http://localhost:8081/?bridge=1&agents=1#/login), log in as
 `bridgecheck` with the disposable password `PenguinLocal2026!`, and choose

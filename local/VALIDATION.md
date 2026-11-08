@@ -1110,3 +1110,43 @@ settlements 0 → 3 (two earlier cancelled reservations and Locky). `player`,
 - `CREATE TABLE IF NOT EXISTS` would accept an unrelated relation already named
   `claude_penguin_adoption_settlement`; no such object exists in the vendored
   schema.
+
+## Setup doctor, on-demand overlay build and Wand cleanup — November 8, 2026
+
+Tested revision: `d63d37b` on branch `first-run-usability`, Apple Silicon macOS
+27.2, Python 3.9.6, Node 26.13.0, Git 2.54.0, Homebrew OpenJDK 27.0.1, Claude
+Code 2.1.318. No Claude session was started and no account was changed.
+
+**Automated (fake host).** `python3 -m unittest local/test_doctor.py`: 15 passed.
+They cover a ready Mac in both modes, a missing tool with its fix, puffle problems
+staying optional without `--agents`, old Node and Git, the Homebrew JDK chosen over
+the macOS `javac` stub, a game port held by another program, the running game
+owning its ports, the first-start disk warning, a missing and a stale overlay, a
+stale lock reported and left in place, a live lock, `CP_ENGINE_STATE_DIR`,
+`CP_CLAUDE_PATH`, non-macOS and old/Intel macOS, and plain output without UTF-8.
+The other Python host suites (provisioning, native igloos, adoption) passed
+unchanged, 36 tests; launcher syntax (now including `local/doctor`) and
+`git diff --check` were clean.
+
+**On this Mac (real).**
+
+- `./local/doctor` with the stack stopped: every island and puffle check passed;
+  the VM, game and engine were reported as not running; exit 0.
+- `./local/start` after removing Wand's root files: the stack built and passed its
+  health waits, and the seed step left existing accounts unchanged. `./local/doctor`
+  then reported the VM running and the game up.
+- `./local/agent-start` with the overlay current skipped the build. With both build
+  records removed it ran `build.py`, and `engine.swf` and `puffle_adoption.swf`
+  came out byte-identical to the previous build (about 6 seconds with the compiler
+  already cached). With `BRIDGE_JAVA_HOME=/nonexistent` it stopped after the failed
+  build with a pointer to `./local/doctor --agents`. The first two runs used a
+  stopped game and so ended at the expected port 8080 readiness error.
+- With the game up, `agent-start` under `CP_ENGINE_VISITOR=adoptcheck` and a fresh
+  temporary `CP_ENGINE_STATE_DIR` reached its ready line; `./local/doctor --agents`
+  showed the runtime and publication locks held by that process. Ctrl+C released
+  both locks; `./local/stop` stopped the stack and the temporary state was deleted.
+
+**Not checked.** A first build on a Mac that has never downloaded JPEXS (the
+compiler was already cached), the doctor on an Intel Mac or a Mac without
+Homebrew, a real port conflict (covered only by the fake host), and the agent page
+in a browser after the on-demand build. Doctor does not check Claude sign-in.

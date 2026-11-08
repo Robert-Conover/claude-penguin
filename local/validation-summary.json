@@ -1043,5 +1043,40 @@
       "Each settlement check starts a provisioning container",
       "Default overall cap of six not filled live; recovery purchases not repeated through native catalog clicks"
     ]
+  },
+  "setup_doctor_overlay_build_2026_11_08": {
+    "date": "2026-11-08",
+    "document": "local/VALIDATION.md#setup-doctor-on-demand-overlay-build-and-wand-cleanup--november-8-2026",
+    "tested_commit": "d63d37b",
+    "environment": {
+      "host": "Apple Silicon macOS 27.2",
+      "python": "3.9.6",
+      "node": "26.13.0",
+      "git": "2.54.0",
+      "jdk": "Homebrew OpenJDK 27.0.1",
+      "claude_cli": "2.1.318"
+    },
+    "change": "Read-only ./local/doctor setup check; agent-start builds a missing or stale overlay and rechecks it; Wand's unused installer and Compose stack removed and recorded in sources.json.",
+    "automated": {
+      "kind": "fake host",
+      "doctor_tests_passed": 15,
+      "other_python_host_tests_passed": 36
+    },
+    "live": {
+      "kind": "real, no Claude session, no account changes",
+      "doctor_stopped_and_running_stack": "passed",
+      "local_start_without_wand_files": "passed",
+      "agent_start_current_overlay": "skipped build",
+      "agent_start_missing_records": "rebuilt; both SWFs byte-identical",
+      "agent_start_failed_build": "stopped with doctor pointer",
+      "engine_locks_seen_by_doctor": "held while running, released after Ctrl+C"
+    },
+    "not_checked": [
+      "first JPEXS download on a clean Mac",
+      "Intel or non-Homebrew Mac",
+      "real port conflict",
+      "agent page in a browser after the on-demand build",
+      "Claude sign-in"
+    ]
   }
 }
