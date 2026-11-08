@@ -1,0 +1,8 @@
+#!/bin/sh
+# Read-only setup check for the island and the puffles; see local/doctor.py.
+project_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+command -v python3 >/dev/null || {
+  echo 'Python 3 is not installed. Install it (for example: brew install python), then run ./local/doctor again.' >&2
+  exit 1
+}
+exec python3 "$project_dir/local/doctor.py" "$@"

@@ -29,12 +29,14 @@ From this repository:
 
 `stop` stops this project's containers and dedicated VM. PostgreSQL and Redis volumes remain intact. The VM is not configured to start at login.
 
-Use these local commands for Claude Penguin. Do not run the inherited root `install.sh`: it installs the separate Wand setup, deletes that setup's `.env`, and can start its stack with `sudo docker-compose`. The root `docker-compose.yml`, `.env`, `web/Dockerfile`, and `wait-for-postgres.sh` also belong to that inherited setup. The local stack uses `local/compose.yml` and ignored `.local/env`.
+The local stack uses `local/compose.yml` and ignored `.local/env`. Wand's own installer and Compose stack (`install.sh`, the root `docker-compose.yml` and `.env`, `web/Dockerfile`, `wait-for-postgres.sh`, `icons/`) were removed on November 8, 2026. The local stack never used them, and Wand's Compose file published PostgreSQL on every network interface. The removal is recorded in [the source revisions](local/sources.json).
+
+Run `./local/doctor` to see whether this Mac has everything the island needs, or `./local/doctor --agents` to include the puffles. It only reads: it lists what is missing with the command that fixes it, reports a port another program already holds, and points out an engine lock left by a crash, without installing, starting or deleting anything.
 
 Install `colima`, `docker`, and `docker-compose` through Homebrew (Colima also installs Lima). Git and Python 3 are required by the launcher. Host-side web checks require Node 22 or newer and npm; Node is provided by the web container for ordinary gameplay. Ruffle is downloaded into ignored `.local/ruffle` and pinned by release and SHA256.
 
-To connect project puffles to Claude Code, build the overlay with
-`python3 local/client-bridge/build.py`, then run `./local/agent-start` in a separate foreground terminal. It
+To connect project puffles to Claude Code, run `./local/agent-start` in a separate foreground terminal. On first
+run, or after the overlay source changes, it builds the in-game menu with `python3 local/client-bridge/build.py`. It
 serves the opt-in agent page on `http://localhost:8081/`; Git 2.48+, Python 3.9+,
 Node 22+, npm, a JDK, and Claude Code must be available on the host. The [agent instructions](local/AGENT_ENGINE.md)
 cover repository registration, permissions, session resume, and stopping this
@@ -43,6 +45,7 @@ separate runtime. Starting the ordinary game does not launch coding agents.
 ## Inspect and verify
 
 ```sh
+./local/doctor
 ./local/compose ps
 ./local/compose logs --tail 100 web login world dash snowflake
 ./local/verify

@@ -97,7 +97,7 @@ jobs:
 
       - name: Check launcher syntax
         run: |
-          for file in local/start local/stop local/compose local/verify local/agent-start local/bridge-fixtures local/adoption-db-check; do
+          for file in local/start local/stop local/compose local/verify local/agent-start local/bridge-fixtures local/adoption-db-check local/doctor; do
             sh -n "$file"
           done
           bash -n local/web/setup-ruffle.sh
@@ -119,6 +119,9 @@ jobs:
         # Compiles the vendored upstream handlers from source; no Houdini dependencies or database.
         run: python3 -m unittest -v local/test_game_provision.py local/test_native_igloos.py local/test_project_adoption.py
 
+      - name: Test the read-only setup doctor against a fake host
+        run: python3 -m unittest -v local/test_doctor.py
+
       - name: Check whitespace
         # On pull requests HEAD is GitHub's merge commit; compare against its base parent.
         run: git diff --check HEAD^ HEAD
@@ -129,7 +132,7 @@ jobs:
           cat >> "$GITHUB_STEP_SUMMARY" <<'EOF'
           These checks use fake Claude PTYs, temporary repositories and worktrees, local HTTP/socket
           fixtures, client contract doubles, synthetic SWF preservation and stale-overlay rejection, and host tests
-          for game provisioning and the native igloo adapter. The separate Linux job runs the
+          for game provisioning, the native igloo adapter and the setup doctor (against a fake host). The separate Linux job runs the
           adoption purchase/settlement transactions against a PostgreSQL 16 service with the
           vendored schema, not against the running game server.
           The generated-overlay preservation test skips because this job does not
