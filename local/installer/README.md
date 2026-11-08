@@ -74,7 +74,7 @@ Runner contract: `runner(cmd, args, { env, timeoutMs }) -> Promise<{ code, stdou
 1. `fs.statfs` on `<root>/media`; need `size - existing partial bytes + installedSize` free, else `DISK_SPACE` with `{freeBytes, requiredBytes}` and no network call. The check does not include the previous media version, which is still on disk while the new one is extracted, so callers who care about that peak should add `installedSize` of the old version to their own preflight.
 2. Resumable download to `<root>/downloads/media-<version>.<format>`.
 3. Extract into a staging directory, cap `max(1.1 x installedSize, installedSize + 16 MiB)`, rename to `<root>/media/<version>/`. An existing `<version>` directory is treated as complete (the rename is the commit point).
-4. Create a temporary relative symlink and `rename` it over `<root>/media/current` (atomic; a real directory named `current` is refused).
+4. Create a temporary relative symlink and `rename` it over `<root>/media/current` (atomic: a reader sees the old or the new target, though on APFS a lookup that races the rename can fail briefly with ENOENT or EINVAL; a real directory named `current` is refused). The controller installs media only during setup, which it refuses while the game is running.
 5. Only after the switch, delete the previous version (`keepPrevious: true` to keep it), and the downloaded archive.
 
 ## Extraction rules
