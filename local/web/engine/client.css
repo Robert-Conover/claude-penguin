@@ -109,3 +109,7 @@
 .cp-puffle-dot[data-color=red] { background: #d9342b; } .cp-puffle-dot[data-color=yellow] { background: #f5d328; }
 .cp-puffle-dot[data-color=white] { background: #f4f4f4; } .cp-puffle-dot[data-color=orange], .cp-puffle-dot[data-color=orange-cat] { background: #f28c28; }
 .cp-puffle-dot[data-color=brown] { background: #8a5a35; }
+
+#cp-environment { border: 2px solid #9cc4dc; border-radius: 10px; background: #f2faff; padding: 6px 10px; margin-bottom: 8px; font-size: 12px; color: #2d526b; }
+#cp-environment p { margin: 3px 0; }
+#cp-env-help, #cp-env-warning { color: #8a4b00; }

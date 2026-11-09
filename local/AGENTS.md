@@ -13,6 +13,14 @@ These instructions supplement the root `AGENTS.md` for changes under `local/`.
 - `verify_seed.py`: idempotent local account creation. `verify_game.py`: mutating checks against dedicated fixture accounts.
 - `client-bridge/`: JPEXS-built `engine.swf` overlay and the agent page's derived Pet Shop module (`adoption_build.py`, `ProjectAdoption.as`; output in ignored `.local/client-bridge/`) and their browser contract. `build.py` needs a JDK and downloads pinned JPEXS on first use; rebuild after editing `bridge.as` or `ProjectAdoption.as`. `bridge-fixtures`, `bridge_seed.py`, and `verify_bridge.py` create the disposable `bridgecheck` visitor and project-igloo fixtures.
 
+- macOS app prototype (no Docker or VM; ports 47xxx, data separate from Compose):
+  - `../launch` and `controller/`: the shared Node controller (JSON-lines protocol, setup, ordered start and stop, health checks), the `cp-supervise` shim (process groups, owner-death cleanup, `flock`, `proc_pidpath`, and `guard`, which stops Claude's terminals if the engine dies), ownership records and crash recovery. `./launch` runs it from the checkout with data in `.local/launch/`.
+  - `native/`: pinned runtimes (`runtimes.json`, `build-runtimes.mjs` → `.local/runtimes/`), per-service locked package sets, and `services.mjs` (service definitions, first-run database setup, engine environment). The adapters take `CP_DASH_*`, `CP_SNOWFLAKE_*` and `CP_HOUDINI_ROOT`; the web server takes `MEDIA_ROOT`, `CLIENT_BRIDGE_ROOT`, `BRIDGE_PUBLIC_ROOT` and `AGENT_ORIGIN`, and `servers.xml` needs `GAME_WORLD_PORT`. Unset, all keep the Compose behavior.
+  - `installer/`: resumable verified downloads, safe tar extraction, and the official Claude Code install (signed manifest, SHA-256, Anthropic code signature; version pinned in `controller/release.json`).
+  - `client-bridge/patch_*.py` and `patcher.mjs`: copy/insert patches that rebuild the two derived SWFs from the user's media without a JDK; `patch_audit.py` checks that no original bytes ship.
+  - Engine app mode (`engine/app-mode.mjs`): see `AGENT_ENGINE.md`, "macOS app mode".
+  - `../macos/`: the SwiftUI/WKWebView app and its build, sign, DMG and notarize scripts.
+
 Use `./local/compose` for this stack. It selects `colima-club-penguin` explicitly. Wand's own installer and root Compose stack were removed (recorded under `excluded_paths` in `sources.json`); do not restore them. Root `templates/` and `servers.xml` are still mounted by `local/compose.yml`. Avoid changing the user's global Docker context or unrelated VMs.
 
 ## Validation by change
@@ -34,12 +42,17 @@ npm ci --ignore-scripts --prefix local/web
 | Project adoption purchase or settlement (`project_adoption.py`) | Python host suites above; `./local/adoption-db-check` (real PostgreSQL lock ordering in a throwaway container; needs the Houdini image) |
 | Client/config serving, Ruffle version, game socket endpoints | `npm run verify:http --prefix local/web` against the running stack; browser checks for affected rendering/interaction |
 | Database seeding, game protocol, persistence | `./local/verify`; confirm existing player progress survives the affected lifecycle operation |
+| App controller, supervisor or `./launch` | `node --test local/controller/*.test.mjs` (macOS; fake services); `./launch setup` and `./launch start` with built runtimes, then the force-kill checks in `local/controller/README.md` |
+| Native runtimes, service definitions or adapters | `node --test local/native/*.test.mjs`; `python3 -m unittest local/test_native_adapters.py`; `node local/native/relocation-test.mjs` after `node local/native/build-runtimes.mjs`; listeners must all be 127.0.0.1 |
+| Installer or Claude Code release pin | `node --test local/installer/*.test.mjs`; a real install into `.local/installer-test/` with a scratch `CLAUDE_CONFIG_DIR` (never sign in) |
+| Extension patches | `node --test local/client-bridge/*.test.mjs`; `python3 local/client-bridge/patch_audit.py --strict ...` (see `PATCHER.md`) |
+| macOS app (`macos/`) | `swift build && swift test` in `macos/`; `macos/scripts/build-app.sh`; launch it against a scratch `CP_APP_DEV_DATA` |
 | Documentation or SVG only | Link/claim review, render preview, and `git diff --check` |
 
 Check each launcher script with its matching shell:
 
 ```sh
-for file in local/start local/stop local/compose local/verify local/agent-start local/bridge-fixtures local/adoption-db-check local/doctor; do
+for file in local/start local/stop local/compose local/verify local/agent-start local/bridge-fixtures local/adoption-db-check local/doctor launch local/controller/build-supervise.sh; do
   sh -n "$file" || exit
 done
 bash -n local/web/setup-ruffle.sh
@@ -71,4 +84,4 @@ For Compose validation, use `./local/compose config --quiet` after local configu
 
 Protocol success establishes backend behavior; HTTP success establishes serving/transport behavior. Neither proves interactive gameplay. Verify affected UI paths in the browser before claiming they work. Update the dated validation record with the command/environment and remaining gaps when adding evidence. Keep raw reports and logs under ignored `.local/`.
 
-CI (`.github/workflows/regression.yml`) runs only the offline checks: launcher syntax, the engine, web, bridge-contract, synthetic SWF, setup doctor, and Python provisioning/adapter host suites, `git diff --check`, and on Linux the adoption concurrency tests against a PostgreSQL 16 service. A passing run does not cover the Houdini container, the built overlay, the running stack, or real Claude.
+CI (`.github/workflows/regression.yml`) runs only the offline checks: launcher syntax, the engine, web, bridge-contract, synthetic SWF and patcher, setup doctor, native service definitions and adapters, installer, and Python provisioning/adapter host suites; on macOS the controller and supervisor with fake services; `git diff --check`; and on Linux the adoption concurrency tests against a PostgreSQL 16 service. A passing run does not cover the Houdini container, the built overlay, the built native runtimes or game servers, the Swift app, the running stack, or real Claude.

@@ -1,10 +1,18 @@
-# Claude Penguin
+<p align="center">
+  <img src="macos/artwork/app-icon-v2-1024.png" alt="A blue Club Penguin penguin holding a coding laptop" width="112" height="112">
+</p>
 
-**Your repo gets an igloo. Your coding agent is a puffle.**
+<h1 align="center">Claude Penguin</h1>
+
+<p align="center"><strong>Your repo gets an igloo. Your coding agent is a puffle.</strong></p>
+
+<p align="center">
+  <a href="#play-locally">Try it on your Mac</a> ·
+  <a href="docs/first-task.md">Give a puffle its first bug</a> ·
+  <a href="#product-roadmap">Roadmap</a>
+</p>
 
 Click a puffle in the original Club Penguin to give Claude Code a task. Waddle back to Town while it works. When the **Work** badge lights up, open the terminal or review the diff. The island runs on your Mac; each puffle has its own Git worktree.
-
-[Try it on your Mac](#play-locally) · [Give a puffle its first bug](docs/first-task.md) · [Roadmap](#product-roadmap)
 
 ![Pip receives a coding task in an igloo, the penguin visits Town, and Claude fixes the postcard test](docs/assets/pip-fixes-a-postcard.gif)
 
