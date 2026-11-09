@@ -109,7 +109,13 @@ final class AppModel {
             controllerEverReady = true
             applyStatus(status)
             if status.setupComplete, status.state == .stopped || status.state == .needsSetup {
-                await startEnvironment()
+                if status.mode == .explore {
+                    // Earlier builds could set up the game alone. The app now always sets up code mode;
+                    // the controller runs only the missing Claude step, then the environment starts.
+                    runSetup(mode: .code)
+                } else {
+                    await startEnvironment()
+                }
             }
         } catch {
             if case .died = liveness { return }

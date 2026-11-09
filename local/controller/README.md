@@ -38,7 +38,9 @@ Behavior beyond the bare contract:
 
 `runtimes` (manifest and supervisor present; in the launch layout a missing supervisor is built with `build-supervise.sh`) then `database` (`prepareData`), `media`, `extensions`, and for `code` only `claude` (`installClaude` then `verifyClaude`, version from `release.json`). Each step has a cheap `check`, so setup skips finished steps; progress is recorded in `data/setup.json` after each step. Explore to code runs only `claude`. `verifyClaude` also runs before every start in code mode.
 
-- media: launch layout uses the checkout's `vanilla-media/`; app layout uses `release.media` through `installMedia`, or `CP_MEDIA_DIR` in place when `media` is `null`, otherwise a `DOWNLOAD` problem.
+- media: launch layout uses the checkout's `vanilla-media/`. App layout uses `CP_MEDIA_DIR` in place when it is set (a developer override; nothing is downloaded and preflight counts no media bytes), otherwise `release.media` through `installMedia` with `git: <runtimes>/git/bin/git`. The release pins a `source: "git"` manifest: the submodule's commit on `git.solero.me`, fetched and checked as described in `local/installer/README.md`. With neither, preflight and setup report `DOWNLOAD`.
+- Progress: the installers report short phase names (`download`, `checkout`, `verify`, ...); `makeContext().forward` turns the media and Claude ones into the labels the setup screen shows (`PHASE_LABELS` in `setup.mjs`).
+- `release.json` also records Claude Code's `size` and `installedSize` (from `local/installer/claude-release.json`), so preflight reports a total for code mode instead of an unknown.
 - extensions: `installPatchSet` from `<resources>/local/client-bridge/patches`. Its check runs `verifyInstalledPatchSet`, which compares every installed file (both SWFs, their records and `patchset.json`) with the patches, so a damaged or missing one sends setup back to rebuild it. In the launch layout, when that directory or the patcher module is missing, an existing `.local/client-bridge/engine.swf` build is used and a progress label says so.
 
 ## Supervision

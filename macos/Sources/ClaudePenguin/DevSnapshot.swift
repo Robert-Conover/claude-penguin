@@ -57,7 +57,7 @@ final class DevSnapshot {
     }
 }
 
-/// Development aid: CP_APP_DEV_AUTOPILOT="choose:code|begin|wait:3|js:document.title|close|reopen|quit" drives the UI through its own
+/// Development aid: CP_APP_DEV_AUTOPILOT="choose|begin|wait:3|js:document.title|close|reopen|quit" drives the UI through its own
 /// model so the walkthrough can be scripted without Accessibility or Screen Recording permission.
 /// Each step waits until the screen it needs is showing. Off unless the variable is set.
 @MainActor
@@ -86,8 +86,8 @@ final class DevAutopilot {
         let screen = model.screen
         var done = false
         switch step {
-        case let s where s.hasPrefix("choose:"):
-            if screen == .welcome { model.chooseMode(s.hasSuffix("explore") ? .explore : .code); done = true }
+        case let s where s.hasPrefix("choose"):
+            if screen == .welcome { model.chooseMode(.code); done = true } // the app always sets up code mode
         case "begin":
             if case .preflight = screen, !model.preflightLoading, model.preflight?.canProceed == true { model.beginSetup(); done = true }
         case "cancel":

@@ -1294,5 +1294,107 @@
       "audio": "music unmuted, no unmute overlay; not checked by ear",
       "background_input_note": "background keystrokes dropped characters; real keystrokes did not"
     }
+  },
+  "macos_app_media_download_2026_11_08": {
+    "date": "2026-11-08",
+    "commit": "uncommitted on dev (after 663f186)",
+    "changes": [
+      "release.json pins the game media as a source: git manifest (vanilla-media commit e8666de19835 on git.solero.me)",
+      "local/installer/media-git.mjs fetches it with the bundled Git in resumable batches",
+      "the app's welcome screen has one Get Started path (always code mode)",
+      "a cancel during an installer step is reported as CANCELLED, not SETUP_FAILED",
+      "installer phase names are shown as readable setup labels",
+      "release.json records Claude Code's size for preflight"
+    ],
+    "fresh_install_before": "preflight blocked: no media source (release.json media null, CP_MEDIA_DIR unset)",
+    "media_pin": {
+      "url": "https://git.solero.me/solero/vanilla-media.git",
+      "commit": "e8666de19835faf61782358d52a3b41c9226a00a",
+      "tree": "0f18f38f74e02012f75330fcce148698a04bc1cb",
+      "files": 86642,
+      "installed_bytes": 4264645163,
+      "download_bytes": 3879653694
+    },
+    "host_probe": {
+      "archive_endpoint": "200 without Content-Length or Accept-Ranges",
+      "git_capabilities": "protocol v2, fetch=shallow wait-for-done filter",
+      "blob_fetch_by_id": true
+    },
+    "offline_suites": {
+      "installer": 50,
+      "controller": 54,
+      "swift_test": 28,
+      "engine": 134,
+      "web": 68,
+      "client_bridge_node": 42,
+      "native": 10,
+      "native_adapters_python": "OK"
+    },
+    "local_mirror_install": {
+      "seconds": 41,
+      "files": 86642,
+      "diff_against_checkout": "identical"
+    },
+    "real_download_cli": {
+      "seconds": 401,
+      "batches": 39,
+      "download_bytes": 3879653694,
+      "files": 86642,
+      "on_disk_gib": 4.15,
+      "diff_against_checkout": "identical"
+    },
+    "document": "local/VALIDATION.md#macos-app-game-media-download-and-one-setup-path--november-8-2026",
+    "app": {
+      "build": {
+        "signature": "ad-hoc",
+        "hardened_runtime": true,
+        "size_mib": 517,
+        "codesign_verify_deep_strict": true
+      },
+      "preflight": {
+        "download_gb": 4.16,
+        "space_needed_gb": 8.42,
+        "problems": 0
+      },
+      "cancel_mid_download": {
+        "reported": "CANCELLED",
+        "kept_bytes": 390849996,
+        "git_left": false
+      },
+      "force_quit_mid_download": {
+        "controller_and_git_exited_within_s": 1,
+        "kept_bytes": 655754758
+      },
+      "resume_to_running": {
+        "seconds_from_launch": 341,
+        "downloaded_bytes": 3271659370,
+        "refetched_bytes_approx": 47000000
+      },
+      "media_identical_to_checkout": true,
+      "listeners_loopback_only": true,
+      "http_checks": 96,
+      "http_failures": 0,
+      "socket_checks": 4,
+      "socket_failures": 0,
+      "verify_game_protocol_checks": 12,
+      "verify_game_status": "passed",
+      "quit_cleanup": true,
+      "explore_folder_upgraded_to_code": {
+        "seconds": 13,
+        "ran": [
+          "claude"
+        ]
+      },
+      "welcome_screen": "single Get Started button below the card (blue default button in the app snapshot)"
+    },
+    "not_checked": [
+      "interactive login or play in the app window with this bundle",
+      "slow or unreliable network (retry tested only with an unreachable file:// source)",
+      "disk filling during the download",
+      "controller killed on its own while the app runs (orphaned git fetch)",
+      "Developer ID signing and notarization",
+      "clean Mac or user account",
+      "signed-in Claude task"
+    ]
   }
 }

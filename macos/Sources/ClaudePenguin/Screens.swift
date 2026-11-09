@@ -84,36 +84,23 @@ struct WelcomeView: View {
     let model: AppModel
 
     var body: some View {
-        VStack(spacing: 28) {
+        VStack(spacing: 24) {
             Heading(symbol: "snowflake", title: "Welcome to \(Product.name)",
                     detail: "Your own little island, with puffles that can help with real code.")
-            HStack(alignment: .top, spacing: 20) {
-                choice(symbol: "pawprint.fill", title: "Code with puffles",
-                       detail: "Each project gets a puffle and its own Claude Code session. You sign in to Claude yourself, inside the terminal, the first time.",
-                       tint: Theme.warm, prominent: true) { model.chooseMode(.code) }
-                choice(symbol: "map.fill", title: "Explore the island",
-                       detail: "Just the game. No Claude account needed, and you can set up coding later.",
-                       tint: Theme.accent, prominent: false) { model.chooseMode(.explore) }
-            }
-        }
-    }
-
-    private func choice(symbol: String, title: String, detail: String, tint: Color, prominent: Bool,
-                        action: @escaping () -> Void) -> some View {
-        Card {
-            VStack(spacing: 14) {
-                Image(systemName: symbol).font(.system(size: 36)).foregroundStyle(tint)
-                Text(title).font(.cozy(.title2, weight: .semibold))
-                Text(detail).font(.cozy(.body)).foregroundStyle(.secondary).multilineTextAlignment(.center)
-                    .fixedSize(horizontal: false, vertical: true)
-                Spacer(minLength: 4)
-                if prominent {
-                    Button(title, action: action).buttonStyle(.borderedProminent).controlSize(.large)
-                } else {
-                    Button(title, action: action).buttonStyle(.bordered).controlSize(.large)
+            Card {
+                VStack(spacing: 14) {
+                    Image(systemName: "pawprint.fill").font(.system(size: 36)).foregroundStyle(Theme.warm)
+                    Text("Set up your island").font(.cozy(.title2, weight: .semibold))
+                    Text("This downloads the game and Claude Code, once. Each project you add gets a puffle and its own Claude Code session. You can play without a Claude account: you sign in to Claude yourself, inside a puffle's terminal, the first time you open one.")
+                        .font(.cozy(.body)).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
+                .frame(width: 440)
             }
-            .frame(width: 300, height: 250)
+            // Below the card, like Start Setup on the next screen.
+            Button("Get Started") { model.chooseMode(.code) }
+                .buttonStyle(.borderedProminent).controlSize(.large)
+                .keyboardShortcut(.defaultAction)
         }
     }
 }
@@ -127,7 +114,7 @@ struct PreflightView: View {
     var body: some View {
         VStack(spacing: 24) {
             Heading(symbol: "checklist", title: "Before we begin",
-                    detail: mode == .code ? "Setting up coding with puffles." : "Setting up the island to explore.")
+                    detail: mode == .code ? "Setting up the island and your puffles." : "Setting up the island to explore.")
             Card {
                 VStack(alignment: .leading, spacing: 14) {
                     if model.preflightLoading {

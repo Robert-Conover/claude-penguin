@@ -8,7 +8,8 @@ Resumable downloads, safe archive extraction, installing and verifying the offic
 | `extract.mjs` | `extractArchive()`: in-process tar / tar.gz reader (ustar + pax, GNU long names), staging directory then atomic rename |
 | `openpgp.mjs` | Detached OpenPGP signature verifier on `node:crypto` (RSA, v4) |
 | `claude.mjs` | `installClaude()`, `verifyClaude()`, manifest and code-signature checks |
-| `media.mjs` | `installMedia()`, `switchCurrent()` |
+| `media.mjs` | `installMedia()`, `switchCurrent()`; hands a `source: "git"` manifest to `media-git.mjs` |
+| `media-git.mjs` | `installGitMedia()`: the game media from a pinned Git commit, with the app's bundled Git |
 | `cli.mjs` | JSON-line CLI |
 | `claude-release.json` | The pinned Claude version, its checksum and the expected signing identity |
 | `keys/claude-code.asc` | Anthropic's Claude Code release signing key (public) |
@@ -56,26 +57,62 @@ loadReleasePin(), claudePaths(root, version), InstallerError { code: DOWNLOAD | 
 constants: RELEASE_BASE, SIGNING_KEY_FINGERPRINT, SIGNING_KEY_FILE, CODESIGN_AUTHORITY, CODESIGN_TEAM_ID, CODESIGN_IDENTIFIER, MIN_SIGNED_VERSION
 
 // media.mjs
-installMedia({ manifest, root, onProgress, signal })  // -> { dir, current, version, previous, pruned, reused }
+installMedia({ manifest, root, onProgress, signal, git })  // -> { dir, current, version, previous, pruned, reused }
 switchCurrent(mediaDir, version), validateMediaManifest(manifest)
+
+// media-git.mjs (installMedia calls it for source: "git")
+installGitMedia({ manifest, root, git, onProgress, signal })  // -> { ..., downloadedBytes }
+validateGitMediaManifest(manifest), gitEnvironment(env), gitVersion(git, env), MIN_GIT_VERSION
 
 // openpgp.mjs
 verifyDetached({ data, signature, publicKey, expectedFingerprint }), parsePublicKey, parseSignature, dearmor
 ```
 
-`installClaude` also accepts test seams (`baseUrl`, `publicKey`, `fingerprint`, `platform`, `teamId`, `pin`). `installMedia` accepts `fetchImpl`, `statfs`, `keepPrevious`, `downloadOptions`. Progress callbacks receive `{ label, done, total }`; the CLI adds `event` and `task`.
+`installClaude` also accepts test seams (`baseUrl`, `publicKey`, `fingerprint`, `platform`, `teamId`, `pin`). `installMedia` accepts `fetchImpl`, `statfs`, `keepPrevious`, `downloadOptions`; `installGitMedia` accepts `statfs`, `env`, `keepPrevious`, `batchSize`, `retries`, `backoffMs`, `sleep`, `pollMs` and `allowFileUrl` (tests only). Progress callbacks receive `{ label, done, total }`; the CLI adds `event` and `task`, and the controller turns the short labels into the text the setup screen shows.
 
 Runner contract: `runner(cmd, args, { env, timeoutMs }) -> Promise<{ code, stdout, stderr }>`. It must resolve (not reject) on a non-zero exit. `codesign -dv` prints to stderr, and the parser reads both streams.
 
 ## Media
 
-`installMedia` takes `{ version, url, sha256, size, installedSize, format: "tar"|"tar.gz" }` and pins nothing: gate 0 has not chosen a host. `url` must be https (http only for loopback). Order of operations:
+The release names the media in `local/controller/release.json`. Two manifest kinds are accepted.
+
+### From a pinned Git commit (`source: "git"`, what the release uses)
+
+The media's public source is the Git repository behind the checkout's `vanilla-media` submodule, `https://git.solero.me/solero/vanilla-media.git` (Solero's public GitLab). The release pins:
+
+```json
+{ "source": "git", "version": "e8666de19835", "url": "https://git.solero.me/solero/vanilla-media.git",
+  "commit": "e8666de19835faf61782358d52a3b41c9226a00a", "tree": "0f18f38f74e02012f75330fcce148698a04bc1cb",
+  "files": 86642, "size": <bytes downloaded>, "installedSize": 4264645163 }
+```
+
+`commit` is the submodule's pinned revision (the same files the checkout uses), `tree` its root tree, `files` the number of files in it, `installedSize` their total size, and `size` the pack data downloaded on a real install (see `local/VALIDATION.md`). The project hosts nothing: every install downloads from that server, as `git submodule update` does for a checkout.
+
+The host's "download archive" link has no size and no `Range` support, so a dropped 4 GB download would restart and nothing could be pinned against it. `installGitMedia` uses Git itself, always the app's bundled Git (2.45 or newer is required; the app ships 2.56), never the user's:
+
+1. `statfs` on `<root>/media`; need `installedSize` plus what is left of `size`, else `DISK_SPACE` with no network call.
+2. In `<root>/media/<version>.partial/`: a shallow, blob-less fetch of the pinned commit (its trees only, about 2.5 MB), then `rev-parse <commit>^{tree}` must equal `tree`. A mismatch is `VERIFY` and the directory is removed.
+3. `ls-tree -r`: every entry must be a regular file (`100644` or `100755`; symlinks and submodules are `VERIFY`), and the count must equal `files`.
+4. The file contents (blobs) still missing are fetched by ID in batches of 2000 (`fetch --filter=blob:none --stdin`, as Git's own partial-clone fetch does). Each finished batch stays on disk; a failed batch is retried (four retries, backoff from 1 s), and a later run, after a quit, crash or cancel, fetches only what is still missing. Git checks every object it receives against its ID. Progress is the size of the fetched pack data, polled every 500 ms, against `size`.
+5. An offline checkout (`GIT_NO_LAZY_FETCH=1`, so nothing missing is fetched silently), then `HEAD` must be the commit and `git status` must show no difference.
+6. `.git` is deleted, `<version>.install.json` written, and the directory renamed to `<root>/media/<version>/` (the commit point), then `current` is switched as below.
+
+Every Git command runs without a shell, with `GIT_CONFIG_NOSYSTEM=1`, `GIT_CONFIG_GLOBAL=/dev/null` and `GIT_TERMINAL_PROMPT=0`, no automatic `gc` or maintenance, and a stalled connection (under 1 KiB/s for 60 s) fails so the retry takes over. `HTTPS_PROXY`, `HTTP_PROXY`, `NO_PROXY` and `ALL_PROXY` pass through; nothing else from the environment does. Peak disk use is the pack data plus the files (3.88 GB + 4.26 GB, about 8.1 GB); afterwards only the files remain (4.26 GB, 4.15 GiB on disk).
+
+Integrity rests on Git's object IDs (SHA-1, with Git's collision detection) and the pinned commit and tree, fetched over HTTPS. Nothing is signed by the media's publisher.
+
+### From an archive (`format: "tar"` or `"tar.gz"`)
+
+`installMedia` takes `{ version, url, sha256, size, installedSize, format: "tar"|"tar.gz" }`. It is kept for a host that publishes a pinned archive; the release does not use it. `url` must be https (http only for loopback). Order of operations:
 
 1. `fs.statfs` on `<root>/media`; need `size - existing partial bytes + installedSize` free, else `DISK_SPACE` with `{freeBytes, requiredBytes}` and no network call. The check does not include the previous media version, which is still on disk while the new one is extracted, so callers who care about that peak should add `installedSize` of the old version to their own preflight.
 2. Resumable download to `<root>/downloads/media-<version>.<format>`.
 3. Extract into a staging directory, cap `max(1.1 x installedSize, installedSize + 16 MiB)`, rename to `<root>/media/<version>/`. An existing `<version>` directory is treated as complete (the rename is the commit point).
-4. Create a temporary relative symlink and `rename` it over `<root>/media/current` (atomic: a reader sees the old or the new target, though on APFS a lookup that races the rename can fail briefly with ENOENT or EINVAL; a real directory named `current` is refused). The controller installs media only during setup, which it refuses while the game is running.
-5. Only after the switch, delete the previous version (`keepPrevious: true` to keep it), and the downloaded archive.
+
+### Switching versions (both kinds)
+
+1. Create a temporary relative symlink and `rename` it over `<root>/media/current` (atomic: a reader sees the old or the new target, though on APFS a lookup that races the rename can fail briefly with ENOENT or EINVAL; a real directory named `current` is refused). The controller installs media only during setup, which it refuses while the game is running.
+2. Only after the switch, delete the previous version (`keepPrevious: true` to keep it), the downloaded archive, and any unfinished `.partial` download of another version.
 
 ## Extraction rules
 
@@ -85,14 +122,16 @@ Only regular files (`0`/NUL) and directories (`5`) are accepted. Symlinks, hardl
 
 ```
 node local/installer/cli.mjs claude --version 2.1.311 --root DIR [--config-dir DIR]
-node local/installer/cli.mjs media  --manifest FILE --root DIR
+node local/installer/cli.mjs media  --manifest FILE --root DIR [--git PATH]
 ```
+
+`--git` is required for a `source: "git"` manifest (the app passes `<runtimes>/git/bin/git`).
 
 stdout is JSON lines: `{"event":"progress","task":"claude"|"media","label","done","total"}` (throttled to about 4 per second per label), `{"event":"problem","code","message","detail"}`, and a final `{"event":"done","task",...}` with `ok: true|false`. Exit status 0 or 1. Problem codes: `DOWNLOAD`, `VERIFY`, `DISK_SPACE`, `ABORTED`. `--version` defaults to the pin; `--config-dir` also runs `verifyClaude`. SIGINT and SIGTERM abort cleanly, leaving the `.partial` file for resume.
 
 ## Tests
 
-`node --test local/installer/*.test.mjs` (42 tests, about 0.5 s, loopback servers on ephemeral ports, no network, no `gpg`). Test OpenPGP keys are generated at test time by `testlib.mjs`. One test uses the real Anthropic key with a committed real signed manifest for 2.1.311.
+`node --test local/installer/*.test.mjs` (50 tests, about 2 s, loopback servers on ephemeral ports, no network, no `gpg`). `media-git.test.mjs` builds small source repositories and fetches from them over `file://`; it uses `CP_TEST_GIT`, else the bundled `.local/runtimes/git/bin/git`, else `git` on `PATH`, and skips when none is 2.45 or newer. Test OpenPGP keys are generated at test time by `testlib.mjs`. One test uses the real Anthropic key with a committed real signed manifest for 2.1.311.
 
 ## Sources (all fetched 2026-11-08)
 

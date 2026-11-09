@@ -71,8 +71,17 @@ export async function switchCurrent(mediaDir, version) {
  * -> { dir, current, version, previous, pruned, reused }
  * Optional: fetchImpl, statfs (injectable for tests), keepPrevious, downloadOptions.
  * onProgress receives { label: 'space'|'download'|'extract'|'activate', done, total }.
+ * A manifest with `source: "git"` is installed from a pinned commit by media-git.mjs; it also needs `git`.
  */
-export async function installMedia({
+export async function installMedia(options) {
+  if (options?.manifest?.source === 'git') {
+    const { installGitMedia } = await import('./media-git.mjs');
+    return installGitMedia(options);
+  }
+  return installArchiveMedia(options);
+}
+
+async function installArchiveMedia({
   manifest, root, onProgress, signal, fetchImpl = globalThis.fetch, statfs = fsp.statfs,
   keepPrevious = false, downloadOptions = {},
 }) {

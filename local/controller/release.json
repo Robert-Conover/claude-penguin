@@ -1,5 +1,14 @@
 {
-  "media": null,
-  "claude": { "version": "2.1.311" },
+  "media": {
+    "source": "git",
+    "version": "e8666de19835",
+    "url": "https://git.solero.me/solero/vanilla-media.git",
+    "commit": "e8666de19835faf61782358d52a3b41c9226a00a",
+    "tree": "0f18f38f74e02012f75330fcce148698a04bc1cb",
+    "files": 86642,
+    "size": 3879653694,
+    "installedSize": 4264645163
+  },
+  "claude": { "version": "2.1.311", "size": 276185504, "installedSize": 276185504 },
   "patchset": "ps-ae39499484a07eb8"
 }
