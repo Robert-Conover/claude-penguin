@@ -166,6 +166,8 @@ export async function installGitMedia({
 }) {
   if (!root) throw new InstallerError('root is required', 'BAD_INPUT');
   if (!git) throw new InstallerError('git is required', 'BAD_INPUT');
+  // Git runs with a minimal PATH, so a bare name would not be the Git the caller meant.
+  if (!path.isAbsolute(git)) throw new InstallerError(`git must be a full path, not ${JSON.stringify(git)}`, 'BAD_INPUT');
   validateGitMediaManifest(manifest, { allowFileUrl });
   root = path.resolve(root);
   const mediaDir = path.join(root, 'media');

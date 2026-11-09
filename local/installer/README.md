@@ -125,13 +125,13 @@ node local/installer/cli.mjs claude --version 2.1.311 --root DIR [--config-dir D
 node local/installer/cli.mjs media  --manifest FILE --root DIR [--git PATH]
 ```
 
-`--git` is required for a `source: "git"` manifest (the app passes `<runtimes>/git/bin/git`).
+`--git` is required for a `source: "git"` manifest and must be a full path, since Git runs with a minimal `PATH` (the app passes `<runtimes>/git/bin/git`).
 
 stdout is JSON lines: `{"event":"progress","task":"claude"|"media","label","done","total"}` (throttled to about 4 per second per label), `{"event":"problem","code","message","detail"}`, and a final `{"event":"done","task",...}` with `ok: true|false`. Exit status 0 or 1. Problem codes: `DOWNLOAD`, `VERIFY`, `DISK_SPACE`, `ABORTED`. `--version` defaults to the pin; `--config-dir` also runs `verifyClaude`. SIGINT and SIGTERM abort cleanly, leaving the `.partial` file for resume.
 
 ## Tests
 
-`node --test local/installer/*.test.mjs` (50 tests, about 2 s, loopback servers on ephemeral ports, no network, no `gpg`). `media-git.test.mjs` builds small source repositories and fetches from them over `file://`; it uses `CP_TEST_GIT`, else the bundled `.local/runtimes/git/bin/git`, else `git` on `PATH`, and skips when none is 2.45 or newer. Test OpenPGP keys are generated at test time by `testlib.mjs`. One test uses the real Anthropic key with a committed real signed manifest for 2.1.311.
+`node --test local/installer/*.test.mjs` (51 tests, about 2 s, loopback servers on ephemeral ports, no network, no `gpg`). `media-git.test.mjs` builds small source repositories and fetches from them over `file://`; it uses `CP_TEST_GIT`, else the bundled `.local/runtimes/git/bin/git`, else `git` on `PATH`, and skips when none is 2.45 or newer. Test OpenPGP keys are generated at test time by `testlib.mjs`. One test uses the real Anthropic key with a committed real signed manifest for 2.1.311.
 
 ## Sources (all fetched 2026-11-08)
 

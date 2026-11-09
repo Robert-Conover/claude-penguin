@@ -16,8 +16,11 @@ const isolated = { ...process.env, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: 
 // The bundled Git when it has been built, otherwise a new enough Git on PATH.
 function findGit() {
   const candidates = [process.env.CP_TEST_GIT, path.join(here, '..', '..', '.local', 'runtimes', 'git', 'bin', 'git'), 'git'].filter(Boolean);
-  for (const git of candidates) {
+  for (const candidate of candidates) {
     try {
+      // The installer runs Git with a minimal PATH, so it must get the same binary checked here: a full path.
+      const git = candidate.includes('/') ? path.resolve(candidate) : execFileSync('/bin/sh', ['-c', `command -v ${candidate}`], { encoding: 'utf8' }).trim();
+      if (!path.isAbsolute(git)) continue;
       const m = /git version (\d+)\.(\d+)\.(\d+)/.exec(execFileSync(git, ['--version'], { encoding: 'utf8' }));
       const v = m.slice(1, 4).map(Number);
       const ok = v[0] !== MIN_GIT_VERSION[0] ? v[0] > MIN_GIT_VERSION[0] : v[1] !== MIN_GIT_VERSION[1] ? v[1] > MIN_GIT_VERSION[1] : v[2] >= MIN_GIT_VERSION[2];
@@ -55,7 +58,7 @@ function makeSource(files, { symlink = null } = {}) {
 function countingGit() {
   const dir = tmp();
   const log = path.join(dir, 'calls.log');
-  const real = GIT.includes('/') ? path.resolve(GIT) : execFileSync('/bin/sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
+  const real = GIT;
   const wrapper = path.join(dir, 'git');
   fs.writeFileSync(wrapper, `#!/bin/sh\nprintf '%s\\n' "$*" >> '${log}'\nexec '${real}' "$@"\n`, { mode: 0o755 });
   return { wrapper, fetches: () => (fs.existsSync(log) ? fs.readFileSync(log, 'utf8').split('\n').filter(l => / fetch /.test(` ${l} `) && l.includes('--stdin')).length : 0) };
@@ -158,6 +161,11 @@ test('a Git older than the minimum is refused', { skip }, async () => {
   fs.writeFileSync(old, '#!/bin/sh\necho "git version 2.39.5"\n', { mode: 0o755 });
   const { manifest } = makeSource(files);
   await assert.rejects(installGitMedia({ manifest: manifest(), root: tmp(), git: old, ...fast }), e => e.code === 'BAD_INPUT' && /too old/.test(e.message));
+});
+
+test('Git must be given by its full path', { skip }, async () => {
+  const { manifest } = makeSource(files);
+  await assert.rejects(installGitMedia({ manifest: manifest(), root: tmp(), git: 'git', ...fast }), e => e.code === 'BAD_INPUT' && /full path/.test(e.message));
 });
 
 test('manifest validation', () => {
