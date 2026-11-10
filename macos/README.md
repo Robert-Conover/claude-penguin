@@ -21,7 +21,7 @@ swift build && swift test
 
 # UI-only bundle: fake controller + system Node, no runtimes
 scripts/build-app.sh --no-runtimes
-open -n "build/Claude Penguin.app"
+open -n "../.local/macos-build.noindex/Claude Penguin.app"
 
 # Full bundle (needs .local/runtimes, .local/ruffle, and network or an npm cache for `npm ci`)
 scripts/build-app.sh
@@ -29,7 +29,7 @@ scripts/build-app.sh
 
 The UI-only bundle looks for `Contents/Resources/dev/fake-controller.mjs` when the real controller is absent and runs it with the first `node` it finds (`/opt/homebrew/bin`, `/usr/local/bin`, `PATH`). It does not write to the real data folder if you set `CP_APP_DEV_DATA`.
 
-`open --env` passes variables to a LaunchServices launch: `open -n --env CP_APP_DEV_DATA=/tmp/cp-data --env FAKE_PORT_CONFLICT=1 "build/Claude Penguin.app"`.
+`open --env` passes variables to a LaunchServices launch: `open -n --env CP_APP_DEV_DATA=/tmp/cp-data --env FAKE_PORT_CONFLICT=1 "../.local/macos-build.noindex/Claude Penguin.app"`.
 
 ### Dev overrides (environment)
 
@@ -71,7 +71,7 @@ The UI-only bundle looks for `Contents/Resources/dev/fake-controller.mjs` when t
 
 ## Packaging
 
-`build-app.sh` output: `build/Claude Penguin.app`. Resources are copied from an explicit allowlist (see the script): `local/{controller,engine,web,native,installer}` (no tests, no `node_modules`), the client-bridge patcher, `local/*.py` minus tests and `doctor.py`, `houdini/ dash/ snowflake/` (no `.git`), `templates/`, `servers.xml`, Ruffle, and the runtimes. `engine` and `web` production dependencies come from `npm ci --omit=dev --ignore-scripts` in a staging copy, and the script fails if node-pty's darwin-arm64 `pty.node` or `spawn-helper` is missing. Never copied: `vanilla-media/`, other `.local/` content, credentials, logs. Before signing, `scripts/lib/check-min-os.sh 26.0` reads the minimum macOS of every Mach-O file in the bundle (`vtool -show-build`) and fails the build if any needs a newer macOS than `LSMinimumSystemVersion`.
+`build-app.sh` output: `.local/macos-build.noindex/Claude Penguin.app` at the repository root. The folder is Git-ignored, and the `.noindex` name keeps Spotlight from listing the build as a second installed copy. Resources are copied from an explicit allowlist (see the script): `local/{controller,engine,web,native,installer}` (no tests, no `node_modules`), the client-bridge patcher, `local/*.py` minus tests and `doctor.py`, `houdini/ dash/ snowflake/` (no `.git`), `templates/`, `servers.xml`, Ruffle, and the runtimes. `engine` and `web` production dependencies come from `npm ci --omit=dev --ignore-scripts` in a staging copy, and the script fails if node-pty's darwin-arm64 `pty.node` or `spawn-helper` is missing. Never copied: `vanilla-media/`, other `.local/` content, credentials, logs. Before signing, `scripts/lib/check-min-os.sh 26.0` reads the minimum macOS of every Mach-O file in the bundle (`vtool -show-build`) and fails the build if any needs a newer macOS than `LSMinimumSystemVersion`.
 
 Layout facts other parts depend on (also written to `Resources/app/bundle-layout.json`):
 
@@ -98,7 +98,7 @@ Signing goes inside out: every Mach-O is found by magic bytes (`scripts/lib/find
 ```sh
 export CP_SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)"
 macos/scripts/build-app.sh
-macos/scripts/make-dmg.sh                         # build/Claude-Penguin.dmg, Applications link, signed with the identity
+macos/scripts/make-dmg.sh                         # .local/macos-build.noindex/Claude-Penguin.dmg, Applications link, signed with the identity
 CP_NOTARY_PROFILE=<profile> macos/scripts/notarize.sh
 ```
 

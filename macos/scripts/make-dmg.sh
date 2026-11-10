@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Builds macos/build/Claude-Penguin.dmg from macos/build/Claude Penguin.app, with an Applications link.
+# Builds Claude-Penguin.dmg from Claude Penguin.app, both in .local/macos-build.noindex/, with an Applications link.
 # With CP_SIGN_IDENTITY set, the disk image itself is signed too (the app must already be signed by build-app.sh).
 #
 #   macos/scripts/make-dmg.sh [path/to/Claude Penguin.app] [output.dmg]
@@ -7,9 +7,10 @@
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MACOS="$(cd "$HERE/.." && pwd)"
+BUILD="$(cd "$MACOS/.." && pwd)/.local/macos-build.noindex"
 APP_NAME="Claude Penguin"
-APP="${1:-$MACOS/build/$APP_NAME.app}"
-DMG="${2:-$MACOS/build/Claude-Penguin.dmg}"
+APP="${1:-$BUILD/$APP_NAME.app}"
+DMG="${2:-$BUILD/Claude-Penguin.dmg}"
 IDENTITY="${CP_SIGN_IDENTITY:-}"
 
 [[ -d "$APP" ]] || { echo "error: $APP not found; run build-app.sh first" >&2; exit 1; }
