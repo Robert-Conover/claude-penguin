@@ -1110,6 +1110,59 @@
     ],
     "document": "local/VALIDATION.md#claude-penguin-homepage--november-8-2026"
   },
+  "browser_playthrough_2026_11_08": {
+    "date": "2026-11-08",
+    "document": "local/VALIDATION.md#browser-playthrough-minigame-igloo-puffle-care-and-relogin--november-8-2026",
+    "tested_commit": "de3509f",
+    "environment": {
+      "browser": "Chromium-based in-app browser, 1100x780",
+      "ruffle": "nightly-2026-11-03",
+      "host": "Apple Silicon macOS 27.2",
+      "account": "localcheck"
+    },
+    "minigame_payout": {
+      "game": "Thin Ice",
+      "points": 36,
+      "coins_shown": 3,
+      "coins_db": "9580 -> 9583",
+      "result": "passed"
+    },
+    "igloo_furniture": {
+      "placed": "790 at (310,287)",
+      "moved": "2166 (400,280) -> (513,339)",
+      "saved": true,
+      "result": "passed"
+    },
+    "puffle_care": {
+      "action": "fed Apple (79)",
+      "stats": "food 82->100, play 100->95, rest 82->77, clean 100",
+      "item_removed": true,
+      "result": "passed"
+    },
+    "logoff_relogin": {
+      "result": "passed",
+      "persisted": [
+        "coins 9583",
+        "furniture layout",
+        "puffle"
+      ]
+    },
+    "other_accounts_unchanged": true,
+    "input_method": "held key events and multi-step pointer events dispatched to the Ruffle canvas; instant presses and one-step drags were not registered",
+    "findings": [
+      "two disconnects coincided with concurrent web container rebuilds; no server error",
+      "map in intro-tour quest mode did not travel on click",
+      "client membership POST targets localhost port 80 and is refused"
+    ],
+    "not_checked": [
+      "other minigames",
+      "Card-Jitsu Snow",
+      "puffle play/clean/rest/dress",
+      "catalog purchases",
+      "player account",
+      "Safari"
+    ]
+  },
   "macos_app_prototype_2026_11_08": {
     "date": "2026-11-08",
     "scope": "Internal macOS app prototype: native runtimes and servers, controller and supervisor, installer, extension patcher, engine app mode, SwiftUI/WKWebView app; ad-hoc signed, this Mac only",

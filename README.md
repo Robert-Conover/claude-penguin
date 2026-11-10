@@ -79,9 +79,9 @@ The first run builds the in-game puffle menu from the archived client (it downlo
 | **Working today** | A repo has its own visitable igloo. Adopt a team of up to 10 puffles for it at the Pet Shop, each on its own branch and worktree. Submit tasks inside the game, answer Claude in a real terminal, review changes, and resume the conversation. Two puffles have changed code at once in one igloo, each with its own diff. |
 | **Next** | Make it clear which changes belong to which puffle and how to bring a team’s branches together. |
 | **Later ideas** | A task board inside the igloo and temporary helper puffles for work a session delegates. |
-| **Still to verify** | Finish a minigame and collect its reward during a live Claude task; check furniture placement and puffle care in the browser; verify each puffle animation against the real agent state. |
+| **Still to verify** | Collect a minigame reward during a live Claude task; play Card-Jitsu Snow and other minigames; verify each puffle animation against the real agent state. |
 
-The [dated validation notes](local/VALIDATION.md) separate browser playtests and real Claude runs from automated tests. Cart Surfer has reached active gameplay; a completed round and payout are still open.
+The [dated validation notes](local/VALIDATION.md) separate browser playtests and real Claude runs from automated tests. A Thin Ice round, its coin payout, igloo furniture placement, feeding a puffle and logging off and back on have been checked in the browser.
 
 ## How it works
 
