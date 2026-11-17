@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { findUserGit, baseEnvironment } from './engine-service.mjs';
 import { rotateIfNeeded } from './logs.mjs';
-import { estimateSteps } from './setup.mjs';
+import { estimateSteps, makeContext } from './setup.mjs';
 import { Orchestrator, validateServices } from './orchestrator.mjs';
 import { freeBytes } from './preflight.mjs';
 
@@ -60,6 +60,20 @@ test('estimateSteps sums known sizes and reports null for unknown ones', () => {
   assert.deepEqual(estimateSteps({ release: { media: { size: 10, installedSize: 30 }, claude: { size: 5, installedSize: 12 } }, pending: ['media', 'claude'], config }), { downloadBytes: 15, requiredBytes: 52 });
   assert.deepEqual(estimateSteps({ release: { media: null, claude: { version: '1' } }, pending: ['claude'], config }), { downloadBytes: null, requiredBytes: null });
   assert.deepEqual(estimateSteps({ release: {}, pending: ['database'], config }), { downloadBytes: 0, requiredBytes: 0 });
+  // CP_MEDIA_DIR is used in place: nothing to download for media.
+  assert.deepEqual(estimateSteps({ release: { media: { size: 10, installedSize: 30 } }, pending: ['media'], config: { ...config, externalMediaDir: '/m' } }), { downloadBytes: 0, requiredBytes: 0 });
+});
+
+test('installer phase names reach the setup screen as readable labels', () => {
+  const events = [];
+  const ctx = makeContext({ config: {}, release: {}, deps: {}, state: { steps: {} }, emit: e => events.push(e) });
+  ctx.forward('media', 'Downloading the game media', { label: 'checkout', done: 1, total: 2 });
+  ctx.forward('claude', 'Downloading Claude Code', { label: 'verify', done: 0, total: 1 });
+  ctx.forward('database', 'Preparing the game database', { label: 'Creating the database', done: 1 });
+  ctx.forward('media', 'Downloading the game media', { done: 3 });
+  assert.deepEqual(events.map(e => [e.task, e.label]), [
+    ['media', 'Unpacking the game media'], ['claude', 'Verifying Claude Code'], ['database', 'Creating the database'], ['media', 'Downloading the game media'],
+  ]);
 });
 
 test('validateServices rejects cycles, unknown dependencies and relative programs', () => {

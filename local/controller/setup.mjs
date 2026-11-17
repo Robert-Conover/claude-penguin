@@ -35,10 +35,11 @@ export function effectiveConfig(config, state) {
 
 const hasMedia = async root => (await isDir(path.join(root, 'play'))) && (await isDir(path.join(root, 'media')));
 
+/** Checkout: its vanilla-media/. App: CP_MEDIA_DIR when set (a developer override), else the release's pinned download. */
 function mediaTarget(config, release) {
   if (config.layout === 'launch') return { kind: 'checkout', root: config.mediaRoot };
-  if (release.media) return { kind: 'install', manifest: release.media, root: path.join(config.paths.media, 'current') };
   if (config.externalMediaDir) return { kind: 'external', root: config.externalMediaDir };
+  if (release.media) return { kind: 'install', manifest: release.media, root: path.join(config.paths.media, 'current') };
   return { kind: 'none' };
 }
 
@@ -89,7 +90,8 @@ function buildSteps(ctx) {
           state.steps.media = { ok: true, root: target.root, source: 'CP_MEDIA_DIR' };
         } else if (target.kind === 'install') {
           const { installMedia } = await deps.media();
-          await installMedia({ manifest: target.manifest, root: config.data, onProgress: p => ctx.forward('media', 'Downloading the game media', p), signal });
+          // A source: "git" release is fetched with the bundled Git, never the user's.
+          await installMedia({ manifest: target.manifest, root: config.data, git: config.paths.bundledGit, onProgress: p => ctx.forward('media', 'Downloading the game media', p), signal });
           if (!(await hasMedia(target.root))) throw new ControllerError('VERIFY', `The media install did not produce ${target.root}.`);
           state.steps.media = { ok: true, root: target.root, version: target.manifest.version, source: 'download' };
         } else {
@@ -163,11 +165,20 @@ function runBuild(script, env) {
   });
 }
 
+// The installers report short phase names; the setup screen shows these instead.
+const PHASE_LABELS = Object.freeze({
+  media: {
+    space: 'Checking free space', trees: 'Finding the game media', download: 'Downloading the game media',
+    extract: 'Unpacking the game media', checkout: 'Unpacking the game media', verify: 'Checking the game media', activate: 'Finishing the game media',
+  },
+  claude: { manifest: 'Checking the Claude Code release', download: 'Downloading Claude Code', verify: 'Verifying Claude Code', install: 'Installing Claude Code' },
+});
+
 export function makeContext({ config, release, deps, state, emit }) {
   const ctx = { config, release, deps, state };
   ctx.emitProgress = (step, label, done, total) => emit({ event: 'progress', task: STEP_TASK[step], label, done, total });
   ctx.forward = (step, label, p = {}) => emit({
-    event: 'progress', task: STEP_TASK[step], label: p.label ?? label,
+    event: 'progress', task: STEP_TASK[step], label: (p.label && PHASE_LABELS[step]?.[p.label]) ?? p.label ?? label,
     done: p.done ?? p.bytes ?? p.completed ?? 0, total: p.total ?? null,
   });
   return ctx;
@@ -186,7 +197,7 @@ export function estimateSteps({ release, pending, config }) {
   let download = 0, required = 0;
   const add = (d, r) => { download = download === null || d === null ? null : download + d; required = required === null || r === null ? null : required + r; };
   for (const id of pending) {
-    if (id === 'media' && config.layout === 'app' && release.media) add(release.media.size ?? null, release.media.size != null && release.media.installedSize != null ? release.media.size + release.media.installedSize : null);
+    if (id === 'media' && config.layout === 'app' && !config.externalMediaDir && release.media) add(release.media.size ?? null, release.media.size != null && release.media.installedSize != null ? release.media.size + release.media.installedSize : null);
     else if (id === 'claude') {
       const c = release.claude ?? {};
       add(c.size ?? null, c.installedSize ?? (c.size != null ? c.size * 2 : null));
@@ -210,7 +221,12 @@ export async function runSetup({ config, mode, deps, emit, signal, ensureOwnersh
     const step = steps[id];
     if (await step.check()) { skipped.push(id); ctx.emitProgress(id, `${step.label}: already done`, index + 1, ids.length); if (id === 'runtimes') await ensureOwnership(); continue; }
     ctx.emitProgress(id, step.label, 0, 1);
-    await step.run({ signal });
+    try { await step.run({ signal }); }
+    catch (failure) {
+      // The installers stop with their own ABORTED error; a cancel is a cancel, whatever the step reports.
+      if (signal?.aborted) throw new ControllerError('CANCELLED', 'Setup cancelled.');
+      throw failure;
+    }
     ran.push(id);
     if (id === 'runtimes') await ensureOwnership();
     await saveSetupState(config, state);

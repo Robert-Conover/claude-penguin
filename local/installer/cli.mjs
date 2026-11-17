@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // node local/installer/cli.mjs claude --version V --root DIR [--config-dir DIR]
-// node local/installer/cli.mjs media --manifest FILE --root DIR
+// node local/installer/cli.mjs media --manifest FILE --root DIR [--git PATH]
 // Emits JSON lines: progress events, problem events, and a final {"event":"done",...}.
 import fsp from 'node:fs/promises';
 import path from 'node:path';
@@ -67,11 +67,12 @@ export async function main(argv) {
     if (cmd === 'media') {
       if (typeof args.manifest !== 'string') throw new InstallerError('--manifest FILE is required', 'BAD_INPUT');
       const manifest = JSON.parse(await fsp.readFile(args.manifest, 'utf8'));
-      const res = await installMedia({ manifest, root, signal: ac.signal, onProgress: throttled('media') });
+      const git = typeof args.git === 'string' ? path.resolve(args.git) : undefined; // needed for a source: "git" manifest
+      const res = await installMedia({ manifest, root, git, signal: ac.signal, onProgress: throttled('media') });
       emit({ event: 'done', task: 'media', ok: true, ...res });
       return 0;
     }
-    throw new InstallerError('usage: cli.mjs claude --version V --root DIR | cli.mjs media --manifest FILE --root DIR', 'BAD_INPUT');
+    throw new InstallerError('usage: cli.mjs claude --version V --root DIR | cli.mjs media --manifest FILE --root DIR [--git PATH]', 'BAD_INPUT');
   } catch (err) {
     problem(err);
     emit({ event: 'done', task: cmd ?? null, ok: false, error: err.message });

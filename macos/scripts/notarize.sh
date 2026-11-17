@@ -12,7 +12,7 @@
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MACOS="$(cd "$HERE/.." && pwd)"
-DMG="${1:-$MACOS/build/Claude-Penguin.dmg}"
+DMG="${1:-$(cd "$MACOS/.." && pwd)/.local/macos-build.noindex/Claude-Penguin.dmg}"
 
 : "${CP_NOTARY_PROFILE:?set CP_NOTARY_PROFILE to a notarytool keychain profile name}"
 [[ -f "$DMG" ]] || { echo "error: $DMG not found; run make-dmg.sh first" >&2; exit 1; }

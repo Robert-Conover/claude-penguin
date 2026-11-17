@@ -1370,3 +1370,57 @@ Notes:
 - The browser console showed only the archived client's known messages: a 405 for its `/datatech/serverlog` telemetry, and a missing `AS2loadingScreen` symbol.
 
 Still open: audio by ear, Developer ID signing and notarization, a clean macOS 26 install, and a signed-in Claude task.
+
+## macOS app: game media download and one setup path — November 8, 2026
+
+Later the same evening, on the same Mac (macOS 27.2, Apple Silicon), branch `dev`, uncommitted at the time of these checks. Two changes:
+
+- **Media source.** A fresh install had no way to get the game media. Launching the earlier bundle on an empty data folder, with no `CP_MEDIA_DIR`, stopped at "Before we begin" with Start Setup disabled: "No media source is configured (release.json has no media and CP_MEDIA_DIR is not set)." The owner chose the source the checkout already uses: the `vanilla-media` submodule's commit `e8666de19835faf61782358d52a3b41c9226a00a` on `git.solero.me`. `release.json` now pins it as a `source: "git"` manifest (commit, tree `0f18f38f74e02012f75330fcce148698a04bc1cb`, 86,642 files, 4,264,645,163 bytes installed), and `local/installer/media-git.mjs` fetches it with the bundled Git in resumable batches (see `local/installer/README.md`). `CP_MEDIA_DIR` still overrides it for development.
+- **One setup path.** The welcome screen no longer offers Explore or Code. Get Started always sets up code mode; signing in to Claude still happens later, in a puffle's terminal. A data folder set up in explore mode by an earlier build gets the Claude step on its next launch.
+
+Smaller fixes found on the way:
+
+- A Cancel during an installer step (media or Claude) was reported as `SETUP_FAILED` with the message "aborted". It is now `CANCELLED`.
+- The setup screen showed the installers' internal phase names (`download`, `verify`) as row titles. The controller now shows readable labels.
+- Preflight reported the download size as unknown in code mode, because Claude Code's size was not in `release.json`. It is now (276,185,504 bytes).
+
+**The host.** `git.solero.me` is a public GitLab. Its "download archive" endpoint answered `200` with no `Content-Length` and no `Accept-Ranges`, so an archive could not be resumed or pinned. Its Git endpoint advertised `fetch=shallow wait-for-done filter` over protocol v2. A shallow, blob-less fetch of the pinned commit took 1.4 s and produced the pinned tree; fetching one file (`README.md`) by its blob ID worked.
+
+**Offline suites:**
+
+| Suite | Result |
+| --- | --- |
+| installer (including 8 new `media-git` tests over `file://` repositories) | 50 passed |
+| controller (3 new: the app layout downloads with the bundled Git and `CP_MEDIA_DIR` overrides it; Cancel during the media step; readable labels) | 54 passed |
+| `swift build`, `swift test` | 28 passed |
+
+`git diff --check` passed.
+
+**Full size, from a local mirror.** The installer ran against a bare repository on this Mac that borrowed the submodule's objects (`file://`, no network): 38 batches, 86,642 files, 41 s in all (download 29 s, checkout 9 s). `diff -rq` against the checkout's `vanilla-media/` found no differences.
+
+**Real download from `git.solero.me`.** `node local/installer/cli.mjs media --manifest <the release's media entry> --root <scratch> --git .local/runtimes/git/bin/git`, over this Mac's home connection:
+
+- It finished in 401 s (6 min 41 s): the trees (2,430,975 bytes), then 76,129 distinct files in 39 batches, the offline checkout, the status check and the switch.
+- Pack data downloaded in all: 3,879,653,694 bytes, about 9.7 MB/s on average. `release.json` `size` now records this total.
+- The result held 86,642 files, 4.15 GiB on disk. `diff -rq` against the checkout's `vanilla-media/` found no differences.
+- During the download the scratch root held the pack data and, at the end, the checked-out files too; the pack data was deleted before the rename.
+
+**In the app.** The bundle was rebuilt with `CP_HARDENED=1 macos/scripts/build-app.sh` (ad-hoc signature with the hardened runtime, 517 MiB; `codesign --verify --deep --strict` passed). It was opened on a fresh scratch data folder, whose path contains a space, with no `CP_MEDIA_DIR`, and driven by `CP_APP_DEV_AUTOPILOT`:
+
+- The welcome screen showed the single Get Started path. Preflight reported a 4.16 GB download, 8.42 GB of space needed, no problems, and Start Setup enabled.
+- **Run 1, Cancel.** Cancel 45 s into setup, during the media download. Setup ended as `CANCELLED` ("Setup was cancelled; run setup again to resume."), the window went back to the welcome screen, 391 MB of fetched data stayed on disk, and no Git process remained.
+- **Run 2, force-quit.** Setup resumed from 391 MB. A `kill -9` of the app 25 s into the download: the controller saw its stdin close, cancelled, and it and Git exited within a second. 656 MB were on disk.
+- **Run 3, finish.** Setup resumed from 656 MB and finished: media, extensions, Claude Code 2.1.311, then the start in code mode. From launch to a serving puffle page took 5 min 41 s, 3,271,659,370 bytes of it downloaded in this run. Across the three runs about 47 MB were fetched twice: the batches in flight at the two interruptions.
+- The media held 86,642 files, identical to the checkout (`diff -rq`). `setup.json` records the media step with `source: download` and version `e8666de19835`.
+- All eight listeners were on 127.0.0.1. Against the app's own servers, with the scratch database's fixture accounts, `verify-http.mjs` (`PUBLIC_ORIGIN=http://localhost:47080`) ran 96 HTTP checks and 4 socket checks with no failures, and `verify_game.py --login-port 47112 --world-port 47875` passed all 12 protocol checks.
+- Quitting stopped every process and left no listeners or ownership records.
+- **Explore upgrade.** A scratch folder set up in explore mode by the bundle's controller (with `CP_MEDIA_DIR` set to the checkout's media) was opened in the app. It ran only the Claude step and served the puffle page in code mode after 13 s.
+- **Welcome screen.** The first rebuild left a gap in the card (a `Spacer` stretched to the window's minimum height), and the button inside the card's material background rendered grey. Get Started now sits below the card and renders as the blue default button, as seen in the app's own snapshot.
+
+**Not verified:**
+
+- Nobody logged in or played in the app window during these runs. Protocol and HTTP checks do not establish interactive gameplay; the window checks recorded above were made on the previous bundle. The page console showed Ruffle's usual emulation warnings and the puffle panel polling `cpBridgeSnapshot` before any login.
+- A slow or unreliable network. The retry path was exercised only with an unreachable `file://` source in the tests.
+- A disk that fills during the download.
+- A controller killed on its own while the app keeps running. Its Git fetch would be orphaned and run to the end of its batch; the next setup removes leftover temporary packs.
+- Developer ID signing and notarization, a clean Mac or user account, and a signed-in Claude task, as before.

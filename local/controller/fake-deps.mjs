@@ -66,7 +66,25 @@ export default function fakeDeps() {
       },
       async verifyClaude() { if (marker('fail-verify')) throw new Error('signature mismatch'); },
     }),
-    media: async () => ({ async installMedia() { throw new Error('not used in launch layout'); } }),
+    media: async () => ({
+      // App layout with a pinned release: record the call and lay out what the real installer leaves behind.
+      async installMedia({ manifest, root, git, onProgress, signal }) {
+        if (env.FAKE_TRACK_DIR) writeFileSync(path.join(env.FAKE_TRACK_DIR, 'media-install.json'), JSON.stringify({ manifest, root, git }));
+        if (marker('fail-media')) throw Object.assign(new Error('simulated media download failure'), { code: 'DOWNLOAD' });
+        if (marker('slow-media')) { // waits for a cancel, then fails the way the real installer does
+          onProgress?.({ label: 'download', done: 1, total: 5 });
+          await new Promise((_, reject) => signal.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { code: 'ABORTED' })), { once: true }));
+        }
+        const dir = path.join(root, 'media', manifest.version);
+        mkdirSync(path.join(dir, 'play'), { recursive: true }); mkdirSync(path.join(dir, 'media'), { recursive: true });
+        const { symlinkSync, rmSync } = await import('node:fs');
+        rmSync(path.join(root, 'media', 'current'), { force: true });
+        symlinkSync(manifest.version, path.join(root, 'media', 'current'));
+        onProgress?.({ label: 'download', done: 5, total: 5 });
+        onProgress?.({ label: 'checkout', done: 2, total: 2 });
+        return { dir, version: manifest.version, reused: false };
+      },
+    }),
     patcher: async () => ({
       async installPatchSet({ out, patchset }) {
         const dir = path.join(out, patchset);

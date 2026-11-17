@@ -283,6 +283,60 @@ describe('setup', () => {
     await d.close();
   });
 
+  test('app layout downloads the pinned media with the bundled Git; CP_MEDIA_DIR still overrides it', async () => {
+    const media = { source: 'git', version: 'abc123', url: 'https://example.invalid/media.git', commit: 'a'.repeat(40), tree: 'b'.repeat(40), files: 2, size: 1000, installedSize: 3000 };
+    const { env, ports } = await setupEnv({ release: { media, claude: { version: '1.0.0', size: 10, installedSize: 10 }, patchset: 'ps1' } });
+    const c = startController(env, { ports, layout: 'app' });
+    const pre = await c.ok('preflight', { mode: 'code' });
+    assert.deepEqual(pre.problems, []);
+    assert.equal(pre.downloadBytes, 1010);
+    assert.equal(pre.requiredBytes, 4010);
+    const done = await c.ok('setup', { mode: 'code' });
+    assert.ok(done.ran.includes('media'));
+    const call = JSON.parse(readFileSync(path.join(env.track, 'media-install.json'), 'utf8'));
+    assert.equal(call.git, path.join(env.runtimes, 'git', 'bin', 'git'));
+    assert.equal(call.root, env.data);
+    assert.deepEqual(call.manifest, media);
+    const labels = c.events.filter(e => e.event === 'progress' && e.task === 'media').map(e => e.label);
+    assert.ok(labels.includes('Downloading the game media') && labels.includes('Unpacking the game media'), labels.join(', '));
+    const step = JSON.parse(readFileSync(path.join(env.data, 'setup.json'), 'utf8')).steps.media;
+    assert.equal(step.source, 'download');
+    assert.equal(step.version, 'abc123');
+    assert.equal(step.root, path.join(env.data, 'media', 'current'));
+    await c.close();
+
+    // A developer's CP_MEDIA_DIR wins over the pinned download, and nothing is fetched.
+    const other = await setupEnv({ release: { media, claude: { version: '1.0.0' }, patchset: 'ps1' } });
+    const dir = path.join(other.env.root, 'external-media');
+    const { mkdirSync } = await import('node:fs');
+    mkdirSync(path.join(dir, 'play'), { recursive: true }); mkdirSync(path.join(dir, 'media'));
+    const d = startController(other.env, { ports: other.ports, layout: 'app', extraEnv: { CP_MEDIA_DIR: dir } });
+    const ok = await d.ok('setup', { mode: 'explore' });
+    assert.ok(ok.ran.includes('media'));
+    assert.equal(JSON.parse(readFileSync(path.join(other.env.data, 'setup.json'), 'utf8')).steps.media.root, dir);
+    assert.ok(!existsSync(path.join(other.env.track, 'media-install.json')));
+    await d.close();
+  });
+
+  test('cancelling during the media download is reported as a cancel, and setup can run again', async () => {
+    const media = { source: 'git', version: 'abc123', url: 'https://example.invalid/media.git', commit: 'a'.repeat(40), tree: 'b'.repeat(40), files: 2, size: 1000, installedSize: 3000 };
+    const { env, ports } = await setupEnv({ release: { media, claude: { version: '1.0.0' }, patchset: 'ps1' } });
+    writeFileSync(path.join(env.track, 'slow-media'), '');
+    const c = startController(env, { ports, layout: 'app' });
+    const pending = c.send('setup', { mode: 'code' });
+    await waitFor(() => c.events.some(e => e.event === 'progress' && e.task === 'media' && e.label === 'Downloading the game media'), { what: 'the media download' });
+    assert.equal((await c.ok('cancel')).cancelled, true);
+    const failed = await pending;
+    assert.equal(failed.error.code, 'CANCELLED');
+    assert.ok(c.events.some(e => e.event === 'problem' && e.code === 'CANCELLED'));
+    assert.ok(!c.events.some(e => e.event === 'problem' && e.code === 'SETUP_FAILED'));
+    assert.equal((await c.ok('status')).state, 'needs-setup');
+    require_rm(path.join(env.track, 'slow-media'));
+    const done = await c.ok('setup', { mode: 'code' });
+    assert.ok(done.ran.includes('media') && done.skipped.includes('database'));
+    await c.close();
+  });
+
   test('launch mode falls back to an existing .local/client-bridge build when patches are not available', async () => {
     const { env, ports } = await setupEnv();
     const { rmSync, mkdirSync } = await import('node:fs');

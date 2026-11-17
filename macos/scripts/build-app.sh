@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Builds macos/build/Claude Penguin.app.
+# Builds .local/macos-build.noindex/Claude Penguin.app. The folder is Git-ignored, and its ".noindex" name keeps
+# Spotlight from listing the build as a second installed copy of the app.
 #
 #   macos/scripts/build-app.sh                full app (needs .local/runtimes, .local/ruffle, network for npm ci)
 #   macos/scripts/build-app.sh --no-runtimes  UI-only dev bundle that runs dev/fake-controller.mjs with the system node
@@ -33,7 +34,7 @@ RUFFLE_SRC="${CP_RUFFLE_DIR:-$REPO/.local/ruffle}"
 PATCHES_SRC="${CP_PATCHES_DIR:-$REPO/.local/client-bridge-patches}"
 ICON_SRC="$MACOS/artwork/ClaudePenguin-v2.icns"
 
-BUILD="$MACOS/build"
+BUILD="$REPO/.local/macos-build.noindex"
 APP="$BUILD/$APP_NAME.app"
 STAGE="$BUILD/stage"
 RES="$APP/Contents/Resources"
