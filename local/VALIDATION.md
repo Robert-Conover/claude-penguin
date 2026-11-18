@@ -3,7 +3,7 @@
 ## Current status
 
 **The multi-project agent loop has recorded browser and real-Claude acceptance;
-coverage remains partial.** The latest live evidence is from November 6, 2026:
+coverage remains partial.** The latest live Claude evidence is from November 6, 2026:
 [database-confirmed adoption settlement](#database-confirmed-adoption-settlement--november-6-2026)
 covers an expired purchase stalled on the visitor's database lock resolving as
 not charged in the browser, the settled ID being refused afterwards, a fresh
@@ -23,6 +23,11 @@ session resume, and the real Atlas archive migration. The
 [Postcards playthrough](#puffle-postcards-playthrough--november-5-2026) covers a
 task submitted in-game and a fix independently checked in its worktree.
 
+The [November 8 browser playthrough](#browser-playthrough-minigame-igloo-puffle-care-and-relogin--november-8-2026)
+verified a coin payout after one Thin Ice level, furniture placement and saving,
+puffle feeding, and progress after relogin. It used the dedicated `localcheck`
+account in Chromium with no Claude session running.
+
 The current `dev` engine uses the normal opt-in launcher; it no longer requires
 `CP_ENGINE_PREVIEW=engine-v2`. See the [engine guide](AGENT_ENGINE.md) for setup.
 This overview summarizes existing evidence, not a new acceptance run. All dated
@@ -34,14 +39,13 @@ separate `current_status` overview.
 
 ## Current validation gaps
 
-- Minigames other than Thin Ice, and any minigame payout while a Claude task is
-  live; all Card-Jitsu Snow gameplay. The
-  [November 8 browser playthrough](#browser-playthrough-minigame-igloo-puffle-care-and-relogin--november-8-2026)
-  completed a Thin Ice level and its payout, placed and saved furniture, fed a
-  puffle and logged off and back on as `localcheck`; puffle play, cleaning, rest
-  and dressing, the Puffle Care catalog and igloo purchases were not exercised.
-- New accounts that have not finished the introductory tour open the map in its
-  quest mode; map clicks did not travel during that playthrough.
+- Minigame payouts beyond the tested Thin Ice level, payouts during a live
+  Claude task, and Card-Jitsu Snow gameplay.
+- Puffle play, cleaning, rest and dressing, the Puffle Care catalog, and igloo
+  purchases. The paths in the November 8 browser playthrough still need Safari
+  coverage.
+- Map travel during the introductory tour. The map opened in quest mode during
+  the November 8 playthrough, and clicking Town did not move the penguin.
 - Automatic interrupt confirmation on the tested Claude CLI and cancellation
   during a running tool. Stage 3 checked an interrupt, terminal inspection, and
   retry; that does not establish every cancellation path.

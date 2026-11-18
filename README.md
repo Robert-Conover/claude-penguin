@@ -73,7 +73,7 @@ The first run builds the in-game puffle menu from the archived client (it downlo
 | **Later ideas** | A task board inside the igloo and temporary helper puffles for work a session delegates. |
 | **Still to verify** | Collect a minigame reward during a live Claude task; play Card-Jitsu Snow and other minigames; verify each puffle animation against the real agent state. |
 
-The [dated validation notes](local/VALIDATION.md) separate browser playtests and real Claude runs from automated tests. A Thin Ice round, its coin payout, igloo furniture placement, feeding a puffle and logging off and back on have been checked in the browser.
+The [dated validation notes](local/VALIDATION.md) separate browser playtests and real Claude runs from automated tests. One Thin Ice level and its coin payout, igloo furniture placement, puffle feeding, and progress after relogin were verified in Chromium with a dedicated verification account.
 
 ## How it works
 
