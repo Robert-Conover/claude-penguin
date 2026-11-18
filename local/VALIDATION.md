@@ -3,7 +3,7 @@
 ## Current status
 
 **The multi-project agent loop has recorded browser and real-Claude acceptance;
-coverage remains partial.** The latest live evidence is from November 6, 2026:
+coverage remains partial.** The latest live Claude evidence is from November 6, 2026:
 [database-confirmed adoption settlement](#database-confirmed-adoption-settlement--november-6-2026)
 covers an expired purchase stalled on the visitor's database lock resolving as
 not charged in the browser, the settled ID being refused afterwards, a fresh
@@ -23,6 +23,11 @@ session resume, and the real Atlas archive migration. The
 [Postcards playthrough](#puffle-postcards-playthrough--november-5-2026) covers a
 task submitted in-game and a fix independently checked in its worktree.
 
+The [November 8 browser playthrough](#browser-playthrough-minigame-igloo-puffle-care-and-relogin--november-8-2026)
+verified a coin payout after one Thin Ice level, furniture placement and saving,
+puffle feeding, and progress after relogin. It used the dedicated `localcheck`
+account in Chromium with no Claude session running.
+
 The current `dev` engine uses the normal opt-in launcher; it no longer requires
 `CP_ENGINE_PREVIEW=engine-v2`. See the [engine guide](AGENT_ENGINE.md) for setup.
 This overview summarizes existing evidence, not a new acceptance run. All dated
@@ -34,12 +39,13 @@ separate `current_status` overview.
 
 ## Current validation gaps
 
-- Browser furniture placement/save and the complete puffle-care UI interaction.
-  Protocol checks passed; they do not establish those browser paths.
-- Completed minigame rounds and rewards, including while a Claude task is live;
-  all Card-Jitsu Snow gameplay. Cart Surfer reached active gameplay only.
-- Ordinary player browser logoff/relogin persistence. Agent-page reconnect and
-  session resume were checked separately in Stage 3.
+- Minigame payouts beyond the tested Thin Ice level, payouts during a live
+  Claude task, and Card-Jitsu Snow gameplay.
+- Puffle play, cleaning, rest and dressing, the Puffle Care catalog, and igloo
+  purchases. The paths in the November 8 browser playthrough still need Safari
+  coverage.
+- Map travel during the introductory tour. The map opened in quest mode during
+  the November 8 playthrough, and clicking Town did not move the penguin.
 - Automatic interrupt confirmation on the tested Claude CLI and cancellation
   during a running tool. Stage 3 checked an interrupt, terminal inspection, and
   retry; that does not establish every cancellation path.
@@ -1180,6 +1186,43 @@ This checks the homepage and login transition, not a new gameplay or Claude
 acceptance run. **Code with puffles** still requires the separately started host
 engine; a live engine session and non-English layouts were not exercised here.
 The image generation prompt and asset provenance are in `web/home/README.md`.
+
+## Browser playthrough: minigame, igloo, puffle care and relogin — November 8, 2026
+
+Revision `de3509f` (the stack was started from `7cf42bf`; only the web container
+was rebuilt to `de3509f` by the concurrent homepage work). Chromium-based in-app
+browser at 1100 × 780, Ruffle `nightly-2026-11-03`, Apple Silicon macOS 27.2. Account:
+`localcheck`, the dedicated verification account. The other accounts' coins were
+compared before and after and did not change. No Claude session ran.
+
+| Check | Browser result | Database result |
+| --- | --- | --- |
+| Thin Ice (Dance Lounge arcade) | Level 1 solved for 36 points; closing the game showed "Coins earned: 3", total 9,583 | coins 9,580 → 9,583 |
+| Igloo furniture | Editor opened; potted plant (790) dragged from the inventory onto the floor; Table for Two (2166) dragged to a new spot; closing the editor saved | `igloo_furniture`: 790 at (310, 287), 2166 moved from (400, 280) to (513, 339) |
+| Puffle care | Clicking the puffle opened its care menu, then the care screen and Rory's tutorial; the Apple was dragged onto the puffle and left the tray | Apple (79) removed; food 82 → 100, play 100 → 95, rest 82 → 77, clean 100 (the Apple's +50/−5/−5/0) |
+| Log off and back on | Page **Log off**, then a fresh login; the igloo showed the plant, the moved table and the puffle; the player card showed 9,583 coins | unchanged from the rows above |
+
+**Input notes.** Ruffle reads Thin Ice's arrow keys and the igloo/puffle-care drags
+from held input. Instant synthetic key presses and the browser tool's one-step drag
+were not seen by the game, so moves and drags were sent as held key events and
+multi-step pointer events from the page. This is an automation limit; a person's
+mouse and keyboard produce held input. The earlier note that a placement "did not
+remain" (November 3) is consistent with the same limit.
+
+**Found along the way.**
+
+- Two disconnects ("The connection has been lost", error 10004) happened while
+  another agent rebuilt the web container in the same checkout; the web service
+  carries the game socket. Neither the world log nor its error log recorded a
+  server fault, and a later two-and-a-half-minute idle session stayed connected.
+- `localcheck` has not finished the introductory tour, so the map loads
+  `intro_to_cp_quest_map.swf`, and clicks on Town did not travel. Whether that is
+  the quest mode or the concurrent rebuilds was not separated.
+- The client posts to `http://localhost/web-service/membership` (port 80, not 8080),
+  which is refused. Its source and effect were not traced.
+
+**Not checked.** Other minigames, Card-Jitsu Snow, puffle play/clean/rest/dress,
+catalog purchases, the ordinary `player` account, and Safari.
 
 ## macOS app prototype — November 8, 2026
 
